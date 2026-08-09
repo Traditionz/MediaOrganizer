@@ -12,6 +12,10 @@
 
 	const MIN_W = 280;
 
+	const albumSummary = $derived(
+		item?.album_names?.length ? item.album_names.join(', ') : 'Unassigned'
+	);
+
 	let intrinsic = $state<{ w: number; h: number } | null>(null);
 	let userScale = $state(1);
 	let resizing = $state(false);
@@ -110,7 +114,7 @@
 				<div class="min-w-0 flex-1">
 					<h2 class="truncate text-base font-semibold">{item.original_name}</h2>
 					<p class="mt-0.5 truncate text-xs text-base-content/60">
-						{item.folder_name ?? 'All media'} · {formatDate(item.created_at)} · {formatBytes(item.size)}
+						{albumSummary} · {formatDate(item.created_at)} · {formatBytes(item.size)}
 						{#if item.media_type === 'video'}
 							<span class="text-base-content/40"> · drag corner to resize</span>
 						{/if}

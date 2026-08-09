@@ -268,9 +268,10 @@ export async function uploadVideoThumbnail(mediaId: string, blob: Blob): Promise
 export function uploadMediaFile(
 	file: File,
 	options: {
-		folderId: string | null;
+		albumId: string | null;
 		width?: number | null;
 		height?: number | null;
+		compress?: boolean;
 		onProgress?: (pct: number) => void;
 	}
 ): Promise<{ id: string; media_type?: string }> {
@@ -288,7 +289,8 @@ export function uploadMediaFile(
 
 		xhr.setRequestHeader('Content-Type', mime);
 		xhr.setRequestHeader('X-Filename', encodeURIComponent(file.name));
-		if (options.folderId) xhr.setRequestHeader('X-Folder-Id', options.folderId);
+		xhr.setRequestHeader('X-Compress', options.compress === false ? '0' : '1');
+		if (options.albumId) xhr.setRequestHeader('X-Album-Id', options.albumId);
 		if (options.width != null) xhr.setRequestHeader('X-Width', String(options.width));
 		if (options.height != null) xhr.setRequestHeader('X-Height', String(options.height));
 
@@ -296,6 +298,10 @@ export function uploadMediaFile(
 			if (e.lengthComputable && options.onProgress) {
 				options.onProgress(Math.round((e.loaded / e.total) * 100));
 			}
+		};
+		// Bytes finished; server may still be writing/indexing before onload.
+		xhr.upload.onload = () => {
+			options.onProgress?.(100);
 		};
 
 		xhr.onload = () => {
@@ -309,6 +315,7 @@ export function uploadMediaFile(
 			}
 		};
 		xhr.onerror = () => reject(new Error(`Network error uploading ${file.name}`));
+		xhr.ontimeout = () => reject(new Error(`Timed out uploading ${file.name}`));
 		xhr.send(file);
 	});
 }

@@ -24,7 +24,7 @@
 		items,
 		selectedIds,
 		selectMode,
-		columns = 4,
+		columns = 8,
 		onselect,
 		onopen,
 		oncontextmenu

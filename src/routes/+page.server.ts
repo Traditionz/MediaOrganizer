@@ -1,7 +1,7 @@
 import type { PageServerLoad } from './$types';
 import { listProfiles } from '$lib/server/profiles';
 import { resolveProfileFromCookies } from '$lib/server/profileContext';
-import { listFolders } from '$lib/server/folders';
+import { listAlbums } from '$lib/server/albums';
 import { countAllMedia, listMedia } from '$lib/server/media';
 
 export const load: PageServerLoad = async ({ cookies }) => {
@@ -12,7 +12,7 @@ export const load: PageServerLoad = async ({ cookies }) => {
 		return {
 			profiles,
 			activeProfile: null,
-			folders: [],
+			albums: [],
 			media: [],
 			totalCount: 0
 		};
@@ -21,7 +21,7 @@ export const load: PageServerLoad = async ({ cookies }) => {
 	return {
 		profiles,
 		activeProfile,
-		folders: listFolders(activeProfile.id),
+		albums: listAlbums(activeProfile.id),
 		media: listMedia(activeProfile.id),
 		totalCount: countAllMedia(activeProfile.id)
 	};

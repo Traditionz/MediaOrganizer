@@ -13,8 +13,11 @@
 		UPLOAD_CONCURRENCY
 	} from '$lib/utils';
 	import { invalidateAll } from '$app/navigation';
-	import FolderSidebar from '$lib/components/FolderSidebar.svelte';
+	import AlbumSidebar from '$lib/components/AlbumSidebar.svelte';
 	import ProfileGate from '$lib/components/ProfileGate.svelte';
+	import PasscodeModal, { type PasscodeModalMode } from '$lib/components/PasscodeModal.svelte';
+	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
+	import PromptModal from '$lib/components/PromptModal.svelte';
 	import Toolbar from '$lib/components/Toolbar.svelte';
 	import MediaGrid from '$lib/components/MediaGrid.svelte';
 	import MediaCollage from '$lib/components/MediaCollage.svelte';
@@ -31,7 +34,7 @@
 	let { data }: Props = $props();
 
 	// Overridable deriveds: follow page data, but allow client refresh() updates
-	let folders = $derived(data.folders);
+	let albums = $derived(data.albums);
 	let media = $derived(data.media);
 	let totalCount = $derived(data.totalCount);
 	let profiles = $derived(data.profiles);
@@ -53,14 +56,19 @@
 		return 'light';
 	}
 
-	let activeFolder = $state<string | null | 'all'>(null);
+	let activeAlbum = $state<string | null | 'all'>(null);
 	let showImages = $state(true);
 	let showVideos = $state(true);
 	let dateFrom = $state('');
 	let dateTo = $state('');
 	let searchQuery = $state('');
-	let viewMode = $state<ViewMode>('grid');
-	let columns = $state(4);
+	let viewMode = $state<ViewMode>('collage');
+	let columns = $state(8);
+	let compressOnUpload = $state(
+		typeof localStorage === 'undefined'
+			? true
+			: localStorage.getItem('mo_compress') !== '0'
+	);
 	let theme = $state<ThemeMode>(readTheme());
 	let selectMode = $state(false);
 	let selectedIds = new SvelteSet<string>();
@@ -121,15 +129,15 @@
 		return { x, y, w, h };
 	});
 
-	const unassignedCount = $derived(media.filter((item) => item.folder_id === null).length);
+	const unassignedCount = $derived(media.filter((item) => item.album_ids.length === 0).length);
 
 	const filteredMedia = $derived.by(() => {
 		const q = searchQuery.trim().toLowerCase();
 		return media.filter((item) => {
-			if (activeFolder !== 'all') {
-				if (activeFolder === null) {
-					if (item.folder_id !== null) return false;
-				} else if (item.folder_id !== activeFolder) {
+			if (activeAlbum !== 'all') {
+				if (activeAlbum === null) {
+					if (item.album_ids.length !== 0) return false;
+				} else if (!item.album_ids.includes(activeAlbum)) {
 					return false;
 				}
 			}
@@ -147,145 +155,384 @@
 	});
 
 	async function refresh() {
-		const [mediaRes, foldersRes] = await Promise.all([
+		const [mediaRes, albumsRes] = await Promise.all([
 			fetch('/api/media'),
-			fetch('/api/folders')
+			fetch('/api/albums')
 		]);
 		media = await mediaRes.json();
-		folders = await foldersRes.json();
+		albums = await albumsRes.json();
 		totalCount = media.length;
 	}
 
-	async function selectProfile(id: string) {
+	async function selectProfile(id: string, passcode = '') {
 		const res = await fetch('/api/profiles/select', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ id })
+			body: JSON.stringify({ id, passcode })
 		});
 		if (!res.ok) {
 			const body = await res.json().catch(() => ({}));
-			throw new Error(body.message || 'Failed to select profile');
+			throw new Error(body.message || 'Failed to unlock profile');
 		}
 		await invalidateAll();
 	}
 
-	async function createProfile(name: string) {
+	async function createProfile(name: string, passcode?: string | null) {
 		const res = await fetch('/api/profiles', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name, passcode: passcode || null })
+		});
+		if (!res.ok) {
+			const body = await res.json().catch(() => ({}));
+			throw new Error(body.message || 'Failed to create profile');
+		}
+		await invalidateAll();
+	}
+
+	type ProfileModalState = {
+		open: boolean;
+		mode: PasscodeModalMode;
+		profileId: string | null;
+		profileName: string;
+		requiresPasscode: boolean;
+		mediaCount: number;
+		prefillName: string;
+	};
+
+	let profileModal = $state<ProfileModalState>({
+		open: false,
+		mode: 'unlock',
+		profileId: null,
+		profileName: '',
+		requiresPasscode: false,
+		mediaCount: 0,
+		prefillName: ''
+	});
+	let profileModalBusy = $state(false);
+	let profileModalError = $state('');
+	let convertResultMessage = $state('');
+
+	type ConfirmKind = 'convert-av1' | 'delete-album' | 'delete-media';
+
+	type ConfirmModalState = {
+		open: boolean;
+		kind: ConfirmKind | null;
+		title: string;
+		message: string;
+		confirmLabel: string;
+		destructive: boolean;
+		albumId: string | null;
+		mediaIds: string[];
+	};
+
+	type PromptModalState = {
+		open: boolean;
+		title: string;
+		label: string;
+		initialValue: string;
+		mediaId: string | null;
+	};
+
+	let confirmModal = $state<ConfirmModalState>({
+		open: false,
+		kind: null,
+		title: 'Confirm',
+		message: '',
+		confirmLabel: 'Confirm',
+		destructive: false,
+		albumId: null,
+		mediaIds: []
+	});
+	let confirmModalBusy = $state(false);
+
+	let promptModal = $state<PromptModalState>({
+		open: false,
+		title: 'Rename',
+		label: 'Name',
+		initialValue: '',
+		mediaId: null
+	});
+	let promptModalBusy = $state(false);
+	let promptModalError = $state('');
+
+	function closeConfirmModal() {
+		confirmModal = { ...confirmModal, open: false, kind: null };
+		confirmModalBusy = false;
+	}
+
+	function closePromptModal() {
+		promptModal = { ...promptModal, open: false, mediaId: null };
+		promptModalBusy = false;
+		promptModalError = '';
+	}
+
+	function openConfirmModal(opts: {
+		kind: ConfirmKind;
+		title: string;
+		message: string;
+		confirmLabel?: string;
+		destructive?: boolean;
+		albumId?: string | null;
+		mediaIds?: string[];
+	}) {
+		confirmModalBusy = false;
+		confirmModal = {
+			open: true,
+			kind: opts.kind,
+			title: opts.title,
+			message: opts.message,
+			confirmLabel: opts.confirmLabel ?? 'Confirm',
+			destructive: opts.destructive ?? false,
+			albumId: opts.albumId ?? null,
+			mediaIds: opts.mediaIds ?? []
+		};
+	}
+
+	function closeProfileModal() {
+		profileModal = { ...profileModal, open: false };
+		profileModalBusy = false;
+		profileModalError = '';
+	}
+
+	function openUnlockModal(profile: { id: string; name: string; has_passcode: boolean }) {
+		if (!profile.has_passcode) {
+			void selectProfile(profile.id).catch((err) => {
+				errorMessage = err instanceof Error ? err.message : 'Failed to open profile';
+			});
+			return;
+		}
+		profileModalError = '';
+		profileModal = {
+			open: true,
+			mode: 'unlock',
+			profileId: profile.id,
+			profileName: profile.name,
+			requiresPasscode: true,
+			mediaCount: 0,
+			prefillName: ''
+		};
+	}
+
+	function openCreateProfileModal(prefillName = '') {
+		profileModalError = '';
+		profileModal = {
+			open: true,
+			mode: 'create',
+			profileId: null,
+			profileName: prefillName,
+			requiresPasscode: false,
+			mediaCount: 0,
+			prefillName
+		};
+	}
+
+	function openDeleteProfileModal(id: string) {
+		const target = profiles.find((p) => p.id === id) ?? activeProfile;
+		if (!target || target.id !== id) return;
+		profileModalError = '';
+		profileModal = {
+			open: true,
+			mode: 'delete',
+			profileId: id,
+			profileName: target.name,
+			requiresPasscode: false,
+			mediaCount: id === activeProfile?.id ? totalCount : 0,
+			prefillName: ''
+		};
+	}
+
+	async function handleProfileModalSubmit(payload: {
+		name?: string;
+		passcode: string;
+		confirmPasscode: string;
+		usePasscode: boolean;
+		confirmName?: string;
+		confirmMediaCount?: number;
+	}) {
+		profileModalBusy = true;
+		profileModalError = '';
+		try {
+			if (profileModal.mode === 'unlock' && profileModal.profileId) {
+				await selectProfile(profileModal.profileId, payload.passcode);
+				closeProfileModal();
+				return;
+			}
+			if (profileModal.mode === 'create') {
+				const name = (payload.name || profileModal.prefillName).trim();
+				await createProfile(name, payload.usePasscode ? payload.passcode : null);
+				closeProfileModal();
+				return;
+			}
+			if (profileModal.mode === 'delete' && profileModal.profileId) {
+				const res = await fetch('/api/profiles', {
+					method: 'DELETE',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						id: profileModal.profileId,
+						confirmName: payload.confirmName,
+						confirmMediaCount: payload.confirmMediaCount
+					})
+				});
+				if (!res.ok) {
+					const body = await res.json().catch(() => ({}));
+					throw new Error(body.message || 'Failed to delete profile');
+				}
+				closeProfileModal();
+				await invalidateAll();
+			}
+		} catch (err) {
+			profileModalError = err instanceof Error ? err.message : 'Request failed';
+			profileModalBusy = false;
+		}
+	}
+
+	async function switchProfileWithPrompt(id: string) {
+		const target = profiles.find((p) => p.id === id);
+		if (!target) return;
+		openUnlockModal(target);
+	}
+
+	async function createProfileWithPrompt(name: string) {
+		openCreateProfileModal(name);
+	}
+
+	async function deleteProfile(id: string) {
+		openDeleteProfileModal(id);
+	}
+
+	async function convertLibraryToAv1() {
+		openConfirmModal({
+			kind: 'convert-av1',
+			title: 'Convert to AV1',
+			message:
+				'Convert all videos in this profile to AV1? This can take a long time for large libraries.',
+			confirmLabel: 'Convert'
+		});
+	}
+
+	async function runConvertLibraryToAv1() {
+		uploading = true;
+		uploadProgress = 0;
+		errorMessage = '';
+		convertResultMessage = '';
+		try {
+			const res = await fetch('/api/media', {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ action: 'compress-all-videos' })
+			});
+			const body = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(body.message || 'Conversion failed');
+			uploadProgress = 100;
+			await refresh();
+			const savedMb = ((body.bytesSaved ?? 0) / (1024 * 1024)).toFixed(1);
+			convertResultMessage = `AV1 conversion done — converted ${body.converted}, skipped ${body.skipped}, failed ${body.failed}, saved ${savedMb} MB`;
+		} catch (err) {
+			errorMessage = err instanceof Error ? err.message : 'Conversion failed';
+		} finally {
+			uploading = false;
+			uploadProgress = null;
+		}
+	}
+
+	async function createAlbum(name: string) {
+		const res = await fetch('/api/albums', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name })
 		});
 		if (!res.ok) {
 			const body = await res.json().catch(() => ({}));
-			throw new Error(body.message || 'Failed to create profile');
-		}
-		const profile = await res.json();
-		await selectProfile(profile.id);
-	}
-
-	async function deleteProfile(id: string) {
-		const res = await fetch('/api/profiles', {
-			method: 'DELETE',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ id })
-		});
-		if (!res.ok) {
-			const body = await res.json().catch(() => ({}));
-			errorMessage = body.message || 'Failed to delete profile';
-			return;
-		}
-		await invalidateAll();
-	}
-
-	async function createFolder(name: string, parentId: string | null = null) {
-		const res = await fetch('/api/folders', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name, parent_id: parentId })
-		});
-		if (!res.ok) {
-			const body = await res.json().catch(() => ({}));
-			errorMessage = body.message || 'Failed to create folder';
+			errorMessage = body.message || 'Failed to create album';
 			throw new Error(errorMessage);
 		}
 		await refresh();
 	}
 
-	async function deleteFolder(id: string) {
-		if (!confirm('Delete this folder and its subfolders? Media will move to All media.')) return;
-		await fetch('/api/folders', {
+	async function deleteAlbum(id: string) {
+		openConfirmModal({
+			kind: 'delete-album',
+			title: 'Delete album',
+			message: 'Delete this album? Media stays in your library.',
+			confirmLabel: 'Delete',
+			destructive: true,
+			albumId: id
+		});
+	}
+
+	async function runDeleteAlbum(id: string) {
+		await fetch('/api/albums', {
 			method: 'DELETE',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ id })
 		});
-		if (activeFolder === id) activeFolder = 'all';
+		if (activeAlbum === id) activeAlbum = 'all';
 		await refresh();
 	}
 
-	async function moveFolder(id: string, parentId: string | null) {
-		const res = await fetch('/api/folders', {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ id, parent_id: parentId })
-		});
-		if (!res.ok) {
-			const body = await res.json().catch(() => ({}));
-			errorMessage = body.message || 'Failed to move folder';
-			return;
-		}
-		await refresh();
-	}
-
-	async function renameFolder(id: string, name: string) {
-		const res = await fetch('/api/folders', {
+	async function renameAlbum(id: string, name: string) {
+		const res = await fetch('/api/albums', {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ id, name })
 		});
 		if (!res.ok) {
 			const body = await res.json().catch(() => ({}));
-			errorMessage = body.message || 'Failed to rename folder';
+			errorMessage = body.message || 'Failed to rename album';
 			throw new Error(errorMessage);
 		}
 		await refresh();
 	}
 
-	async function duplicateFolder(id: string) {
-		const res = await fetch('/api/folders', {
+	async function duplicateAlbum(id: string) {
+		const res = await fetch('/api/albums', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ action: 'duplicate', id })
 		});
 		if (!res.ok) {
 			const body = await res.json().catch(() => ({}));
-			errorMessage = body.message || 'Failed to duplicate folder';
+			errorMessage = body.message || 'Failed to duplicate album';
 			return;
 		}
 		await refresh();
 	}
 
-	async function moveMediaIds(ids: string[], folderId: string | null) {
-		if (!ids.length) return;
+	async function addMediaToAlbum(ids: string[], albumId: string) {
+		if (!ids.length || !albumId) return;
 		await fetch('/api/media', {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ ids, folderId })
+			body: JSON.stringify({ action: 'add-to-album', ids, albumId })
 		});
 		selectedIds.clear();
 		selectionAnchor = null;
 		await refresh();
 	}
 
-	function pasteTargetFolderId(): string | null {
-		return activeFolder === 'all' || activeFolder === null ? null : activeFolder;
+	async function removeMediaFromAlbum(ids: string[], albumId: string) {
+		if (!ids.length || !albumId) return;
+		await fetch('/api/media', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ action: 'remove-from-album', ids, albumId })
+		});
+		selectedIds.clear();
+		selectionAnchor = null;
+		await refresh();
 	}
 
-	async function duplicateMedia(ids: string[], folderId: string | null = pasteTargetFolderId()) {
+	function pasteTargetAlbumId(): string | null {
+		return activeAlbum === 'all' || activeAlbum === null ? null : activeAlbum;
+	}
+
+	async function duplicateMedia(ids: string[], albumId: string | null = pasteTargetAlbumId()) {
 		if (!ids.length) return;
 		const res = await fetch('/api/media', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ action: 'duplicate', ids, folderId })
+			body: JSON.stringify({ action: 'duplicate', ids, albumId })
 		});
 		if (!res.ok) {
 			const body = await res.json().catch(() => ({}));
@@ -298,21 +545,43 @@
 	async function renameMediaItem(id: string) {
 		const item = media.find((m) => m.id === id);
 		if (!item) return;
-		const next = prompt('Rename', item.original_name);
-		if (next == null) return;
-		const name = next.trim();
-		if (!name || name === item.original_name) return;
-		const res = await fetch('/api/media', {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ action: 'rename', id, name })
-		});
-		if (!res.ok) {
-			const body = await res.json().catch(() => ({}));
-			errorMessage = body.message || 'Failed to rename media';
+		promptModalBusy = false;
+		promptModalError = '';
+		promptModal = {
+			open: true,
+			title: 'Rename',
+			label: 'Name',
+			initialValue: item.original_name,
+			mediaId: id
+		};
+	}
+
+	async function runRenameMediaItem(id: string, name: string) {
+		const item = media.find((m) => m.id === id);
+		if (!item) return;
+		const trimmed = name.trim();
+		if (!trimmed || trimmed === item.original_name) {
+			closePromptModal();
 			return;
 		}
-		await refresh();
+		promptModalBusy = true;
+		promptModalError = '';
+		try {
+			const res = await fetch('/api/media', {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ action: 'rename', id, name: trimmed })
+			});
+			if (!res.ok) {
+				const body = await res.json().catch(() => ({}));
+				throw new Error(body.message || 'Failed to rename media');
+			}
+			closePromptModal();
+			await refresh();
+		} catch (err) {
+			promptModalError = err instanceof Error ? err.message : 'Failed to rename media';
+			promptModalBusy = false;
+		}
 	}
 
 	async function copyMediaNames(ids: string[]) {
@@ -329,13 +598,13 @@
 
 	async function pasteClipboard() {
 		if (!clipboard?.ids.length) return;
-		const folderId = pasteTargetFolderId();
+		const albumId = pasteTargetAlbumId();
 		if (clipboard.mode === 'cut') {
-			await moveMediaIds(clipboard.ids, folderId);
+			if (albumId) await addMediaToAlbum(clipboard.ids, albumId);
 			clipboard = null;
 			return;
 		}
-		await duplicateMedia(clipboard.ids, folderId);
+		await duplicateMedia(clipboard.ids, albumId);
 	}
 
 	function setClipboard(ids: string[], mode: 'copy' | 'cut') {
@@ -355,18 +624,40 @@
 		}
 	}
 
-	const folderMenuChildren = $derived.by((): ContextMenuItem[] => {
-		const sorted = [...folders].sort((a, b) =>
-			(a.path ?? a.name).localeCompare(b.path ?? b.name)
-		);
-		return [
-			{ id: 'move:null', label: 'Unfiled' },
-			...(sorted.length ? [{ id: 'sep-folders', label: '', separator: true } as ContextMenuItem] : []),
-			...sorted.map((f) => ({
-				id: `move:${f.id}`,
-				label: f.path ?? f.name
-			}))
-		];
+	async function compressMediaIds(ids: string[]) {
+		if (!ids.length) return;
+		errorMessage = '';
+		uploading = true;
+		uploadProgress = 0;
+		try {
+			const res = await fetch('/api/media', {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ action: 'compress', ids })
+			});
+			if (!res.ok) {
+				const body = await res.json().catch(() => ({}));
+				throw new Error(body.message || 'Compress failed');
+			}
+			uploadProgress = 100;
+			await refresh();
+		} catch (err) {
+			errorMessage = err instanceof Error ? err.message : 'Compress failed';
+		} finally {
+			uploading = false;
+			uploadProgress = null;
+		}
+	}
+
+	const albumMenuChildren = $derived.by((): ContextMenuItem[] => {
+		const sorted = [...albums].sort((a, b) => a.name.localeCompare(b.name));
+		if (!sorted.length) {
+			return [{ id: 'add:none', label: 'No albums yet', disabled: true }];
+		}
+		return sorted.map((a) => ({
+			id: `add:${a.id}`,
+			label: a.name
+		}));
 	});
 
 	const contextMenuItems = $derived.by((): ContextMenuItem[] => {
@@ -388,13 +679,20 @@
 			{ id: 'cut', label: count > 1 ? `Cut ${count} items` : 'Cut' },
 			{ id: 'duplicate', label: count > 1 ? `Duplicate ${count}` : 'Duplicate' },
 			{
-				id: 'move',
-				label: 'Move to…',
-				children: folderMenuChildren
+				id: 'add-to-album',
+				label: 'Add to album…',
+				children: albumMenuChildren
 			},
+			...(typeof activeAlbum === 'string' && activeAlbum !== 'all'
+				? [{ id: 'remove-from-album', label: 'Remove from album' } as ContextMenuItem]
+				: []),
 			{ id: 'copy-name', label: single ? 'Copy name' : 'Copy names' },
 			{ id: 'rename', label: 'Rename', disabled: !single },
 			{ id: 'download', label: count > 1 ? `Download ${count}` : 'Download' },
+			{
+				id: 'compress',
+				label: count > 1 ? `Compress ${count} (AV1/AVIF)` : 'Compress (AV1/AVIF)'
+			},
 			{ id: 'sep-1', label: '', separator: true },
 			{ id: 'delete', label: 'Delete', danger: true }
 		];
@@ -461,26 +759,35 @@
 			downloadMedia(ids);
 			return;
 		}
+		if (id === 'compress') {
+			await compressMediaIds(ids);
+			return;
+		}
 		if (id === 'delete') {
 			if (!ids.length) return;
-			if (!confirm(`Delete ${ids.length} item(s)?`)) return;
-			await fetch('/api/media', {
-				method: 'DELETE',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ ids })
+			openConfirmModal({
+				kind: 'delete-media',
+				title: 'Delete media',
+				message: `Delete ${ids.length} item(s)?`,
+				confirmLabel: 'Delete',
+				destructive: true,
+				mediaIds: ids
 			});
-			for (const mid of ids) selectedIds.delete(mid);
-			await refresh();
 			return;
 		}
 		if (id === 'upload') {
 			fileInput?.click();
 			return;
 		}
-		if (id.startsWith('move:')) {
-			const raw = id.slice('move:'.length);
-			const folderId = raw === 'null' ? null : raw;
-			await moveMediaIds(ids, folderId);
+		if (id === 'remove-from-album') {
+			if (typeof activeAlbum === 'string' && activeAlbum !== 'all') {
+				await removeMediaFromAlbum(ids, activeAlbum);
+			}
+			return;
+		}
+		if (id.startsWith('add:')) {
+			const albumId = id.slice('add:'.length);
+			if (albumId) await addMediaToAlbum(ids, albumId);
 		}
 	}
 
@@ -560,21 +867,62 @@
 		}
 	}
 
-	async function moveSelected(folderId: string | null) {
-		await moveMediaIds([...selectedIds], folderId);
+	async function addSelectedToAlbum(albumId: string) {
+		await addMediaToAlbum([...selectedIds], albumId);
 	}
 
 	async function deleteSelected() {
 		if (!selectedIds.size) return;
-		if (!confirm(`Delete ${selectedIds.size} item(s)?`)) return;
+		openConfirmModal({
+			kind: 'delete-media',
+			title: 'Delete media',
+			message: `Delete ${selectedIds.size} item(s)?`,
+			confirmLabel: 'Delete',
+			destructive: true,
+			mediaIds: [...selectedIds]
+		});
+	}
+
+	async function runDeleteMedia(ids: string[]) {
+		if (!ids.length) return;
 		await fetch('/api/media', {
 			method: 'DELETE',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ ids: [...selectedIds] })
+			body: JSON.stringify({ ids })
 		});
-		selectedIds.clear();
+		for (const mid of ids) selectedIds.delete(mid);
 		selectionAnchor = null;
 		await refresh();
+	}
+
+	async function handleConfirmModal() {
+		const { kind, albumId, mediaIds } = confirmModal;
+		if (!kind) return;
+		confirmModalBusy = true;
+		try {
+			if (kind === 'convert-av1') {
+				closeConfirmModal();
+				await runConvertLibraryToAv1();
+				return;
+			}
+			if (kind === 'delete-album' && albumId) {
+				await runDeleteAlbum(albumId);
+				closeConfirmModal();
+				return;
+			}
+			if (kind === 'delete-media') {
+				await runDeleteMedia(mediaIds);
+				closeConfirmModal();
+			}
+		} catch (err) {
+			errorMessage = err instanceof Error ? err.message : 'Request failed';
+			confirmModalBusy = false;
+		}
+	}
+
+	async function handlePromptModalSubmit(value: string) {
+		if (!promptModal.mediaId) return;
+		await runRenameMediaItem(promptModal.mediaId, value);
 	}
 
 	async function uploadFiles(fileList: FileList | File[]) {
@@ -588,7 +936,7 @@
 		uploadProgress = 0;
 		errorMessage = '';
 
-		const folderId = activeFolder === 'all' || activeFolder === null ? null : activeFolder;
+		const albumId = activeAlbum === 'all' || activeAlbum === null ? null : activeAlbum;
 		const fileProgress = files.map(() => 0);
 		const errors: string[] = [];
 
@@ -603,9 +951,10 @@
 					const dims =
 						(await probeImageDimensions(file)) ?? (await probeVideoDimensions(file));
 					const uploaded = await uploadMediaFile(file, {
-						folderId,
+						albumId,
 						width: dims?.width ?? null,
 						height: dims?.height ?? null,
+						compress: compressOnUpload,
 						onProgress: (pct) => {
 							// Reserve last 5% for thumbnail work on videos
 							const weight = isVideoFile(file) ? 0.95 : 1;
@@ -773,26 +1122,25 @@
 		role="application"
 		aria-label="Media organizer"
 	>
-		<FolderSidebar
-			{folders}
-			{activeFolder}
+		<AlbumSidebar
+			{albums}
+			{activeAlbum}
 			{totalCount}
 			{unassignedCount}
 			profile={activeProfile}
 			{profiles}
 			onselect={(id) => {
-				activeFolder = id;
+				activeAlbum = id;
 				selectedIds.clear();
 				selectionAnchor = null;
 			}}
-			oncreate={createFolder}
-			ondelete={deleteFolder}
-			onmoveFolder={moveFolder}
-			onmoveMedia={moveMediaIds}
-			onrename={renameFolder}
-			onduplicate={duplicateFolder}
-			onswitchProfile={selectProfile}
-			oncreateProfile={createProfile}
+			oncreate={createAlbum}
+			ondelete={deleteAlbum}
+			onrename={renameAlbum}
+			onduplicate={duplicateAlbum}
+			onaddMedia={addMediaToAlbum}
+			onswitchProfile={switchProfileWithPrompt}
+			oncreateProfile={createProfileWithPrompt}
 			ondeleteProfile={deleteProfile}
 		/>
 
@@ -807,8 +1155,9 @@
 				{columns}
 				{selectMode}
 				selectedCount={selectedIds.size}
-				{folders}
+				{albums}
 				{uploading}
+				{compressOnUpload}
 				{theme}
 				onviewMode={(m) => (viewMode = m)}
 				onshowImages={(v) => (showImages = v)}
@@ -817,9 +1166,19 @@
 				ondateTo={(v) => (dateTo = v)}
 				onsearchQuery={(v) => (searchQuery = v)}
 				oncolumns={(v) => (columns = v)}
+				oncompressOnUpload={(v) => {
+					compressOnUpload = v;
+					try {
+						localStorage.setItem('mo_compress', v ? '1' : '0');
+					} catch {
+						/* ignore */
+					}
+				}}
+				onconvertLibrary={convertLibraryToAv1}
 				ontoggleSelect={toggleSelectMode}
 				onclearSelection={clearSelection}
-				onmove={moveSelected}
+				onaddToAlbum={addSelectedToAlbum}
+				oncompress={() => compressMediaIds([...selectedIds])}
 				ondelete={deleteSelected}
 				onuploadClick={() => fileInput?.click()}
 				ontheme={setTheme}
@@ -829,6 +1188,11 @@
 				<div class="alert alert-error mx-4 mt-3 py-2 text-sm" role="alert">
 					<span>{errorMessage}</span>
 					<button class="btn btn-ghost btn-xs" onclick={() => (errorMessage = '')}>Dismiss</button>
+				</div>
+			{:else if convertResultMessage}
+				<div class="alert alert-success mx-4 mt-3 py-2 text-sm" role="status">
+					<span>{convertResultMessage}</span>
+					<button class="btn btn-ghost btn-xs" onclick={() => (convertResultMessage = '')}>Dismiss</button>
 				</div>
 			{:else if uploading && uploadProgress != null}
 				<div class="alert alert-info mx-4 mt-3 py-2 text-sm" role="status">
@@ -851,15 +1215,15 @@
 						<p class="text-lg font-medium text-base-content/80">
 							{searchQuery.trim()
 								? 'No matching media'
-								: activeFolder === null
+								: activeAlbum === null
 									? 'No unassigned media'
 									: 'No media yet'}
 						</p>
 						<p class="mt-1 max-w-sm text-sm">
 							{#if searchQuery.trim()}
 								Try a different search, or clear the search box.
-							{:else if activeFolder === null}
-								Upload files here, or move items out of folders to see them in Unassigned.
+							{:else if activeAlbum === null}
+								Upload files here, or remove items from albums to see them in Unassigned.
 							{:else}
 								Drag and drop pictures or videos here, or use Upload. Double-click an item to expand it.
 							{/if}
@@ -938,5 +1302,39 @@
 		items={contextMenuItems}
 		onselect={handleContextSelect}
 		onclose={() => (contextMenu = { ...contextMenu, open: false })}
+	/>
+
+	<PasscodeModal
+		open={profileModal.open}
+		mode={profileModal.mode}
+		profileName={profileModal.mode === 'create' ? profileModal.prefillName : profileModal.profileName}
+		mediaCount={profileModal.mediaCount}
+		requiresPasscode={profileModal.requiresPasscode}
+		busy={profileModalBusy}
+		errorMessage={profileModalError}
+		oncancel={closeProfileModal}
+		onsubmit={handleProfileModalSubmit}
+	/>
+
+	<ConfirmModal
+		open={confirmModal.open}
+		title={confirmModal.title}
+		message={confirmModal.message}
+		confirmLabel={confirmModal.confirmLabel}
+		destructive={confirmModal.destructive}
+		busy={confirmModalBusy}
+		oncancel={closeConfirmModal}
+		onconfirm={handleConfirmModal}
+	/>
+
+	<PromptModal
+		open={promptModal.open}
+		title={promptModal.title}
+		label={promptModal.label}
+		initialValue={promptModal.initialValue}
+		busy={promptModalBusy}
+		errorMessage={promptModalError}
+		oncancel={closePromptModal}
+		onsubmit={handlePromptModalSubmit}
 	/>
 {/if}

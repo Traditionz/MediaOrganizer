@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Folder, ThemeMode, ViewMode } from '$lib/types';
+	import type { Album, ThemeMode, ViewMode } from '$lib/types';
 
 	interface Props {
 		viewMode: ViewMode;
@@ -11,8 +11,9 @@
 		columns: number;
 		selectMode: boolean;
 		selectedCount: number;
-		folders: Folder[];
+		albums: Album[];
 		uploading: boolean;
+		compressOnUpload: boolean;
 		theme: ThemeMode;
 		onviewMode: (mode: ViewMode) => void;
 		onshowImages: (value: boolean) => void;
@@ -21,9 +22,12 @@
 		ondateTo: (value: string) => void;
 		onsearchQuery: (value: string) => void;
 		oncolumns: (value: number) => void;
+		oncompressOnUpload: (value: boolean) => void;
+		onconvertLibrary: () => void;
 		ontoggleSelect: () => void;
 		onclearSelection: () => void;
-		onmove: (folderId: string | null) => void;
+		onaddToAlbum: (albumId: string) => void;
+		oncompress: () => void;
 		ondelete: () => void;
 		onuploadClick: () => void;
 		ontheme: (theme: ThemeMode) => void;
@@ -39,8 +43,9 @@
 		columns,
 		selectMode,
 		selectedCount,
-		folders,
+		albums,
 		uploading,
+		compressOnUpload,
 		theme,
 		onviewMode,
 		onshowImages,
@@ -49,17 +54,19 @@
 		ondateTo,
 		onsearchQuery,
 		oncolumns,
+		oncompressOnUpload,
+		onconvertLibrary,
 		ontoggleSelect,
 		onclearSelection,
-		onmove,
+		onaddToAlbum,
+		oncompress,
 		ondelete,
 		onuploadClick,
 		ontheme
 	}: Props = $props();
 
-	let moveTarget = $state('');
+	let addTarget = $state('');
 
-	const folderLabel = (folder: Folder) => folder.path ?? folder.name;
 	const showSelectionActions = $derived(selectMode || selectedCount > 0);
 </script>
 
@@ -68,25 +75,26 @@
 		<span class="badge badge-primary badge-outline">{selectedCount} selected</span>
 		<select
 			class="select select-bordered select-sm w-auto max-w-[12rem]"
-			bind:value={moveTarget}
+			bind:value={addTarget}
 			disabled={!selectedCount}
 		>
-			<option value="" disabled>Move to…</option>
-			<option value="null">Unfiled</option>
-			{#each folders as folder (folder.id)}
-				<option value={String(folder.id)}>{folderLabel(folder)}</option>
+			<option value="" disabled>Add to album…</option>
+			{#each albums as album (album.id)}
+				<option value={album.id}>{album.name}</option>
 			{/each}
 		</select>
 		<button
 			class="btn btn-sm btn-primary"
-			disabled={!selectedCount || !moveTarget}
+			disabled={!selectedCount || !addTarget}
 			onclick={() => {
-				const folderId = moveTarget === 'null' ? null : moveTarget;
-				onmove(folderId);
-				moveTarget = '';
+				onaddToAlbum(addTarget);
+				addTarget = '';
 			}}
 		>
-			Move
+			Add
+		</button>
+		<button class="btn btn-sm" disabled={!selectedCount || uploading} onclick={() => oncompress()}>
+			Compress
 		</button>
 		<button class="btn btn-sm btn-error btn-outline" disabled={!selectedCount} onclick={ondelete}>
 			Delete
@@ -196,6 +204,28 @@
 			oninput={(e) => oncolumns(Number(e.currentTarget.value))}
 		/>
 	</label>
+
+	<label
+		class="flex cursor-pointer items-center gap-1.5 text-sm"
+		title="Videos → AV1, images → AVIF when smaller"
+	>
+		<input
+			type="checkbox"
+			class="checkbox checkbox-sm checkbox-primary"
+			checked={compressOnUpload}
+			onchange={(e) => oncompressOnUpload(e.currentTarget.checked)}
+		/>
+		<span class="whitespace-nowrap">Compress</span>
+	</label>
+
+	<button
+		class="btn btn-sm btn-outline"
+		disabled={uploading}
+		onclick={onconvertLibrary}
+		title="Re-encode all videos in this profile to AV1"
+	>
+		Convert to AV1
+	</button>
 
 	<button
 		class="btn btn-sm btn-ghost btn-square ml-auto"

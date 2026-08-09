@@ -6,17 +6,15 @@ export interface Profile {
 	id: string;
 	name: string;
 	created_at: string;
+	/** True when a passcode is required to unlock this profile */
+	has_passcode: boolean;
 }
 
-export interface Folder {
+export interface Album {
 	id: string;
 	name: string;
 	created_at: string;
 	media_count?: number;
-	/** Full path for nested folders, e.g. "Travel/2024/Italy" */
-	path?: string;
-	/** Parent folder id when nested; null/undefined = root */
-	parent_id?: string | null;
 }
 
 export interface MediaItem {
@@ -24,10 +22,8 @@ export interface MediaItem {
 	original_name: string;
 	mime_type: string;
 	media_type: MediaType;
-	folder_id: string | null;
-	folder_name: string | null;
-	/** Nested folder path when available, e.g. "Travel/2024/Italy" */
-	folder_path?: string | null;
+	album_ids: string[];
+	album_names: string[];
 	size: number;
 	width: number | null;
 	height: number | null;
@@ -37,7 +33,7 @@ export interface MediaItem {
 }
 
 export interface MediaFilters {
-	folderId: string | null | 'all';
+	albumId: string | null | 'all';
 	showImages: boolean;
 	showVideos: boolean;
 	dateFrom: string;

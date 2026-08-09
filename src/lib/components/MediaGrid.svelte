@@ -12,7 +12,7 @@
 		oncontextmenu?: (e: MouseEvent, item: MediaItem) => void;
 	}
 
-	let { items, selectedIds, selectMode, columns = 4, onselect, onopen, oncontextmenu }: Props =
+	let { items, selectedIds, selectMode, columns = 8, onselect, onopen, oncontextmenu }: Props =
 		$props();
 </script>
 
