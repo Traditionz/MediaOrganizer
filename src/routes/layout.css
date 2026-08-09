@@ -1,0 +1,23 @@
+@import 'tailwindcss';
+@plugin 'daisyui' {
+	themes: light --default, dark --prefersdark;
+}
+
+:root {
+	--media-sidebar-width: 240px;
+}
+
+html,
+body {
+	height: 100%;
+	overflow: hidden;
+}
+
+body {
+	font-family: 'Segoe UI', 'DM Sans', system-ui, sans-serif;
+}
+
+.media-scroll {
+	scrollbar-width: thin;
+	scrollbar-color: oklch(var(--bc) / 0.25) transparent;
+}
