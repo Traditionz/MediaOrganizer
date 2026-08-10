@@ -1,27 +1,18 @@
 /** In-memory drag session — custom MIME types are unreliable during dragover. */
-export type InternalDragKind = 'media' | 'folder';
+export type InternalDragKind = 'media';
 
 let kind: InternalDragKind | null = null;
 let mediaIds: string[] = [];
-let folderId: string | null = null;
 let dragGhostEl: HTMLElement | null = null;
 
 export function beginMediaDrag(ids: string[]) {
 	kind = 'media';
 	mediaIds = ids.filter((id) => typeof id === 'string' && id.length > 0);
-	folderId = null;
-}
-
-export function beginFolderDrag(id: string) {
-	kind = 'folder';
-	folderId = id;
-	mediaIds = [];
 }
 
 export function endInternalDrag() {
 	kind = null;
 	mediaIds = [];
-	folderId = null;
 	clearDragGhost();
 }
 
@@ -116,10 +107,9 @@ export function setCompactMediaDragImage(
 export function getInternalDrag(): {
 	kind: InternalDragKind;
 	mediaIds: string[];
-	folderId: string | null;
 } | null {
 	if (!kind) return null;
-	return { kind, mediaIds: [...mediaIds], folderId };
+	return { kind, mediaIds: [...mediaIds] };
 }
 
 export function isInternalDragActive(): boolean {

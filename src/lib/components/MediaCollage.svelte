@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { MediaItem } from '$lib/types';
 	import { SvelteMap } from 'svelte/reactivity';
+	import { appDefaults } from '$lib/config/defaults';
 	import MediaCard from './MediaCard.svelte';
 
 	/**
@@ -24,7 +25,7 @@
 		items,
 		selectedIds,
 		selectMode,
-		columns = 4,
+		columns = appDefaults.columns,
 		onselect,
 		onopen,
 		oncontextmenu

@@ -11,7 +11,7 @@ import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import type { MediaItem, MediaType } from '$lib/types';
 import db, { filePathForKey, newId } from './db';
-import { listFolders } from './folders';
+import { listAlbums } from './albums';
 
 type MediaRow = {
 	id: string;
@@ -19,7 +19,6 @@ type MediaRow = {
 	original_name: string;
 	mime_type: string;
 	media_type: MediaType;
-	folder_id: string | null;
 	size: number;
 	width: number | null;
 	height: number | null;
@@ -29,7 +28,7 @@ type MediaRow = {
 };
 
 export interface MediaQuery {
-	folderId?: string | null | 'all';
+	albumId?: string | null | 'all';
 	mediaType?: 'all' | MediaType;
 	dateFrom?: string;
 	dateTo?: string;
@@ -39,19 +38,51 @@ function normalizeCreated(iso: string): string {
 	return iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`;
 }
 
+function loadAlbumMembership(
+	profileId: string,
+	mediaIds: string[]
+): Map<string, { ids: string[]; names: string[] }> {
+	const map = new Map<string, { ids: string[]; names: string[] }>();
+	for (const id of mediaIds) map.set(id, { ids: [], names: [] });
+	if (!mediaIds.length) return map;
+
+	const albums = listAlbums(profileId);
+	const albumNameById = new Map(albums.map((a) => [a.id, a.name]));
+
+	const placeholders = mediaIds.map(() => '?').join(', ');
+	const rows = db
+		.prepare(
+			`
+			SELECT am.media_id, am.album_id
+			FROM album_media am
+			INNER JOIN albums a ON a.id = am.album_id
+			WHERE a.profile_id = ? AND am.media_id IN (${placeholders})
+			ORDER BY a.name COLLATE NOCASE
+		`
+		)
+		.all(profileId, ...mediaIds) as Array<{ media_id: string; album_id: string }>;
+
+	for (const row of rows) {
+		const entry = map.get(row.media_id);
+		if (!entry) continue;
+		entry.ids.push(row.album_id);
+		entry.names.push(albumNameById.get(row.album_id) ?? row.album_id);
+	}
+	return map;
+}
+
 function mapRow(
 	row: MediaRow,
-	folderName: string | null,
-	folderPath: string | null
+	albumIds: string[],
+	albumNames: string[]
 ): MediaItem {
 	return {
 		id: row.id,
 		original_name: row.original_name,
 		mime_type: row.mime_type,
 		media_type: row.media_type,
-		folder_id: row.folder_id,
-		folder_name: folderName,
-		folder_path: folderPath,
+		album_ids: albumIds,
+		album_names: albumNames,
 		size: row.size,
 		width: row.width,
 		height: row.height,
@@ -60,12 +91,14 @@ function mapRow(
 	};
 }
 
-function attachFolderPaths(profileId: string, rows: MediaRow[]): MediaItem[] {
-	const folders = listFolders(profileId);
-	const byId = new Map(folders.map((f) => [f.id, f]));
+function attachAlbums(profileId: string, rows: MediaRow[]): MediaItem[] {
+	const membership = loadAlbumMembership(
+		profileId,
+		rows.map((r) => r.id)
+	);
 	return rows.map((row) => {
-		const folder = row.folder_id ? byId.get(row.folder_id) : undefined;
-		return mapRow(row, folder?.name ?? null, folder?.path ?? folder?.name ?? null);
+		const entry = membership.get(row.id) ?? { ids: [], names: [] };
+		return mapRow(row, entry.ids, entry.names);
 	});
 }
 
@@ -73,12 +106,16 @@ export function listMedia(profileId: string, query: MediaQuery = {}): MediaItem[
 	const clauses = ['m.profile_id = ?'];
 	const params: unknown[] = [profileId];
 
-	if (query.folderId !== undefined && query.folderId !== 'all') {
-		if (query.folderId === null) {
-			clauses.push('m.folder_id IS NULL');
+	if (query.albumId !== undefined && query.albumId !== 'all') {
+		if (query.albumId === null) {
+			clauses.push(
+				`NOT EXISTS (SELECT 1 FROM album_media am WHERE am.media_id = m.id)`
+			);
 		} else {
-			clauses.push('m.folder_id = ?');
-			params.push(query.folderId);
+			clauses.push(
+				`EXISTS (SELECT 1 FROM album_media am WHERE am.media_id = m.id AND am.album_id = ?)`
+			);
+			params.push(query.albumId);
 		}
 	}
 
@@ -107,7 +144,7 @@ export function listMedia(profileId: string, query: MediaQuery = {}): MediaItem[
 		)
 		.all(...params) as MediaRow[];
 
-	return attachFolderPaths(profileId, rows);
+	return attachAlbums(profileId, rows);
 }
 
 export function getMediaMeta(profileId: string, id: string): MediaItem | undefined {
@@ -115,7 +152,7 @@ export function getMediaMeta(profileId: string, id: string): MediaItem | undefin
 		.prepare('SELECT * FROM media WHERE id = ? AND profile_id = ?')
 		.get(id, profileId) as MediaRow | undefined;
 	if (!row) return undefined;
-	return attachFolderPaths(profileId, [row])[0];
+	return attachAlbums(profileId, [row])[0];
 }
 
 export function getMediaForServe(
@@ -134,7 +171,7 @@ export function getMediaForServe(
 	if (!row) return null;
 	const path = filePathForKey(row.storage_key);
 	if (!existsSync(path)) return null;
-	const meta = attachFolderPaths(profileId, [row])[0];
+	const meta = attachAlbums(profileId, [row])[0];
 	return {
 		meta,
 		path,
@@ -144,24 +181,26 @@ export function getMediaForServe(
 	};
 }
 
+function assertAlbum(profileId: string, albumId: string): void {
+	const album = db
+		.prepare('SELECT id FROM albums WHERE id = ? AND profile_id = ?')
+		.get(albumId, profileId);
+	if (!album) throw new Error('Album not found');
+}
+
 export async function insertMediaFromStream(
 	profileId: string,
 	input: {
 		originalName: string;
 		mimeType: string;
 		mediaType: MediaType;
-		folderId: string | null;
+		albumId: string | null;
 		width: number | null;
 		height: number | null;
 		body: ReadableStream<Uint8Array> | Readable;
 	}
 ): Promise<MediaItem> {
-	if (input.folderId) {
-		const folder = db
-			.prepare('SELECT id FROM folders WHERE id = ? AND profile_id = ?')
-			.get(input.folderId, profileId);
-		if (!folder) throw new Error('Folder not found');
-	}
+	if (input.albumId) assertAlbum(profileId, input.albumId);
 
 	const id = newId();
 	const storageKey = id;
@@ -178,25 +217,33 @@ export async function insertMediaFromStream(
 		const size = statSync(tmp).size;
 		renameSync(tmp, dest);
 
-		db.prepare(
+		const tx = db.transaction(() => {
+			db.prepare(
+				`
+				INSERT INTO media (
+					id, profile_id, original_name, mime_type, media_type,
+					size, width, height, storage_key
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`
-			INSERT INTO media (
-				id, profile_id, original_name, mime_type, media_type, folder_id,
-				size, width, height, storage_key
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`
-		).run(
-			id,
-			profileId,
-			input.originalName,
-			input.mimeType,
-			input.mediaType,
-			input.folderId,
-			size,
-			input.width,
-			input.height,
-			storageKey
-		);
+			).run(
+				id,
+				profileId,
+				input.originalName,
+				input.mimeType,
+				input.mediaType,
+				size,
+				input.width,
+				input.height,
+				storageKey
+			);
+			if (input.albumId) {
+				db.prepare('INSERT INTO album_media (album_id, media_id) VALUES (?, ?)').run(
+					input.albumId,
+					id
+				);
+			}
+		});
+		tx();
 	} catch (err) {
 		try {
 			if (existsSync(tmp)) unlinkSync(tmp);
@@ -210,19 +257,146 @@ export async function insertMediaFromStream(
 	return getMediaMeta(profileId, id)!;
 }
 
-export function moveMedia(profileId: string, ids: string[], folderId: string | null): void {
-	if (folderId) {
-		const folder = db
-			.prepare('SELECT id FROM folders WHERE id = ? AND profile_id = ?')
-			.get(folderId, profileId);
-		if (!folder) throw new Error('Folder not found');
+/** Compress on-disk media to AV1 (video) or AVIF (image). Keeps original if not smaller. */
+export async function compressMedia(profileId: string, id: string): Promise<MediaItem> {
+	const row = db
+		.prepare('SELECT * FROM media WHERE id = ? AND profile_id = ?')
+		.get(id, profileId) as MediaRow | undefined;
+	if (!row) throw new Error('Media not found');
+
+	const path = filePathForKey(row.storage_key);
+	if (!existsSync(path)) throw new Error('Media file missing on disk');
+
+	const { compressImageToAvif, compressVideoToAv1, renameWithExt } = await import('./compress');
+
+	const result =
+		row.media_type === 'video'
+			? await compressVideoToAv1(path)
+			: await compressImageToAvif(path);
+
+	if (result.skipped && result.newSize === row.size) {
+		if (
+			(row.media_type === 'video' && row.mime_type !== 'video/mp4') ||
+			(row.media_type === 'image' && result.reason === 'Already AVIF' && row.mime_type !== 'image/avif')
+		) {
+			db.prepare(
+				'UPDATE media SET mime_type = ?, original_name = ? WHERE id = ? AND profile_id = ?'
+			).run(result.mimeType, renameWithExt(row.original_name, result.ext), id, profileId);
+		}
+		return getMediaMeta(profileId, id)!;
 	}
 
-	const stmt = db.prepare(
-		'UPDATE media SET folder_id = ? WHERE id = ? AND profile_id = ?'
+	db.prepare(
+		`
+		UPDATE media
+		SET size = ?, mime_type = ?, original_name = ?,
+			width = COALESCE(?, width), height = COALESCE(?, height)
+		WHERE id = ? AND profile_id = ?
+	`
+	).run(
+		result.newSize,
+		result.mimeType,
+		renameWithExt(row.original_name, result.ext),
+		result.width,
+		result.height,
+		id,
+		profileId
+	);
+
+	return getMediaMeta(profileId, id)!;
+}
+
+/** After upload: optionally recompress; failures leave the original upload intact. */
+export async function maybeCompressUploaded(
+	profileId: string,
+	id: string,
+	enabled: boolean
+): Promise<MediaItem> {
+	const meta = getMediaMeta(profileId, id);
+	if (!meta) throw new Error('Media not found');
+	if (!enabled) return meta;
+	try {
+		return await compressMedia(profileId, id);
+	} catch (err) {
+		console.warn('[media-organizer] compress skipped:', err instanceof Error ? err.message : err);
+		return meta;
+	}
+}
+
+export type BulkCompressSummary = {
+	total: number;
+	converted: number;
+	skipped: number;
+	failed: number;
+	bytesSaved: number;
+	errors: string[];
+};
+
+/** Convert all non-AV1 videos in a profile to AV1 (keeps original when not smaller). */
+export async function compressAllVideos(profileId: string): Promise<BulkCompressSummary> {
+	const rows = db
+		.prepare(
+			`SELECT id, original_name, size FROM media WHERE profile_id = ? AND media_type = 'video' ORDER BY created_at ASC`
+		)
+		.all(profileId) as Array<{ id: string; original_name: string; size: number }>;
+
+	const summary: BulkCompressSummary = {
+		total: rows.length,
+		converted: 0,
+		skipped: 0,
+		failed: 0,
+		bytesSaved: 0,
+		errors: []
+	};
+
+	for (const row of rows) {
+		const before = row.size;
+		try {
+			const after = await compressMedia(profileId, row.id);
+			const saved = before - after.size;
+			if (saved > 0) {
+				summary.converted += 1;
+				summary.bytesSaved += saved;
+			} else {
+				summary.skipped += 1;
+			}
+		} catch (err) {
+			summary.failed += 1;
+			const message = err instanceof Error ? err.message : String(err);
+			summary.errors.push(`${row.original_name}: ${message}`);
+			console.warn('[media-organizer] bulk AV1 failed:', row.id, message);
+		}
+	}
+
+	return summary;
+}
+
+export function addMediaToAlbum(profileId: string, ids: string[], albumId: string): void {
+	assertAlbum(profileId, albumId);
+	const insert = db.prepare(
+		'INSERT OR IGNORE INTO album_media (album_id, media_id) VALUES (?, ?)'
+	);
+	const exists = db.prepare('SELECT id FROM media WHERE id = ? AND profile_id = ?');
+	const tx = db.transaction((mediaIds: string[]) => {
+		for (const id of mediaIds) {
+			if (!exists.get(id, profileId)) continue;
+			insert.run(albumId, id);
+		}
+	});
+	tx(ids);
+}
+
+export function removeMediaFromAlbum(profileId: string, ids: string[], albumId: string): void {
+	assertAlbum(profileId, albumId);
+	const del = db.prepare(
+		`
+		DELETE FROM album_media
+		WHERE album_id = ? AND media_id = ?
+			AND EXISTS (SELECT 1 FROM media m WHERE m.id = media_id AND m.profile_id = ?)
+	`
 	);
 	const tx = db.transaction((mediaIds: string[]) => {
-		for (const id of mediaIds) stmt.run(folderId, id, profileId);
+		for (const id of mediaIds) del.run(albumId, id, profileId);
 	});
 	tx(ids);
 }
@@ -250,25 +424,24 @@ function copyFileName(name: string): string {
 export function duplicateMedia(
 	profileId: string,
 	ids: string[],
-	folderId: string | null
+	albumId: string | null
 ): MediaItem[] {
-	if (folderId) {
-		const folder = db
-			.prepare('SELECT id FROM folders WHERE id = ? AND profile_id = ?')
-			.get(folderId, profileId);
-		if (!folder) throw new Error('Folder not found');
-	}
+	if (albumId) assertAlbum(profileId, albumId);
 
 	const created: MediaItem[] = [];
 	const select = db.prepare('SELECT * FROM media WHERE id = ? AND profile_id = ?');
 	const insert = db.prepare(
 		`
 		INSERT INTO media (
-			id, profile_id, original_name, mime_type, media_type, folder_id,
+			id, profile_id, original_name, mime_type, media_type,
 			size, width, height, storage_key, thumbnail_key
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	);
+	const insertMembership = db.prepare(
+		'INSERT OR IGNORE INTO album_media (album_id, media_id) VALUES (?, ?)'
+	);
+	const selectMemberships = db.prepare('SELECT album_id FROM album_media WHERE media_id = ?');
 
 	for (const id of ids) {
 		const row = select.get(id, profileId) as MediaRow | undefined;
@@ -292,19 +465,28 @@ export function duplicateMedia(
 		}
 
 		const copyName = copyFileName(row.original_name);
-		insert.run(
-			newMediaId,
-			profileId,
-			copyName,
-			row.mime_type,
-			row.media_type,
-			folderId,
-			row.size,
-			row.width,
-			row.height,
-			destKey,
-			thumbKey
-		);
+		const tx = db.transaction(() => {
+			insert.run(
+				newMediaId,
+				profileId,
+				copyName,
+				row.mime_type,
+				row.media_type,
+				row.size,
+				row.width,
+				row.height,
+				destKey,
+				thumbKey
+			);
+			if (albumId) {
+				insertMembership.run(albumId, newMediaId);
+			} else {
+				const memberships = selectMemberships.all(id) as Array<{ album_id: string }>;
+				for (const m of memberships) insertMembership.run(m.album_id, newMediaId);
+			}
+		});
+		tx();
+
 		const meta = getMediaMeta(profileId, newMediaId);
 		if (meta) created.push(meta);
 	}
@@ -408,6 +590,20 @@ export function countAllMedia(profileId: string): number {
 		db.prepare('SELECT COUNT(*) AS c FROM media WHERE profile_id = ?').get(profileId) as {
 			c: number;
 		}
+	).c;
+}
+
+export function countUnassignedMedia(profileId: string): number {
+	return (
+		db
+			.prepare(
+				`
+			SELECT COUNT(*) AS c FROM media m
+			WHERE m.profile_id = ?
+				AND NOT EXISTS (SELECT 1 FROM album_media am WHERE am.media_id = m.id)
+		`
+			)
+			.get(profileId) as { c: number }
 	).c;
 }
 

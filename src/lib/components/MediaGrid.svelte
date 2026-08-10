@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { MediaItem } from '$lib/types';
+	import { appDefaults } from '$lib/config/defaults';
 	import MediaCard from './MediaCard.svelte';
 
 	interface Props {
@@ -12,8 +13,15 @@
 		oncontextmenu?: (e: MouseEvent, item: MediaItem) => void;
 	}
 
-	let { items, selectedIds, selectMode, columns = 4, onselect, onopen, oncontextmenu }: Props =
-		$props();
+	let {
+		items,
+		selectedIds,
+		selectMode,
+		columns = appDefaults.columns,
+		onselect,
+		onopen,
+		oncontextmenu
+	}: Props = $props();
 </script>
 
 <div class="media-grid gap-3" style:--media-cols={columns}>

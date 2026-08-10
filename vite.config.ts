@@ -15,9 +15,9 @@ export default defineConfig({
 		})
 	],
 	ssr: {
-		external: ['better-sqlite3']
+		external: ['better-sqlite3', 'sharp', 'ffmpeg-static']
 	},
 	optimizeDeps: {
-		exclude: ['better-sqlite3']
+		exclude: ['better-sqlite3', 'sharp', 'ffmpeg-static']
 	}
 });

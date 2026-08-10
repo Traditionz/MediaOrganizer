@@ -2,11 +2,11 @@
 
 A **local-only** media library for organizing pictures and videos. Built with **SvelteKit**, **DaisyUI**, and **SQLite**.
 
-- Metadata (profiles, folders, names) lives in a SQLite database: `data/media.db`
+- Metadata (profiles, albums, names) lives in a SQLite database: `data/media.db`
 - Media bytes are stored as files under `data/files/` and streamed on upload/playback
 - No Docker, no MongoDB, no cloud database — when the app is off, nothing keeps running in the background
 
-Each **profile** has its own folders and media.
+Each **profile** has its own albums and media. Passcodes are **optional** per profile.
 
 ---
 
@@ -104,6 +104,10 @@ Go to [http://localhost:5173](http://localhost:5173).
 
 Create a **profile** on the welcome screen, then upload and organize media.
 
+### Optional: UI defaults via `.env`
+
+Copy [`.env.example`](.env.example) to `.env` (or `.env.local`) to customize install-time defaults such as default view, columns, filters, album view, compress-on-upload, theme, and upload concurrency. Restart the dev server after changes. Theme and compress toggles still persist in `localStorage` after the user changes them in the UI.
+
 ### 4. Stop the app
 
 Press `Ctrl+C` in the terminal. No background database process remains.
@@ -126,7 +130,7 @@ Open [http://localhost:5173](http://localhost:5173).
 
 | Piece | Location | Notes |
 |-------|----------|--------|
-| Profiles, folders, media metadata | `data/media.db` (SQLite) | Embedded in the app process |
+| Profiles, albums, media metadata | `data/media.db` (SQLite) | Embedded in the app process |
 | Images / videos | `data/files/<id>` | Streamed to/from disk; supports multi‑GB MP4 |
 | Upload | HTTP body → disk stream | Does not load whole files into RAM |
 | Playback | File stream + HTTP Range | Efficient seeking for large videos |
@@ -163,15 +167,15 @@ Still uses local `data/` — this project is not intended for remote production 
 ### Profiles
 
 - Create and switch profiles from the welcome screen or the sidebar header
-- Delete a profile (removes that profile’s folders, media rows, and files)
+- Delete a profile (removes that profile’s albums, media rows, and files)
 - Each profile only sees its own library
 
-### Library & folders
+### Library & albums
 
-- **All media** view, plus a nested folder tree (VS Code–style)
-- Create root folders or subfolders (`+` on the Folders header or on a folder row)
-- Drag folders into folders; drag media onto folders
-- Right‑click a folder: copy name, rename, duplicate, move, new subfolder, delete
+- **All media**, **Unassigned**, and a flat list of **albums** — media can belong to any number of albums (many‑to‑many)
+- Create an album (`+` on the Albums header)
+- Drag media onto an album to add it (additive; media keeps its other album memberships)
+- Right‑click an album: copy name, rename, duplicate, delete (deleting an album only removes the membership — media itself is kept)
 
 ### Upload & playback
 
@@ -190,21 +194,33 @@ Still uses local `data/` — this project is not intended for remote production 
 
 - Click to select; **Ctrl/Cmd** toggle; **Shift** range select
 - Drag on empty space for a Windows‑style **marquee** selection
-- Multi‑select to move, download, duplicate, cut/copy, or delete
+- Multi‑select to add to an album, download, duplicate, cut/copy, or delete
 
 ### Media context menu (right‑click)
 
 | Action | Notes |
 |--------|--------|
 | Copy / Cut | Clipboard for paste |
-| Duplicate | Immediate copy in the current folder |
-| Move to… | Submenu of folders / unfiled |
+| Duplicate | Immediate copy in the current album |
+| Add to album… | Submenu of albums (additive) |
 | Copy name | System clipboard |
 | Rename | Single item |
 | Download | One or many |
+| Compress (AV1/AVIF) | Re-encode videos to AV1 / images to AVIF when smaller |
 | Delete | Confirms first |
 
 Empty area: **Paste**, **Upload…**
+
+### Compression
+
+With **Compress** enabled in the toolbar (default on), uploads are recompressed server-side:
+
+- **Videos** → AV1 in MP4 (`libaom-av1` via bundled ffmpeg)
+- **Images** → AVIF (via `sharp`)
+
+The smaller file is kept; if compression does not shrink the file, the original is kept. You can also compress existing items from the context menu or selection bar.
+
+AV1 encoding can take a while on large videos — the upload waits until compression finishes.
 
 ### Keyboard shortcuts
 
@@ -235,3 +251,4 @@ Empty area: **Paste**, **Upload…**
 - **Tailwind CSS** + **DaisyUI**
 - **SQLite** (`better-sqlite3`) for metadata
 - **Local filesystem** under `data/files/` for media bytes
+- **ffmpeg-static** + **sharp** for optional AV1 / AVIF compression

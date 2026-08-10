@@ -31,8 +31,13 @@
 
 	const src = $derived(`/api/media/${item.id}`);
 	const thumbSrc = $derived(`/api/media/${item.id}/thumbnail`);
-	const folderLabel = $derived(item.folder_path ?? item.folder_name ?? null);
-	const showFolderChip = $derived(Boolean(folderLabel));
+	const albumLabel = $derived.by(() => {
+		const names = item.album_names;
+		if (!names?.length) return null;
+		return names.length > 1 ? `${names[0]} +${names.length - 1}` : names[0];
+	});
+	const albumTitle = $derived(item.album_names?.join(', ') ?? '');
+	const showAlbumChip = $derived(Boolean(item.album_names?.length));
 	const showCheckbox = $derived(selected || selectMode);
 
 	let localThumb = $state(false);
@@ -201,9 +206,9 @@
 	>
 		<p class="truncate text-xs font-medium">{item.original_name}</p>
 		<div class="mt-1 flex items-center justify-between gap-2 text-[10px] opacity-90">
-			{#if showFolderChip && folderLabel}
-				<span class="badge badge-sm max-w-[70%] truncate border-0 bg-white/20 text-white" title={folderLabel}>
-					{folderLabel}
+			{#if showAlbumChip && albumLabel}
+				<span class="badge badge-sm max-w-[70%] truncate border-0 bg-white/20 text-white" title={albumTitle}>
+					{albumLabel}
 				</span>
 			{:else}
 				<span></span>
@@ -212,12 +217,12 @@
 		</div>
 	</div>
 
-	{#if !showCheckbox && showFolderChip && folderLabel}
+	{#if !showCheckbox && showAlbumChip && albumLabel}
 		<span
 			class="badge badge-sm absolute left-2 top-2 max-w-[75%] truncate border-0 bg-base-100/90 text-base-content shadow-sm"
-			title={folderLabel}
+			title={albumTitle}
 		>
-			{folderLabel}
+			{albumLabel}
 		</span>
 	{/if}
 </div>

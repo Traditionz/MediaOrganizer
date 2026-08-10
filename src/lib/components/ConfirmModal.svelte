@@ -1,0 +1,84 @@
+<script lang="ts">
+	import { fade, scale } from 'svelte/transition';
+
+	interface Props {
+		open: boolean;
+		title?: string;
+		message: string;
+		confirmLabel?: string;
+		cancelLabel?: string;
+		/** Use destructive (error) styling for the confirm button */
+		destructive?: boolean;
+		busy?: boolean;
+		oncancel: () => void;
+		onconfirm: () => void | Promise<void>;
+	}
+
+	let {
+		open,
+		title = 'Confirm',
+		message,
+		confirmLabel = 'Confirm',
+		cancelLabel = 'Cancel',
+		destructive = false,
+		busy = false,
+		oncancel,
+		onconfirm
+	}: Props = $props();
+
+	async function submit(e: Event) {
+		e.preventDefault();
+		if (busy) return;
+		await onconfirm();
+	}
+
+	function onkeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape' && open && !busy) oncancel();
+	}
+</script>
+
+<svelte:window {onkeydown} />
+
+{#if open}
+	<div
+		class="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
+		transition:fade={{ duration: 120 }}
+		role="dialog"
+		aria-modal="true"
+		aria-label={title}
+		tabindex="-1"
+		onclick={(e) => {
+			if (e.target === e.currentTarget && !busy) oncancel();
+		}}
+		onkeydown={(e) => {
+			if (e.key === 'Escape' && !busy) oncancel();
+		}}
+	>
+		<form
+			class="w-full max-w-md rounded-2xl border border-base-300 bg-base-100 p-5 shadow-2xl"
+			transition:scale={{ duration: 140, start: 0.96 }}
+			onsubmit={submit}
+		>
+			<header class="mb-4">
+				<h2 class="text-lg font-semibold">{title}</h2>
+				<p class="mt-1 text-sm text-base-content/60">{message}</p>
+			</header>
+
+			<footer class="mt-2 flex justify-end gap-2">
+				<button type="button" class="btn btn-ghost btn-sm" disabled={busy} onclick={oncancel}>
+					{cancelLabel}
+				</button>
+				<button
+					type="submit"
+					class={['btn btn-sm', destructive ? 'btn-error' : 'btn-primary']}
+					disabled={busy}
+				>
+					{#if busy}
+						<span class="loading loading-spinner loading-xs"></span>
+					{/if}
+					{confirmLabel}
+				</button>
+			</footer>
+		</form>
+	</div>
+{/if}

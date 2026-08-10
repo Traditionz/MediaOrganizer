@@ -2,11 +2,15 @@ import { json, error } from '@sveltejs/kit';
 import { Readable } from 'node:stream';
 import type { RequestHandler } from './$types';
 import {
+	addMediaToAlbum,
+	compressAllVideos,
+	compressMedia,
 	deleteMedia,
 	duplicateMedia,
 	insertMediaFromStream,
 	listMedia,
-	moveMedia,
+	maybeCompressUploaded,
+	removeMediaFromAlbum,
 	renameMedia
 } from '$lib/server/media';
 import { resolveProfileFromCookies } from '$lib/server/profileContext';
@@ -49,23 +53,30 @@ function guessMime(mime: string, filename: string, mediaType: MediaType): string
 	return 'image/jpeg';
 }
 
+function parseAlbumId(raw: unknown): string | null {
+	if (raw === null || raw === undefined || raw === '' || raw === 'all' || raw === 'null') {
+		return null;
+	}
+	return String(raw);
+}
+
 export const GET: RequestHandler = async ({ url, cookies }) => {
 	const profile = requireProfile(cookies);
-	const folderParam = url.searchParams.get('folder');
+	const albumParam = url.searchParams.get('album') ?? url.searchParams.get('folder');
 	const mediaType = (url.searchParams.get('type') ?? 'all') as 'all' | MediaType;
 	const dateFrom = url.searchParams.get('from') ?? undefined;
 	const dateTo = url.searchParams.get('to') ?? undefined;
 
-	let folderId: string | null | 'all' = 'all';
-	if (folderParam === 'null' || folderParam === 'unfiled') {
-		folderId = null;
-	} else if (folderParam && folderParam !== 'all') {
-		folderId = folderParam;
+	let albumId: string | null | 'all' = 'all';
+	if (albumParam === 'null' || albumParam === 'unfiled' || albumParam === 'unassigned') {
+		albumId = null;
+	} else if (albumParam && albumParam !== 'all') {
+		albumId = albumParam;
 	}
 
 	return json(
 		listMedia(profile.id, {
-			folderId,
+			albumId,
 			mediaType,
 			dateFrom,
 			dateTo
@@ -82,12 +93,9 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		if (body?.action === 'duplicate') {
 			const ids = Array.isArray(body?.ids) ? body.ids.map(String).filter(Boolean) : [];
 			if (!ids.length) throw error(400, 'At least one media id is required');
-			const folderId =
-				body?.folderId === null || body?.folderId === 'null' || body?.folderId === undefined
-					? null
-					: String(body.folderId);
+			const albumId = parseAlbumId(body?.albumId ?? body?.folderId);
 			try {
-				const created = duplicateMedia(profile.id, ids, folderId);
+				const created = duplicateMedia(profile.id, ids, albumId);
 				return json(created, { status: 201 });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : 'Failed to duplicate media';
@@ -115,23 +123,32 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		}
 
 		const mimeType = guessMime(contentType, originalName, mediaType);
-		const folderRaw = request.headers.get('x-folder-id');
-		const folderId =
-			!folderRaw || folderRaw === '' || folderRaw === 'all' || folderRaw === 'null'
-				? null
-				: folderRaw;
+		const albumRaw =
+			request.headers.get('x-album-id') ?? request.headers.get('x-folder-id');
+		const albumId = parseAlbumId(albumRaw);
 		const widthRaw = request.headers.get('x-width');
 		const heightRaw = request.headers.get('x-height');
+		const compress =
+			request.headers.get('x-compress') !== '0' &&
+			request.headers.get('x-compress') !== 'false';
 
 		try {
 			const item = await insertMediaFromStream(profile.id, {
 				originalName,
 				mimeType,
 				mediaType,
-				folderId,
+				albumId,
 				width: widthRaw ? Number(widthRaw) : null,
 				height: heightRaw ? Number(heightRaw) : null,
 				body: request.body
+			});
+			// Compress after responding — AV1 can take minutes and was freezing the
+			// client at ~99–100% while XHR waited for the response.
+			void maybeCompressUploaded(profile.id, item.id, compress).catch((err) => {
+				console.warn(
+					'[media-organizer] background compress failed:',
+					err instanceof Error ? err.message : err
+				);
 			});
 			return json(item, { status: 201 });
 		} catch (err) {
@@ -143,7 +160,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
 	const form = await request.formData();
 	const file = form.get('file');
-	const folderRaw = form.get('folderId');
+	const albumRaw = form.get('albumId') ?? form.get('folderId');
 	const widthRaw = form.get('width');
 	const heightRaw = form.get('height');
 
@@ -156,20 +173,25 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		throw error(400, 'Only image and video files are supported');
 	}
 
-	const folderId =
-		folderRaw === null || folderRaw === '' || folderRaw === 'all' || folderRaw === 'null'
-			? null
-			: String(folderRaw);
+	const albumId = parseAlbumId(albumRaw);
 
 	try {
 		const item = await insertMediaFromStream(profile.id, {
 			originalName: file.name,
 			mimeType: guessMime(file.type, file.name, mediaType),
 			mediaType,
-			folderId,
+			albumId,
 			width: widthRaw ? Number(widthRaw) : null,
 			height: heightRaw ? Number(heightRaw) : null,
 			body: Readable.fromWeb(file.stream() as import('node:stream/web').ReadableStream)
+		});
+		const compressFlag = String(form.get('compress') ?? '1');
+		const shouldCompress = compressFlag !== '0' && compressFlag !== 'false';
+		void maybeCompressUploaded(profile.id, item.id, shouldCompress).catch((err) => {
+			console.warn(
+				'[media-organizer] background compress failed:',
+				err instanceof Error ? err.message : err
+			);
 		});
 		return json(item, { status: 201 });
 	} catch (err) {
@@ -197,22 +219,67 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 		}
 	}
 
+	if (body?.action === 'compress') {
+		const ids = Array.isArray(body?.ids) ? body.ids.map(String).filter(Boolean) : [];
+		if (!ids.length) throw error(400, 'At least one media id is required');
+		const results = [];
+		for (const id of ids) {
+			try {
+				results.push(await compressMedia(profile.id, id));
+			} catch (err) {
+				const message = err instanceof Error ? err.message : 'Compress failed';
+				if (message.includes('not found')) throw error(404, message);
+				throw error(500, message);
+			}
+		}
+		return json(results);
+	}
+
+	if (body?.action === 'compress-all-videos') {
+		try {
+			const summary = await compressAllVideos(profile.id);
+			return json(summary);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'Bulk compress failed';
+			throw error(500, message);
+		}
+	}
+
 	const ids = Array.isArray(body?.ids) ? body.ids.map(String).filter(Boolean) : [];
 	if (!ids.length) throw error(400, 'At least one media id is required');
 
-	const folderId =
-		body?.folderId === null || body?.folderId === 'null' || body?.folderId === undefined
+	const albumIdRaw = body?.albumId ?? body?.folderId;
+	const albumId =
+		albumIdRaw === null || albumIdRaw === 'null' || albumIdRaw === undefined
 			? null
-			: String(body.folderId);
+			: String(albumIdRaw);
 
-	try {
-		moveMedia(profile.id, ids, folderId);
-	} catch (err) {
-		const message = err instanceof Error ? err.message : 'Failed to move media';
-		if (message.includes('not found')) throw error(404, message);
-		throw error(500, message);
+	if (body?.action === 'remove-from-album') {
+		if (!albumId) throw error(400, 'Album id is required');
+		try {
+			removeMediaFromAlbum(profile.id, ids, albumId);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'Failed to remove from album';
+			if (message.includes('not found')) throw error(404, message);
+			throw error(500, message);
+		}
+		return json({ ok: true });
 	}
-	return json({ ok: true });
+
+	// Default / add-to-album: additive membership
+	if (body?.action === 'add-to-album' || body?.action === undefined || body?.action === 'move') {
+		if (!albumId) throw error(400, 'Album id is required');
+		try {
+			addMediaToAlbum(profile.id, ids, albumId);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'Failed to add to album';
+			if (message.includes('not found')) throw error(404, message);
+			throw error(500, message);
+		}
+		return json({ ok: true });
+	}
+
+	throw error(400, 'Unsupported action');
 };
 
 export const DELETE: RequestHandler = async ({ request, cookies }) => {

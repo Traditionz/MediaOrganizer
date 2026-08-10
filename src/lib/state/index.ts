@@ -1,4 +1,3 @@
-export { appDefaults, defaultActiveAlbum, type DefaultAlbumView } from './config/defaults';
 export {
 	AppState,
 	createAppState,
@@ -9,4 +8,4 @@ export {
 	SelectionState,
 	UiState,
 	type LibraryLoad
-} from './state';
+} from './app.svelte';
