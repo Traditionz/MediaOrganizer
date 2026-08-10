@@ -5,13 +5,17 @@ import {
 	unlinkSync,
 	copyFileSync,
 	statSync,
-	renameSync
+	renameSync,
+	readdirSync
 } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import type { MediaItem, MediaType } from '$lib/types';
-import db, { filePathForKey, newId } from './db';
+import db, { FILES_DIR, filePathForKey, newId } from './db';
 import { listAlbums } from './albums';
+
+/** Reject near-empty / black-frame JPEGs from failed captures. */
+const MIN_THUMB_BYTES = 3000;
 
 type MediaRow = {
 	id: string;
@@ -71,6 +75,31 @@ function loadAlbumMembership(
 	return map;
 }
 
+function isValidThumbnail(thumbnailKey: string | null | undefined): boolean {
+	if (!thumbnailKey) return false;
+	const path = filePathForKey(thumbnailKey);
+	if (!existsSync(path)) return false;
+	try {
+		return statSync(path).size >= MIN_THUMB_BYTES;
+	} catch {
+		return false;
+	}
+}
+
+function clearInvalidThumbnail(profileId: string, id: string, thumbnailKey: string | null) {
+	if (!thumbnailKey) return;
+	const path = filePathForKey(thumbnailKey);
+	try {
+		if (existsSync(path)) unlinkSync(path);
+	} catch {
+		/* ignore */
+	}
+	db.prepare('UPDATE media SET thumbnail_key = NULL WHERE id = ? AND profile_id = ?').run(
+		id,
+		profileId
+	);
+}
+
 function mapRow(
 	row: MediaRow,
 	albumIds: string[],
@@ -87,7 +116,7 @@ function mapRow(
 		width: row.width,
 		height: row.height,
 		created_at: normalizeCreated(row.created_at),
-		has_thumbnail: Boolean(row.thumbnail_key)
+		has_thumbnail: isValidThumbnail(row.thumbnail_key)
 	};
 }
 
@@ -334,6 +363,8 @@ export type BulkCompressSummary = {
 
 /** Convert all non-AV1 videos in a profile to AV1 (keeps original when not smaller). */
 export async function compressAllVideos(profileId: string): Promise<BulkCompressSummary> {
+	cleanupOrphanAv1Temps();
+
 	const rows = db
 		.prepare(
 			`SELECT id, original_name, size FROM media WHERE profile_id = ? AND media_type = 'video' ORDER BY created_at ASC`
@@ -368,7 +399,62 @@ export async function compressAllVideos(profileId: string): Promise<BulkCompress
 		}
 	}
 
+	cleanupOrphanAv1Temps();
 	return summary;
+}
+
+/** Remove interrupted ffmpeg leftovers so they don't fill the disk. */
+export function cleanupOrphanAv1Temps(): void {
+	try {
+		for (const name of readdirSync(FILES_DIR)) {
+			if (!name.endsWith('.av1.tmp.mp4')) continue;
+			try {
+				unlinkSync(filePathForKey(name));
+			} catch {
+				/* ignore */
+			}
+		}
+	} catch {
+		/* ignore */
+	}
+}
+
+let av1BackfillRunning = false;
+const av1BackfillQueue = new Set<string>();
+
+/** Fire-and-forget AV1 conversion for a profile (non-blocking API). */
+export function enqueueAv1Backfill(profileId: string): void {
+	av1BackfillQueue.add(profileId);
+	void pumpAv1Backfill();
+}
+
+async function pumpAv1Backfill() {
+	if (av1BackfillRunning) return;
+	av1BackfillRunning = true;
+	try {
+		while (av1BackfillQueue.size > 0) {
+			const profileId = av1BackfillQueue.values().next().value as string;
+			av1BackfillQueue.delete(profileId);
+			try {
+				const summary = await compressAllVideos(profileId);
+				console.info(
+					'[media-organizer] AV1 backfill done:',
+					profileId,
+					`converted=${summary.converted}`,
+					`skipped=${summary.skipped}`,
+					`failed=${summary.failed}`
+				);
+			} catch (err) {
+				console.warn(
+					'[media-organizer] AV1 backfill failed:',
+					profileId,
+					err instanceof Error ? err.message : err
+				);
+			}
+		}
+	} finally {
+		av1BackfillRunning = false;
+	}
 }
 
 export function addMediaToAlbum(profileId: string, ids: string[], albumId: string): void {
@@ -530,8 +616,11 @@ export function getThumbnailPath(
 		.prepare('SELECT thumbnail_key FROM media WHERE id = ? AND profile_id = ?')
 		.get(id, profileId) as { thumbnail_key: string | null } | undefined;
 	if (!row?.thumbnail_key) return null;
+	if (!isValidThumbnail(row.thumbnail_key)) {
+		clearInvalidThumbnail(profileId, id, row.thumbnail_key);
+		return null;
+	}
 	const path = filePathForKey(row.thumbnail_key);
-	if (!existsSync(path)) return null;
 	return { path, mime: 'image/jpeg' };
 }
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Album, ThemeMode, ViewMode } from '$lib/types';
+	import type { ThemeMode, ViewMode } from '$lib/types';
 
 	interface Props {
 		viewMode: ViewMode;
@@ -11,7 +11,6 @@
 		columns: number;
 		selectMode: boolean;
 		selectedCount: number;
-		albums: Album[];
 		uploading: boolean;
 		compressOnUpload: boolean;
 		theme: ThemeMode;
@@ -23,10 +22,9 @@
 		onsearchQuery: (value: string) => void;
 		oncolumns: (value: number) => void;
 		oncompressOnUpload: (value: boolean) => void;
-		onconvertLibrary: () => void;
 		ontoggleSelect: () => void;
 		onclearSelection: () => void;
-		onaddToAlbum: (albumId: string) => void;
+		onopenAlbumPicker: () => void;
 		oncompress: () => void;
 		ondelete: () => void;
 		onuploadClick: () => void;
@@ -43,7 +41,6 @@
 		columns,
 		selectMode,
 		selectedCount,
-		albums,
 		uploading,
 		compressOnUpload,
 		theme,
@@ -55,17 +52,14 @@
 		onsearchQuery,
 		oncolumns,
 		oncompressOnUpload,
-		onconvertLibrary,
 		ontoggleSelect,
 		onclearSelection,
-		onaddToAlbum,
+		onopenAlbumPicker,
 		oncompress,
 		ondelete,
 		onuploadClick,
 		ontheme
 	}: Props = $props();
-
-	let addTarget = $state('');
 
 	const showSelectionActions = $derived(selectMode || selectedCount > 0);
 </script>
@@ -73,25 +67,12 @@
 <div class="flex flex-wrap items-center gap-2 border-b border-base-300 bg-base-100/90 px-4 py-3 backdrop-blur">
 	{#if showSelectionActions}
 		<span class="badge badge-primary badge-outline">{selectedCount} selected</span>
-		<select
-			class="select select-bordered select-sm w-auto max-w-[12rem]"
-			bind:value={addTarget}
-			disabled={!selectedCount}
-		>
-			<option value="" disabled>Add to album…</option>
-			{#each albums as album (album.id)}
-				<option value={album.id}>{album.name}</option>
-			{/each}
-		</select>
 		<button
 			class="btn btn-sm btn-primary"
-			disabled={!selectedCount || !addTarget}
-			onclick={() => {
-				onaddToAlbum(addTarget);
-				addTarget = '';
-			}}
+			disabled={!selectedCount}
+			onclick={onopenAlbumPicker}
 		>
-			Add
+			Add to album…
 		</button>
 		<button class="btn btn-sm" disabled={!selectedCount || uploading} onclick={() => oncompress()}>
 			Compress
@@ -217,15 +198,6 @@
 		/>
 		<span class="whitespace-nowrap">Compress</span>
 	</label>
-
-	<button
-		class="btn btn-sm btn-outline"
-		disabled={uploading}
-		onclick={onconvertLibrary}
-		title="Re-encode all videos in this profile to AV1"
-	>
-		Convert to AV1
-	</button>
 
 	<button
 		class="btn btn-sm btn-ghost btn-square ml-auto"

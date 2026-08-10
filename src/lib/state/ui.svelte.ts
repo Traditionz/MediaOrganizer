@@ -1,7 +1,7 @@
 import type { MediaItem } from '$lib/types';
 import type { PasscodeModalMode } from '$lib/components/PasscodeModal.svelte';
 
-export type ConfirmKind = 'convert-av1' | 'delete-album' | 'delete-media';
+export type ConfirmKind = 'delete-album' | 'delete-media';
 
 export type ProfileModalState = {
 	open: boolean;
@@ -30,6 +30,11 @@ export type PromptModalState = {
 	label: string;
 	initialValue: string;
 	mediaId: string | null;
+};
+
+export type AlbumPickerState = {
+	open: boolean;
+	mediaIds: string[];
 };
 
 export type ContextMenuState = {
@@ -92,6 +97,11 @@ export class UiState {
 	promptModalBusy = $state(false);
 	promptModalError = $state('');
 
+	albumPicker = $state<AlbumPickerState>({
+		open: false,
+		mediaIds: []
+	});
+
 	attachFileInput = (node: HTMLInputElement) => {
 		this.fileInput = node;
 		return () => {
@@ -150,6 +160,14 @@ export class UiState {
 			initialValue,
 			mediaId
 		};
+	}
+
+	openAlbumPicker(mediaIds: string[]) {
+		this.albumPicker = { open: true, mediaIds: [...mediaIds] };
+	}
+
+	closeAlbumPicker() {
+		this.albumPicker = { open: false, mediaIds: [] };
 	}
 
 	closeProfileModal() {

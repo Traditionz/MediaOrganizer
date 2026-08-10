@@ -18,6 +18,7 @@
 	import PasscodeModal from '$lib/components/PasscodeModal.svelte';
 	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
 	import PromptModal from '$lib/components/PromptModal.svelte';
+	import AlbumPickerModal from '$lib/components/AlbumPickerModal.svelte';
 	import Toolbar from '$lib/components/Toolbar.svelte';
 	import MediaGrid from '$lib/components/MediaGrid.svelte';
 	import MediaCollage from '$lib/components/MediaCollage.svelte';
@@ -36,6 +37,8 @@
 	const app = setAppState(createAppState());
 	const { prefs, library, selection, ui } = app;
 
+	let av1EnqueuedForProfile: string | null = null;
+
 	$effect(() => {
 		library.sync({
 			albums: data.albums,
@@ -44,6 +47,17 @@
 			profiles: data.profiles,
 			activeProfile: data.activeProfile
 		});
+		const profileId = data.activeProfile?.id ?? null;
+		if (profileId && profileId !== av1EnqueuedForProfile) {
+			av1EnqueuedForProfile = profileId;
+			void fetch('/api/media', {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ action: 'compress-all-videos' })
+			}).catch(() => {
+				/* background AV1 backfill */
+			});
+		}
 	});
 
 	async function selectProfile(id: string, passcode = '') {
@@ -176,41 +190,6 @@
 
 	async function deleteProfile(id: string) {
 		openDeleteProfileModal(id);
-	}
-
-	async function convertLibraryToAv1() {
-		ui.openConfirmModal({
-			kind: 'convert-av1',
-			title: 'Convert to AV1',
-			message:
-				'Convert all videos in this profile to AV1? This can take a long time for large libraries.',
-			confirmLabel: 'Convert'
-		});
-	}
-
-	async function runConvertLibraryToAv1() {
-		ui.uploading = true;
-		ui.uploadProgress = 0;
-		ui.errorMessage = '';
-		ui.convertResultMessage = '';
-		try {
-			const res = await fetch('/api/media', {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ action: 'compress-all-videos' })
-			});
-			const body = await res.json().catch(() => ({}));
-			if (!res.ok) throw new Error(body.message || 'Conversion failed');
-			ui.uploadProgress = 100;
-			await library.refresh();
-			const savedMb = ((body.bytesSaved ?? 0) / (1024 * 1024)).toFixed(1);
-			ui.convertResultMessage = `AV1 conversion done — converted ${body.converted}, skipped ${body.skipped}, failed ${body.failed}, saved ${savedMb} MB`;
-		} catch (err) {
-			ui.errorMessage = err instanceof Error ? err.message : 'Conversion failed';
-		} finally {
-			ui.uploading = false;
-			ui.uploadProgress = null;
-		}
 	}
 
 	async function createAlbum(name: string) {
@@ -409,17 +388,6 @@
 		}
 	}
 
-	const albumMenuChildren = $derived.by((): ContextMenuItem[] => {
-		const sorted = [...library.albums].sort((a, b) => a.name.localeCompare(b.name));
-		if (!sorted.length) {
-			return [{ id: 'add:none', label: 'No albums yet', disabled: true }];
-		}
-		return sorted.map((a) => ({
-			id: `add:${a.id}`,
-			label: a.name
-		}));
-	});
-
 	const contextMenuItems = $derived.by((): ContextMenuItem[] => {
 		if (ui.contextMenu.kind === 'empty') {
 			return [
@@ -438,11 +406,7 @@
 			{ id: 'copy', label: count > 1 ? `Copy ${count} items` : 'Copy' },
 			{ id: 'cut', label: count > 1 ? `Cut ${count} items` : 'Cut' },
 			{ id: 'duplicate', label: count > 1 ? `Duplicate ${count}` : 'Duplicate' },
-			{
-				id: 'add-to-album',
-				label: 'Add to album…',
-				children: albumMenuChildren
-			},
+			{ id: 'add-to-album', label: 'Add to album…' },
 			...(typeof library.activeAlbum === 'string' && library.activeAlbum !== 'all'
 				? [{ id: 'remove-from-album', label: 'Remove from album' } as ContextMenuItem]
 				: []),
@@ -541,9 +505,8 @@
 			}
 			return;
 		}
-		if (id.startsWith('add:')) {
-			const albumId = id.slice('add:'.length);
-			if (albumId) await addMediaToAlbum(ids, albumId);
+		if (id === 'add-to-album') {
+			if (ids.length) ui.openAlbumPicker(ids);
 		}
 	}
 
@@ -607,9 +570,35 @@
 		}
 	}
 
-	async function addSelectedToAlbum(albumId: string) {
-		await addMediaToAlbum([...selection.selectedIds], albumId);
+	async function handleAlbumPickerConfirm(albumIds: string[]) {
+		const ids = ui.albumPicker.mediaIds;
+		ui.closeAlbumPicker();
+		for (const albumId of albumIds) {
+			await addMediaToAlbum(ids, albumId);
+		}
 	}
+
+	function openAlbumPickerForSelection() {
+		const ids = [...selection.selectedIds];
+		if (!ids.length) return;
+		ui.openAlbumPicker(ids);
+	}
+
+	/** Albums that every selected picker item already belongs to. */
+	const albumPickerMemberIds = $derived.by(() => {
+		const ids = ui.albumPicker.mediaIds;
+		if (!ids.length) return new Set<string>();
+		const items = ids
+			.map((id) => library.media.find((m) => m.id === id))
+			.filter((m): m is NonNullable<typeof m> => Boolean(m));
+		if (!items.length) return new Set<string>();
+		let shared = new Set(items[0].album_ids);
+		for (let i = 1; i < items.length; i++) {
+			const next = new Set(items[i].album_ids);
+			shared = new Set([...shared].filter((id) => next.has(id)));
+		}
+		return shared;
+	});
 
 	async function deleteSelected() {
 		if (!selection.selectedIds.size) return;
@@ -640,11 +629,6 @@
 		if (!kind) return;
 		ui.confirmModalBusy = true;
 		try {
-			if (kind === 'convert-av1') {
-				ui.closeConfirmModal();
-				await runConvertLibraryToAv1();
-				return;
-			}
 			if (kind === 'delete-album' && albumId) {
 				await runDeleteAlbum(albumId);
 				ui.closeConfirmModal();
@@ -891,7 +875,6 @@
 				columns={prefs.columns}
 				selectMode={selection.selectMode}
 				selectedCount={selection.selectedIds.size}
-				albums={library.albums}
 				uploading={ui.uploading}
 				compressOnUpload={prefs.compressOnUpload}
 				theme={prefs.theme}
@@ -903,10 +886,9 @@
 				onsearchQuery={(v) => prefs.setSearchQuery(v)}
 				oncolumns={(v) => prefs.setColumns(v)}
 				oncompressOnUpload={(v) => prefs.setCompressOnUpload(v)}
-				onconvertLibrary={convertLibraryToAv1}
 				ontoggleSelect={() => selection.toggleSelectMode()}
 				onclearSelection={() => selection.clear()}
-				onaddToAlbum={addSelectedToAlbum}
+				onopenAlbumPicker={openAlbumPickerForSelection}
 				oncompress={() => compressMediaIds([...selection.selectedIds])}
 				ondelete={deleteSelected}
 				onuploadClick={() => ui.fileInput?.click()}
@@ -1065,5 +1047,13 @@
 		errorMessage={ui.promptModalError}
 		oncancel={() => ui.closePromptModal()}
 		onsubmit={handlePromptModalSubmit}
+	/>
+
+	<AlbumPickerModal
+		open={ui.albumPicker.open}
+		albums={library.albums}
+		memberAlbumIds={albumPickerMemberIds}
+		oncancel={() => ui.closeAlbumPicker()}
+		onconfirm={handleAlbumPickerConfirm}
 	/>
 {/if}

@@ -3,10 +3,10 @@ import { Readable } from 'node:stream';
 import type { RequestHandler } from './$types';
 import {
 	addMediaToAlbum,
-	compressAllVideos,
 	compressMedia,
 	deleteMedia,
 	duplicateMedia,
+	enqueueAv1Backfill,
 	insertMediaFromStream,
 	listMedia,
 	maybeCompressUploaded,
@@ -236,13 +236,8 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 	}
 
 	if (body?.action === 'compress-all-videos') {
-		try {
-			const summary = await compressAllVideos(profile.id);
-			return json(summary);
-		} catch (err) {
-			const message = err instanceof Error ? err.message : 'Bulk compress failed';
-			throw error(500, message);
-		}
+		enqueueAv1Backfill(profile.id);
+		return json({ started: true });
 	}
 
 	const ids = Array.isArray(body?.ids) ? body.ids.map(String).filter(Boolean) : [];

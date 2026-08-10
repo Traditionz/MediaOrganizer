@@ -225,6 +225,89 @@ export function captureVideoThumbnail(
 	});
 }
 
+/** Capture a JPEG preview from a media URL (for lazy thumbnail backfill). */
+export function captureVideoThumbnailFromUrl(
+	src: string,
+	maxEdge = 480,
+	timeoutMs = 20000
+): Promise<Blob | null> {
+	return new Promise((resolve) => {
+		const video = document.createElement('video');
+		video.muted = true;
+		video.playsInline = true;
+		video.preload = 'auto';
+
+		let settled = false;
+		const finish = (blob: Blob | null) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			video.removeAttribute('src');
+			video.load();
+			resolve(blob);
+		};
+
+		const timer = setTimeout(() => finish(null), timeoutMs);
+
+		const draw = () => {
+			try {
+				const w = video.videoWidth;
+				const h = video.videoHeight;
+				if (!w || !h) {
+					finish(null);
+					return;
+				}
+				const scale = Math.min(1, maxEdge / Math.max(w, h));
+				const canvas = document.createElement('canvas');
+				canvas.width = Math.max(1, Math.round(w * scale));
+				canvas.height = Math.max(1, Math.round(h * scale));
+				const ctx = canvas.getContext('2d');
+				if (!ctx) {
+					finish(null);
+					return;
+				}
+				ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+				canvas.toBlob((blob) => {
+					// Reject near-empty / solid-color captures (bad seek)
+					if (!blob || blob.size < 3000) {
+						finish(null);
+						return;
+					}
+					finish(blob);
+				}, 'image/jpeg', 0.85);
+			} catch {
+				finish(null);
+			}
+		};
+
+		const seekAndCapture = () => {
+			const seekTo = Math.max(0.25, thumbnailSeekTime(video.duration) || 0.5);
+			const onSeeked = () => {
+				video.removeEventListener('seeked', onSeeked);
+				requestAnimationFrame(() => requestAnimationFrame(draw));
+			};
+			video.addEventListener('seeked', onSeeked);
+			try {
+				video.currentTime = Math.min(seekTo, Math.max(0, (video.duration || seekTo) - 0.05));
+			} catch {
+				video.removeEventListener('seeked', onSeeked);
+				draw();
+			}
+		};
+
+		video.addEventListener(
+			'loadeddata',
+			() => {
+				if (video.readyState >= 2) seekAndCapture();
+				else video.addEventListener('canplay', seekAndCapture, { once: true });
+			},
+			{ once: true }
+		);
+		video.onerror = () => finish(null);
+		video.src = src;
+	});
+}
+
 /** Capture a JPEG frame from an already-loaded video element. */
 export function captureThumbnailFromVideoEl(
 	video: HTMLVideoElement,

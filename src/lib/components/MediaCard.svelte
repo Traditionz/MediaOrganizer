@@ -1,7 +1,9 @@
 <script lang="ts">
 	import type { MediaItem } from '$lib/types';
 	import { beginMediaDrag, endInternalDrag, setCompactMediaDragImage } from '$lib/dragSession';
-	import { captureThumbnailFromVideoEl, formatDate, thumbnailSeekTime, uploadVideoThumbnail } from '$lib/utils';
+	import { getAppState } from '$lib/state';
+	import { enqueueThumbnailJob } from '$lib/thumbnailQueue';
+	import { captureVideoThumbnailFromUrl, formatDate, uploadVideoThumbnail } from '$lib/utils';
 
 	interface Props {
 		item: MediaItem;
@@ -40,13 +42,13 @@
 	const showAlbumChip = $derived(Boolean(item.album_names?.length));
 	const showCheckbox = $derived(selected || selectMode);
 
-	let localThumb = $state(false);
-	let previewVideoEl: HTMLVideoElement | undefined = $state();
-	let backfillStarted = false;
 	let dragging = $state(false);
 	let cardEl: HTMLDivElement | undefined = $state();
+	let localThumb = $state(false);
+	let generatingThumbnail = $state(false);
+	let thumbStarted = false;
 
-	const showPoster = $derived(item.has_thumbnail || localThumb);
+	const showPoster = $derived(Boolean(item.has_thumbnail) || localThumb);
 
 	function handleDragStart(e: DragEvent) {
 		if (!e.dataTransfer) return;
@@ -72,55 +74,74 @@
 		oncontextmenu?.(e, item);
 	}
 
-	async function tryBackfillThumbnail() {
-		if (backfillStarted || item.has_thumbnail || item.media_type !== 'video') return;
-		const video = previewVideoEl;
-		if (!video) return;
-		backfillStarted = true;
+	function startLazyThumbnail(force = false) {
+		if (!force && (thumbStarted || item.has_thumbnail || localThumb)) return;
+		if (item.media_type !== 'video') return;
+		thumbStarted = true;
+		generatingThumbnail = true;
 
-		const seekAndCapture = async () => {
-			if (!video.videoWidth) return null;
-			const seekTo = thumbnailSeekTime(video.duration);
-			if (seekTo > 0 && Math.abs(video.currentTime - seekTo) > 0.05) {
-				await new Promise<void>((resolve) => {
-					const done = () => {
-						video.removeEventListener('seeked', done);
-						resolve();
-					};
-					video.addEventListener('seeked', done);
-					try {
-						video.currentTime = seekTo;
-					} catch {
-						resolve();
-					}
-				});
+		const mediaId = item.id;
+		enqueueThumbnailJob(async () => {
+			try {
+				const blob = await captureVideoThumbnailFromUrl(`/api/media/${mediaId}`);
+				if (!blob) return;
+				const ok = await uploadVideoThumbnail(mediaId, blob);
+				if (!ok) return;
+				localThumb = true;
+				try {
+					getAppState().library.markHasThumbnail(mediaId);
+				} catch {
+					/* outside app context */
+				}
+			} catch {
+				/* leave placeholder */
+			} finally {
+				generatingThumbnail = false;
 			}
-			return captureThumbnailFromVideoEl(video);
-		};
-
-		const blob = await seekAndCapture();
-		if (!blob) return;
-		const ok = await uploadVideoThumbnail(item.id, blob);
-		if (ok) localThumb = true;
+		});
 	}
 
-	$effect(() => {
-		if (item.media_type !== 'video' || item.has_thumbnail || localThumb) return;
-		const video = previewVideoEl;
-		if (!video) return;
+	function onPosterError() {
+		localThumb = false;
+		thumbStarted = false;
+		startLazyThumbnail(true);
+	}
 
-		const onReady = () => {
-			void tryBackfillThumbnail();
+	function attachCard(node: HTMLDivElement) {
+		cardEl = node;
+		if (item.media_type !== 'video' || item.has_thumbnail || localThumb) {
+			return () => {
+				if (cardEl === node) cardEl = undefined;
+			};
+		}
+
+		if (typeof IntersectionObserver === 'undefined') {
+			startLazyThumbnail();
+			return () => {
+				if (cardEl === node) cardEl = undefined;
+			};
+		}
+
+		const io = new IntersectionObserver(
+			(entries) => {
+				if (entries.some((entry) => entry.isIntersecting)) {
+					startLazyThumbnail();
+					io.disconnect();
+				}
+			},
+			{ root: null, rootMargin: '200px 0px', threshold: 0.01 }
+		);
+		io.observe(node);
+
+		return () => {
+			io.disconnect();
+			if (cardEl === node) cardEl = undefined;
 		};
-		if (video.readyState >= 2) onReady();
-		else video.addEventListener('loadeddata', onReady, { once: true });
-
-		return () => video.removeEventListener('loadeddata', onReady);
-	});
+	}
 </script>
 
 <div
-	bind:this={cardEl}
+	{@attach attachCard}
 	class={[
 		'media-card group relative overflow-hidden bg-base-200 transition-shadow',
 		variant === 'grid' && 'rounded-xl shadow-sm hover:shadow-md aspect-square',
@@ -155,6 +176,7 @@
 			class="h-full w-full object-cover"
 			loading="lazy"
 			draggable="false"
+			onerror={onPosterError}
 		/>
 		<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
 			<span class="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white shadow">
@@ -163,24 +185,26 @@
 				</svg>
 			</span>
 		</div>
-	{:else}
-		<video
-			bind:this={previewVideoEl}
-			{src}
-			class="h-full w-full object-cover"
-			muted
-			preload="metadata"
-			playsinline
-			draggable="false"
+	{:else if generatingThumbnail}
+		<div
+			class="flex h-full w-full flex-col items-center justify-center gap-2 bg-base-300"
+			aria-busy="true"
+			aria-label="Generating thumbnail"
 		>
-			<track kind="captions" />
-		</video>
-		<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
-			<span class="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white shadow">
-				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="ml-0.5 h-5 w-5">
-					<path d="M8 5v14l11-7z" />
-				</svg>
+			<span class="loading loading-spinner loading-md text-base-content/55"></span>
+			<span class="text-[10px] font-medium uppercase tracking-wide text-base-content/45">
+				Thumbnail
 			</span>
+		</div>
+	{:else}
+		<div class="relative h-full w-full bg-base-300">
+			<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
+				<span class="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white shadow">
+					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="ml-0.5 h-5 w-5">
+						<path d="M8 5v14l11-7z" />
+					</svg>
+				</span>
+			</div>
 		</div>
 	{/if}
 
