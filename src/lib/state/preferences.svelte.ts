@@ -1,0 +1,97 @@
+import { browser } from '$app/environment';
+import { appDefaults } from '$lib/config/defaults';
+import type { ThemeMode, ViewMode } from '$lib/types';
+
+const THEME_KEY = 'theme';
+const COMPRESS_KEY = 'mo_compress';
+
+function readStoredTheme(fallback: ThemeMode | 'system'): ThemeMode {
+	if (!browser) {
+		return fallback === 'system' ? 'light' : fallback;
+	}
+	const attr = document.documentElement.getAttribute('data-theme');
+	if (attr === 'dark' || attr === 'light') return attr;
+	try {
+		const stored = localStorage.getItem(THEME_KEY);
+		if (stored === 'dark' || stored === 'light') return stored;
+	} catch {
+		/* ignore */
+	}
+	if (fallback === 'dark' || fallback === 'light') return fallback;
+	if (window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
+	return 'light';
+}
+
+function readStoredCompress(fallback: boolean): boolean {
+	if (!browser) return fallback;
+	try {
+		const stored = localStorage.getItem(COMPRESS_KEY);
+		if (stored === '0') return false;
+		if (stored === '1') return true;
+	} catch {
+		/* ignore */
+	}
+	return fallback;
+}
+
+/** View prefs, filters, theme — seeded from PUBLIC_* env, with local overrides. */
+export class PreferencesState {
+	viewMode = $state<ViewMode>(appDefaults.viewMode);
+	columns = $state(appDefaults.columns);
+	showImages = $state(appDefaults.showImages);
+	showVideos = $state(appDefaults.showVideos);
+	dateFrom = $state('');
+	dateTo = $state('');
+	searchQuery = $state('');
+	compressOnUpload = $state(readStoredCompress(appDefaults.compressOnUpload));
+	theme = $state<ThemeMode>(readStoredTheme(appDefaults.theme));
+
+	setViewMode(mode: ViewMode) {
+		this.viewMode = mode;
+	}
+
+	setColumns(n: number) {
+		this.columns = Math.min(8, Math.max(2, Math.round(n)));
+	}
+
+	setShowImages(value: boolean) {
+		this.showImages = value;
+	}
+
+	setShowVideos(value: boolean) {
+		this.showVideos = value;
+	}
+
+	setDateFrom(value: string) {
+		this.dateFrom = value;
+	}
+
+	setDateTo(value: string) {
+		this.dateTo = value;
+	}
+
+	setSearchQuery(value: string) {
+		this.searchQuery = value;
+	}
+
+	setCompressOnUpload(value: boolean) {
+		this.compressOnUpload = value;
+		if (!browser) return;
+		try {
+			localStorage.setItem(COMPRESS_KEY, value ? '1' : '0');
+		} catch {
+			/* ignore */
+		}
+	}
+
+	setTheme(next: ThemeMode) {
+		this.theme = next;
+		if (!browser) return;
+		document.documentElement.setAttribute('data-theme', next);
+		try {
+			localStorage.setItem(THEME_KEY, next);
+		} catch {
+			/* ignore */
+		}
+	}
+}

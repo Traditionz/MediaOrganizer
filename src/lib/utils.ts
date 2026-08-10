@@ -342,5 +342,7 @@ export async function mapWithConcurrency<T, R>(
 	return results;
 }
 
+import { appDefaults } from '$lib/config/defaults';
+
 /** Parallel upload slots — browsers typically allow ~6 connections per host. */
-export const UPLOAD_CONCURRENCY = 4;
+export const UPLOAD_CONCURRENCY = appDefaults.uploadConcurrency;

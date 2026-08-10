@@ -104,6 +104,10 @@ Go to [http://localhost:5173](http://localhost:5173).
 
 Create a **profile** on the welcome screen, then upload and organize media.
 
+### Optional: UI defaults via `.env`
+
+Copy [`.env.example`](.env.example) to `.env` (or `.env.local`) to customize install-time defaults such as default view, columns, filters, album view, compress-on-upload, theme, and upload concurrency. Restart the dev server after changes. Theme and compress toggles still persist in `localStorage` after the user changes them in the UI.
+
 ### 4. Stop the app
 
 Press `Ctrl+C` in the terminal. No background database process remains.
