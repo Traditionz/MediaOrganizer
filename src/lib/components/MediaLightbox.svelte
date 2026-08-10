@@ -2,6 +2,7 @@
 	import type { MediaItem } from '$lib/types';
 	import { formatBytes, formatDate } from '$lib/utils';
 	import { fade, scale } from 'svelte/transition';
+	import CustomPlayer from './CustomPlayer.svelte';
 
 	interface Props {
 		item: MediaItem | null;
@@ -46,13 +47,6 @@
 		if (e.key === 'Escape') onclose();
 	}
 
-	function onVideoMeta(e: Event) {
-		const video = e.currentTarget as HTMLVideoElement;
-		if (video.videoWidth > 0 && video.videoHeight > 0) {
-			intrinsic = { w: video.videoWidth, h: video.videoHeight };
-		}
-	}
-
 	function startResize(e: PointerEvent) {
 		e.preventDefault();
 		e.stopPropagation();
@@ -90,7 +84,7 @@
 
 {#if item}
 	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+		class="fixed inset-0 z-50 flex items-center justify-center p-4"
 		transition:fade={{ duration: 150 }}
 		role="dialog"
 		aria-modal="true"
@@ -145,18 +139,15 @@
 						style:height={`${videoHeight}px`}
 						class:select-none={resizing}
 					>
-						<video
+						<CustomPlayer
 							src={`/api/media/${item.id}`}
-							class="h-full w-full object-contain"
-							controls
-							autoplay
-							onloadedmetadata={onVideoMeta}
-						>
-							<track kind="captions" />
-						</video>
+							onmetadata={(size) => {
+								intrinsic = size;
+							}}
+						/>
 						<button
 							type="button"
-							class="resize-handle absolute bottom-1 right-1 z-10 flex h-5 w-5 cursor-se-resize items-end justify-end rounded-sm border border-white/30 bg-black/50 p-0.5 text-white/80 hover:bg-black/70"
+							class="resize-handle absolute bottom-2 right-1 z-30 flex h-5 w-5 cursor-se-resize items-end justify-end rounded-sm border border-white/30 bg-white/15 p-0.5 text-white/90 hover:bg-white/25"
 							aria-label="Resize video"
 							onpointerdown={startResize}
 							onpointermove={onResizeMove}

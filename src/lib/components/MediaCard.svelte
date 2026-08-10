@@ -201,13 +201,13 @@
 	{/if}
 
 	<div
-		class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 via-black/40 to-transparent px-2.5 pb-2 pt-8 text-white opacity-0 transition-opacity group-hover:opacity-100"
+		class="absolute inset-x-0 bottom-0 bg-base-100/95 px-2.5 py-2 text-base-content opacity-0 transition-opacity group-hover:opacity-100"
 		class:opacity-100={selected}
 	>
 		<p class="truncate text-xs font-medium">{item.original_name}</p>
-		<div class="mt-1 flex items-center justify-between gap-2 text-[10px] opacity-90">
+		<div class="mt-1 flex items-center justify-between gap-2 text-[10px] text-base-content/70">
 			{#if showAlbumChip && albumLabel}
-				<span class="badge badge-sm max-w-[70%] truncate border-0 bg-white/20 text-white" title={albumTitle}>
+				<span class="badge badge-sm max-w-[70%] truncate border-0 bg-base-200" title={albumTitle}>
 					{albumLabel}
 				</span>
 			{:else}
