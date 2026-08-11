@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { formatDuration } from '$lib/utils';
+
 	interface Props {
 		src: string;
-		onmetadata?: (size: { w: number; h: number }) => void;
+		onmetadata?: (meta: { w: number; h: number; duration: number }) => void;
 	}
 
 	const SPEED_OPTIONS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
@@ -26,15 +28,6 @@
 	const progress = $derived(duration > 0 ? (current / duration) * 100 : 0);
 	const bufferPct = $derived(duration > 0 ? (buffered / duration) * 100 : 0);
 	const speedLabel = $derived(playbackRate === 1 ? '1x' : `${playbackRate}x`);
-
-	function formatTime(sec: number): string {
-		if (!Number.isFinite(sec) || sec < 0) return '0:00';
-		const s = Math.floor(sec % 60);
-		const m = Math.floor(sec / 60) % 60;
-		const h = Math.floor(sec / 3600);
-		const pad = (n: number) => String(n).padStart(2, '0');
-		return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
-	}
 
 	function clearHideTimer() {
 		if (hideTimer) {
@@ -107,7 +100,11 @@
 		if (!videoEl) return;
 		duration = videoEl.duration || 0;
 		if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
-			onmetadata?.({ w: videoEl.videoWidth, h: videoEl.videoHeight });
+			onmetadata?.({
+				w: videoEl.videoWidth,
+				h: videoEl.videoHeight,
+				duration: Number.isFinite(duration) ? duration : 0
+			});
 		}
 	}
 
@@ -386,7 +383,7 @@
 			/>
 
 			<span class="custom-time ml-2 select-none text-xs font-medium tracking-wide">
-				{formatTime(current)} / {formatTime(duration)}
+				{formatDuration(current)} / {formatDuration(duration)}
 			</span>
 
 			<span class="flex-1"></span>

@@ -27,6 +27,8 @@ export interface MediaItem {
 	size: number;
 	width: number | null;
 	height: number | null;
+	/** Video duration in seconds when known */
+	duration: number | null;
 	created_at: string;
 	/** True when a generated video preview image exists */
 	has_thumbnail?: boolean;

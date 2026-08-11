@@ -16,6 +16,16 @@ export function formatDate(iso: string): string {
 	});
 }
 
+/** Format seconds as m:ss or h:mm:ss */
+export function formatDuration(seconds: number): string {
+	if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+	const s = Math.floor(seconds % 60);
+	const m = Math.floor(seconds / 60) % 60;
+	const h = Math.floor(seconds / 3600);
+	const pad = (n: number) => String(n).padStart(2, '0');
+	return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
 export interface CollageItem {
 	id: string;
 	width: number;
@@ -118,10 +128,10 @@ export function probeImageDimensions(file: File): Promise<{ width: number; heigh
 export function probeVideoDimensions(
 	file: File,
 	timeoutMs = 4000
-): Promise<{ width: number; height: number } | null> {
+): Promise<{ width: number; height: number; duration: number | null } | null> {
 	if (!isVideoFile(file)) return Promise.resolve(null);
 	if (file.size > PROBE_SIZE_LIMIT) {
-		return Promise.resolve({ width: 16, height: 9 });
+		return Promise.resolve({ width: 16, height: 9, duration: null });
 	}
 
 	return new Promise((resolve) => {
@@ -130,28 +140,75 @@ export function probeVideoDimensions(
 		video.preload = 'metadata';
 		let settled = false;
 
-		const done = (value: { width: number; height: number } | null) => {
+		const done = (value: { width: number; height: number; duration: number | null } | null) => {
 			if (settled) return;
 			settled = true;
 			URL.revokeObjectURL(url);
 			resolve(value);
 		};
 
-		const timer = setTimeout(() => done({ width: 16, height: 9 }), timeoutMs);
+		const timer = setTimeout(() => done({ width: 16, height: 9, duration: null }), timeoutMs);
 
 		video.onloadedmetadata = () => {
 			clearTimeout(timer);
+			const d = video.duration;
 			done({
 				width: video.videoWidth || 16,
-				height: video.videoHeight || 9
+				height: video.videoHeight || 9,
+				duration: Number.isFinite(d) && d > 0 ? d : null
 			});
 		};
 		video.onerror = () => {
 			clearTimeout(timer);
-			done({ width: 16, height: 9 });
+			done({ width: 16, height: 9, duration: null });
 		};
 		video.src = url;
 	});
+}
+
+/** Probe duration from a media URL (for lazy duration backfill). */
+export function probeVideoDurationFromUrl(
+	src: string,
+	timeoutMs = 12000
+): Promise<number | null> {
+	return new Promise((resolve) => {
+		const video = document.createElement('video');
+		video.preload = 'metadata';
+		video.muted = true;
+		video.playsInline = true;
+
+		let settled = false;
+		const finish = (value: number | null) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			video.removeAttribute('src');
+			video.load();
+			resolve(value);
+		};
+
+		const timer = setTimeout(() => finish(null), timeoutMs);
+
+		const takeDuration = () => {
+			const d = video.duration;
+			if (Number.isFinite(d) && d > 0) finish(d);
+		};
+
+		video.onloadedmetadata = takeDuration;
+		video.ondurationchange = takeDuration;
+		video.onerror = () => finish(null);
+		video.src = src;
+	});
+}
+
+export async function persistMediaDuration(mediaId: string, duration: number): Promise<boolean> {
+	if (!Number.isFinite(duration) || duration <= 0) return false;
+	const res = await fetch('/api/media', {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ action: 'set-duration', id: mediaId, duration })
+	});
+	return res.ok;
 }
 
 /** Capture a JPEG preview frame from a video File (for upload-time thumbnails). */
@@ -354,6 +411,7 @@ export function uploadMediaFile(
 		albumId: string | null;
 		width?: number | null;
 		height?: number | null;
+		duration?: number | null;
 		compress?: boolean;
 		onProgress?: (pct: number) => void;
 	}
@@ -376,6 +434,9 @@ export function uploadMediaFile(
 		if (options.albumId) xhr.setRequestHeader('X-Album-Id', options.albumId);
 		if (options.width != null) xhr.setRequestHeader('X-Width', String(options.width));
 		if (options.height != null) xhr.setRequestHeader('X-Height', String(options.height));
+		if (options.duration != null && Number.isFinite(options.duration) && options.duration > 0) {
+			xhr.setRequestHeader('X-Duration', String(options.duration));
+		}
 
 		xhr.upload.onprogress = (e) => {
 			if (e.lengthComputable && options.onProgress) {

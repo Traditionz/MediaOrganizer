@@ -86,6 +86,13 @@ export class LibraryState {
 		);
 	}
 
+	setMediaDuration(id: string, duration: number) {
+		if (!Number.isFinite(duration) || duration <= 0) return;
+		this.media = this.media.map((item) =>
+			item.id === id ? { ...item, duration } : item
+		);
+	}
+
 	async refresh() {
 		const [mediaRes, albumsRes] = await Promise.all([
 			fetch('/api/media'),

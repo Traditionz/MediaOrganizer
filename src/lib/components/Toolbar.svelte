@@ -13,6 +13,7 @@
 		selectedCount: number;
 		uploading: boolean;
 		compressOnUpload: boolean;
+		warnDuplicateUploads: boolean;
 		theme: ThemeMode;
 		onviewMode: (mode: ViewMode) => void;
 		onshowImages: (value: boolean) => void;
@@ -22,6 +23,7 @@
 		onsearchQuery: (value: string) => void;
 		oncolumns: (value: number) => void;
 		oncompressOnUpload: (value: boolean) => void;
+		onwarnDuplicateUploads: (value: boolean) => void;
 		ontoggleSelect: () => void;
 		onclearSelection: () => void;
 		onopenAlbumPicker: () => void;
@@ -43,6 +45,7 @@
 		selectedCount,
 		uploading,
 		compressOnUpload,
+		warnDuplicateUploads,
 		theme,
 		onviewMode,
 		onshowImages,
@@ -52,6 +55,7 @@
 		onsearchQuery,
 		oncolumns,
 		oncompressOnUpload,
+		onwarnDuplicateUploads,
 		ontoggleSelect,
 		onclearSelection,
 		onopenAlbumPicker,
@@ -94,19 +98,33 @@
 		</button>
 	{/if}
 
-	<div class="join">
-		<button
-			class={['btn btn-sm join-item', viewMode === 'grid' && 'btn-active']}
-			onclick={() => onviewMode('grid')}
-		>
-			Grid
-		</button>
-		<button
-			class={['btn btn-sm join-item', viewMode === 'collage' && 'btn-active']}
-			onclick={() => onviewMode('collage')}
-		>
-			Collage
-		</button>
+	<div class="flex flex-wrap items-center gap-2">
+		<div class="join">
+			<button
+				class={['btn btn-sm join-item', viewMode === 'grid' && 'btn-active']}
+				onclick={() => onviewMode('grid')}
+			>
+				Grid
+			</button>
+			<button
+				class={['btn btn-sm join-item', viewMode === 'collage' && 'btn-active']}
+				onclick={() => onviewMode('collage')}
+			>
+				Collage
+			</button>
+		</div>
+		<label class="flex items-center gap-2 text-sm text-base-content/70">
+			<span class="whitespace-nowrap">Cols {columns}</span>
+			<input
+				type="range"
+				class="range range-primary range-xs w-24"
+				min="2"
+				max="8"
+				step="1"
+				value={columns}
+				oninput={(e) => oncolumns(Number(e.currentTarget.value))}
+			/>
+		</label>
 	</div>
 
 	<label class="input input-bordered input-sm flex min-w-[10rem] max-w-xs flex-1 items-center gap-2">
@@ -173,31 +191,39 @@
 		/>
 	</label>
 
-	<label class="flex items-center gap-2 text-sm text-base-content/70">
-		<span class="whitespace-nowrap">Cols {columns}</span>
-		<input
-			type="range"
-			class="range range-primary range-xs w-24"
-			min="2"
-			max="8"
-			step="1"
-			value={columns}
-			oninput={(e) => oncolumns(Number(e.currentTarget.value))}
-		/>
-	</label>
-
-	<label
-		class="flex cursor-pointer items-center gap-1.5 text-sm"
-		title="Videos → AV1, images → AVIF when smaller"
+	<div
+		class="flex flex-wrap items-center gap-3 rounded-lg border border-base-300 bg-base-200/50 px-3 py-1.5"
+		role="group"
+		aria-label="Upload settings"
 	>
-		<input
-			type="checkbox"
-			class="checkbox checkbox-sm checkbox-primary"
-			checked={compressOnUpload}
-			onchange={(e) => oncompressOnUpload(e.currentTarget.checked)}
-		/>
-		<span class="whitespace-nowrap">Compress</span>
-	</label>
+		<span class="text-xs font-semibold uppercase tracking-wide text-base-content/55">
+			Upload settings
+		</span>
+		<label
+			class="flex cursor-pointer items-center gap-1.5 text-sm"
+			title="Videos → AV1, images → AVIF in the background after upload"
+		>
+			<input
+				type="checkbox"
+				class="checkbox checkbox-sm checkbox-primary"
+				checked={compressOnUpload}
+				onchange={(e) => oncompressOnUpload(e.currentTarget.checked)}
+			/>
+			<span class="whitespace-nowrap">Compress</span>
+		</label>
+		<label
+			class="flex cursor-pointer items-center gap-1.5 text-sm"
+			title="Ask before uploading a file whose name already exists in the library"
+		>
+			<input
+				type="checkbox"
+				class="checkbox checkbox-sm checkbox-primary"
+				checked={warnDuplicateUploads}
+				onchange={(e) => onwarnDuplicateUploads(e.currentTarget.checked)}
+			/>
+			<span class="whitespace-nowrap">Warn duplicates</span>
+		</label>
+	</div>
 
 	<button
 		class="btn btn-sm btn-ghost btn-square ml-auto"

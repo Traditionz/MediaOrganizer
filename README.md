@@ -106,7 +106,7 @@ Create a **profile** on the welcome screen, then upload and organize media.
 
 ### Optional: UI defaults via `.env`
 
-Copy [`.env.example`](.env.example) to `.env` (or `.env.local`) to customize install-time defaults such as default view, columns, filters, album view, compress-on-upload, theme, and upload concurrency. Restart the dev server after changes. Theme and compress toggles still persist in `localStorage` after the user changes them in the UI.
+Copy [`.env.example`](.env.example) to `.env` (or `.env.local`) to customize install-time defaults such as default view, columns, filters, album view, compress-on-upload, warn-duplicates, theme, and upload concurrency. Restart the dev server after changes. Theme and Upload settings toggles still persist in `localStorage` after the user changes them in the UI.
 
 ### 4. Stop the app
 
@@ -202,25 +202,39 @@ Still uses local `data/` — this project is not intended for remote production 
 |--------|--------|
 | Copy / Cut | Clipboard for paste |
 | Duplicate | Immediate copy in the current album |
-| Add to album… | Submenu of albums (additive) |
+| Add to album… | Alphabetical popup; multi‑select albums, then confirm |
 | Copy name | System clipboard |
 | Rename | Single item |
 | Download | One or many |
-| Compress (AV1/AVIF) | Re-encode videos to AV1 / images to AVIF when smaller |
+| Compress (AV1/AVIF) | Manual re‑encode (see Compression below) |
 | Delete | Confirms first |
 
 Empty area: **Paste**, **Upload…**
 
+### Upload settings
+
+The toolbar **Upload settings** group (separate from filters) has:
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| **Compress** | on | After each **new upload** is saved, recompress that file in the **background** (videos → AV1 MP4, images → AVIF). Does not convert the existing library. |
+| **Warn duplicates** | on | If a file name already exists in the library (or twice in the same batch), ask before saving a duplicate. Turn off to always upload without prompting. |
+
 ### Compression
 
-With **Compress** enabled in the toolbar (default on), uploads are recompressed server-side:
+Compression has **three** paths. None of them block the upload progress bar.
 
-- **Videos** → AV1 in MP4 (`libaom-av1` via bundled ffmpeg)
-- **Images** → AVIF (via `sharp`)
+| When | What happens |
+|------|----------------|
+| **Compress** in Upload settings **on** | After each upload finishes and is saved, the server recompresses that file **in the background**. |
+| **Manual Compress** | Re‑encode selected media on demand. |
+| **Manual Compress** (selection bar or right‑click) | Re‑encodes the selected items **now**. Use when Upload settings Compress was **off**, for a retry, or for items you choose. |
 
-The smaller file is kept; if compression does not shrink the file, the original is kept. You can also compress existing items from the context menu or selection bar.
+Details:
 
-AV1 encoding can take a while on large videos — the upload waits until compression finishes.
+- Smaller result wins; if compression does not shrink the file, the original is kept.
+- AV1 encoding is CPU‑heavy (libaom). It runs only for **new uploads** when Compress is on, or for **selected** items via Compress — never the whole library automatically.
+- Manual Compress still matters: Upload settings Compress only applies to **new** uploads.
 
 ### Keyboard shortcuts
 

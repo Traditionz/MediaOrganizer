@@ -3,7 +3,14 @@
 	import { beginMediaDrag, endInternalDrag, setCompactMediaDragImage } from '$lib/dragSession';
 	import { getAppState } from '$lib/state';
 	import { enqueueThumbnailJob } from '$lib/thumbnailQueue';
-	import { captureVideoThumbnailFromUrl, formatDate, uploadVideoThumbnail } from '$lib/utils';
+	import {
+		captureVideoThumbnailFromUrl,
+		formatDate,
+		formatDuration,
+		persistMediaDuration,
+		probeVideoDurationFromUrl,
+		uploadVideoThumbnail
+	} from '$lib/utils';
 
 	interface Props {
 		item: MediaItem;
@@ -41,12 +48,21 @@
 	const albumTitle = $derived(item.album_names?.join(', ') ?? '');
 	const showAlbumChip = $derived(Boolean(item.album_names?.length));
 	const showCheckbox = $derived(selected || selectMode);
+	const durationLabel = $derived(
+		item.media_type === 'video' &&
+			item.duration != null &&
+			Number.isFinite(item.duration) &&
+			item.duration > 0
+			? formatDuration(item.duration)
+			: null
+	);
 
 	let dragging = $state(false);
 	let cardEl: HTMLDivElement | undefined = $state();
 	let localThumb = $state(false);
 	let generatingThumbnail = $state(false);
 	let thumbStarted = false;
+	let durationStarted = false;
 
 	const showPoster = $derived(Boolean(item.has_thumbnail) || localThumb);
 
@@ -101,6 +117,30 @@
 		});
 	}
 
+	function startLazyDuration() {
+		if (durationStarted) return;
+		if (item.media_type !== 'video') return;
+		if (item.duration != null && Number.isFinite(item.duration) && item.duration > 0) return;
+		durationStarted = true;
+
+		const mediaId = item.id;
+		enqueueThumbnailJob(async () => {
+			try {
+				const duration = await probeVideoDurationFromUrl(`/api/media/${mediaId}`);
+				if (duration == null) return;
+				const ok = await persistMediaDuration(mediaId, duration);
+				if (!ok) return;
+				try {
+					getAppState().library.setMediaDuration(mediaId, duration);
+				} catch {
+					/* outside app context */
+				}
+			} catch {
+				/* leave without badge */
+			}
+		});
+	}
+
 	function onPosterError() {
 		localThumb = false;
 		thumbStarted = false;
@@ -109,14 +149,25 @@
 
 	function attachCard(node: HTMLDivElement) {
 		cardEl = node;
-		if (item.media_type !== 'video' || item.has_thumbnail || localThumb) {
+		const needsThumb =
+			item.media_type === 'video' && !item.has_thumbnail && !localThumb;
+		const needsDuration =
+			item.media_type === 'video' &&
+			!(item.duration != null && Number.isFinite(item.duration) && item.duration > 0);
+
+		if (!needsThumb && !needsDuration) {
 			return () => {
 				if (cardEl === node) cardEl = undefined;
 			};
 		}
 
+		const runVisibleWork = () => {
+			if (needsThumb) startLazyThumbnail();
+			if (needsDuration) startLazyDuration();
+		};
+
 		if (typeof IntersectionObserver === 'undefined') {
-			startLazyThumbnail();
+			runVisibleWork();
 			return () => {
 				if (cardEl === node) cardEl = undefined;
 			};
@@ -125,7 +176,7 @@
 		const io = new IntersectionObserver(
 			(entries) => {
 				if (entries.some((entry) => entry.isIntersecting)) {
-					startLazyThumbnail();
+					runVisibleWork();
 					io.disconnect();
 				}
 			},
@@ -240,6 +291,14 @@
 			<span>{formatDate(item.created_at)}</span>
 		</div>
 	</div>
+
+	{#if durationLabel}
+		<span
+			class="pointer-events-none absolute bottom-2 right-2 z-10 rounded px-1.5 py-0.5 text-[11px] font-medium leading-none text-white tabular-nums bg-black/75"
+		>
+			{durationLabel}
+		</span>
+	{/if}
 
 	{#if !showCheckbox && showAlbumChip && albumLabel}
 		<span

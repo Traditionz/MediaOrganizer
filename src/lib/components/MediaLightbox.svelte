@@ -109,9 +109,6 @@
 					<h2 class="truncate text-base font-semibold">{item.original_name}</h2>
 					<p class="mt-0.5 truncate text-xs text-base-content/60">
 						{albumSummary} · {formatDate(item.created_at)} · {formatBytes(item.size)}
-						{#if item.media_type === 'video'}
-							<span class="text-base-content/40"> · drag corner to resize</span>
-						{/if}
 					</p>
 				</div>
 				<button class="btn btn-ghost btn-sm btn-circle shrink-0" onclick={onclose} aria-label="Close">
@@ -141,8 +138,8 @@
 					>
 						<CustomPlayer
 							src={`/api/media/${item.id}`}
-							onmetadata={(size) => {
-								intrinsic = size;
+							onmetadata={(meta) => {
+								intrinsic = { w: meta.w, h: meta.h };
 							}}
 						/>
 						<button

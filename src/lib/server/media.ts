@@ -28,6 +28,7 @@ type MediaRow = {
 	height: number | null;
 	storage_key: string;
 	thumbnail_key: string | null;
+	duration: number | null;
 	created_at: string;
 };
 
@@ -100,6 +101,12 @@ function clearInvalidThumbnail(profileId: string, id: string, thumbnailKey: stri
 	);
 }
 
+function normalizeDuration(value: number | null | undefined): number | null {
+	if (value == null) return null;
+	const n = Number(value);
+	return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 function mapRow(
 	row: MediaRow,
 	albumIds: string[],
@@ -115,6 +122,7 @@ function mapRow(
 		size: row.size,
 		width: row.width,
 		height: row.height,
+		duration: normalizeDuration(row.duration),
 		created_at: normalizeCreated(row.created_at),
 		has_thumbnail: isValidThumbnail(row.thumbnail_key)
 	};
@@ -226,6 +234,7 @@ export async function insertMediaFromStream(
 		albumId: string | null;
 		width: number | null;
 		height: number | null;
+		duration?: number | null;
 		body: ReadableStream<Uint8Array> | Readable;
 	}
 ): Promise<MediaItem> {
@@ -235,6 +244,7 @@ export async function insertMediaFromStream(
 	const storageKey = id;
 	const dest = filePathForKey(storageKey);
 	const tmp = `${dest}.tmp`;
+	const duration = normalizeDuration(input.duration);
 
 	const nodeReadable =
 		input.body instanceof Readable
@@ -251,8 +261,8 @@ export async function insertMediaFromStream(
 				`
 				INSERT INTO media (
 					id, profile_id, original_name, mime_type, media_type,
-					size, width, height, storage_key
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+					size, width, height, storage_key, duration
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`
 			).run(
 				id,
@@ -263,7 +273,8 @@ export async function insertMediaFromStream(
 				size,
 				input.width,
 				input.height,
-				storageKey
+				storageKey,
+				duration
 			);
 			if (input.albumId) {
 				db.prepare('INSERT INTO album_media (album_id, media_id) VALUES (?, ?)').run(
@@ -284,6 +295,124 @@ export async function insertMediaFromStream(
 	}
 
 	return getMediaMeta(profileId, id)!;
+}
+
+/** Persist probed video duration (seconds) when finite and > 0. */
+export function updateMediaDuration(
+	profileId: string,
+	id: string,
+	durationSeconds: number
+): MediaItem {
+	const duration = normalizeDuration(durationSeconds);
+	if (duration == null) throw new Error('Duration must be a finite number greater than 0');
+
+	const result = db
+		.prepare('UPDATE media SET duration = ? WHERE id = ? AND profile_id = ?')
+		.run(duration, id, profileId);
+	if (result.changes === 0) throw new Error('Media not found');
+
+	const meta = getMediaMeta(profileId, id);
+	if (!meta) throw new Error('Media not found');
+	return meta;
+}
+
+/** Fill missing video durations via ffmpeg (fast header probe). */
+export async function backfillMissingDurations(
+	profileId: string
+): Promise<{ updated: number; failed: number; remaining: number }> {
+	const rows = db
+		.prepare(
+			`
+			SELECT id, storage_key FROM media
+			WHERE profile_id = ?
+				AND media_type = 'video'
+				AND (duration IS NULL OR duration <= 0)
+			ORDER BY created_at ASC
+			`
+		)
+		.all(profileId) as Array<{ id: string; storage_key: string }>;
+
+	if (!rows.length) return { updated: 0, failed: 0, remaining: 0 };
+
+	const { probeVideoDuration } = await import('./compress');
+	let updated = 0;
+	let failed = 0;
+
+	for (const row of rows) {
+		const path = filePathForKey(row.storage_key);
+		if (!existsSync(path)) {
+			failed += 1;
+			continue;
+		}
+		try {
+			const duration = await probeVideoDuration(path);
+			if (duration == null) {
+				failed += 1;
+				continue;
+			}
+			db.prepare('UPDATE media SET duration = ? WHERE id = ? AND profile_id = ?').run(
+				duration,
+				row.id,
+				profileId
+			);
+			updated += 1;
+		} catch {
+			failed += 1;
+		}
+	}
+
+	const remaining = (
+		db
+			.prepare(
+				`
+				SELECT COUNT(*) AS c FROM media
+				WHERE profile_id = ?
+					AND media_type = 'video'
+					AND (duration IS NULL OR duration <= 0)
+				`
+			)
+			.get(profileId) as { c: number }
+	).c;
+
+	return { updated, failed, remaining };
+}
+
+let durationBackfillRunning = false;
+const durationBackfillQueue = new Set<string>();
+
+/** Fire-and-forget duration probe for a profile. */
+export function enqueueDurationBackfill(profileId: string): void {
+	durationBackfillQueue.add(profileId);
+	void pumpDurationBackfill();
+}
+
+async function pumpDurationBackfill() {
+	if (durationBackfillRunning) return;
+	durationBackfillRunning = true;
+	try {
+		while (durationBackfillQueue.size > 0) {
+			const profileId = durationBackfillQueue.values().next().value as string;
+			durationBackfillQueue.delete(profileId);
+			try {
+				const summary = await backfillMissingDurations(profileId);
+				console.info(
+					'[media-organizer] duration backfill done:',
+					profileId,
+					`updated=${summary.updated}`,
+					`failed=${summary.failed}`,
+					`remaining=${summary.remaining}`
+				);
+			} catch (err) {
+				console.warn(
+					'[media-organizer] duration backfill failed:',
+					profileId,
+					err instanceof Error ? err.message : err
+				);
+			}
+		}
+	} finally {
+		durationBackfillRunning = false;
+	}
 }
 
 /** Compress on-disk media to AV1 (video) or AVIF (image). Keeps original if not smaller. */
@@ -363,6 +492,8 @@ export type BulkCompressSummary = {
 
 /** Convert all non-AV1 videos in a profile to AV1 (keeps original when not smaller). */
 export async function compressAllVideos(profileId: string): Promise<BulkCompressSummary> {
+	const { isAv1Cancelled, resetAv1Cancel } = await import('./compress');
+	resetAv1Cancel();
 	cleanupOrphanAv1Temps();
 
 	const rows = db
@@ -381,6 +512,10 @@ export async function compressAllVideos(profileId: string): Promise<BulkCompress
 	};
 
 	for (const row of rows) {
+		if (isAv1Cancelled()) {
+			summary.errors.push('Cancelled');
+			break;
+		}
 		const before = row.size;
 		try {
 			const after = await compressMedia(profileId, row.id);
@@ -392,6 +527,10 @@ export async function compressAllVideos(profileId: string): Promise<BulkCompress
 				summary.skipped += 1;
 			}
 		} catch (err) {
+			if (isAv1Cancelled()) {
+				summary.errors.push('Cancelled');
+				break;
+			}
 			summary.failed += 1;
 			const message = err instanceof Error ? err.message : String(err);
 			summary.errors.push(`${row.original_name}: ${message}`);
@@ -426,6 +565,13 @@ const av1BackfillQueue = new Set<string>();
 export function enqueueAv1Backfill(profileId: string): void {
 	av1BackfillQueue.add(profileId);
 	void pumpAv1Backfill();
+}
+
+/** Stop bulk AV1 work and kill the current ffmpeg encode. */
+export async function cancelAv1Backfill(): Promise<void> {
+	av1BackfillQueue.clear();
+	const { cancelAv1Work } = await import('./compress');
+	cancelAv1Work();
 }
 
 async function pumpAv1Backfill() {
@@ -520,8 +666,8 @@ export function duplicateMedia(
 		`
 		INSERT INTO media (
 			id, profile_id, original_name, mime_type, media_type,
-			size, width, height, storage_key, thumbnail_key
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			size, width, height, storage_key, thumbnail_key, duration
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	);
 	const insertMembership = db.prepare(
@@ -562,7 +708,8 @@ export function duplicateMedia(
 				row.width,
 				row.height,
 				destKey,
-				thumbKey
+				thumbKey,
+				normalizeDuration(row.duration)
 			);
 			if (albumId) {
 				insertMembership.run(albumId, newMediaId);

@@ -37,7 +37,7 @@
 	const app = setAppState(createAppState());
 	const { prefs, library, selection, ui } = app;
 
-	let av1EnqueuedForProfile: string | null = null;
+	let durationBackfilledForProfile: string | null = null;
 
 	$effect(() => {
 		library.sync({
@@ -48,15 +48,23 @@
 			activeProfile: data.activeProfile
 		});
 		const profileId = data.activeProfile?.id ?? null;
-		if (profileId && profileId !== av1EnqueuedForProfile) {
-			av1EnqueuedForProfile = profileId;
-			void fetch('/api/media', {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ action: 'compress-all-videos' })
-			}).catch(() => {
-				/* background AV1 backfill */
-			});
+		if (profileId && profileId !== durationBackfilledForProfile) {
+			durationBackfilledForProfile = profileId;
+			// Duration metadata only — never auto-convert the library to AV1.
+			void (async () => {
+				try {
+					const res = await fetch('/api/media', {
+						method: 'PATCH',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ action: 'backfill-durations' })
+					});
+					if (!res.ok) return;
+					const summary = (await res.json()) as { updated?: number };
+					if ((summary.updated ?? 0) > 0) await library.refresh();
+				} catch {
+					/* duration backfill optional */
+				}
+			})();
 		}
 	});
 
@@ -365,9 +373,7 @@
 
 	async function compressMediaIds(ids: string[]) {
 		if (!ids.length) return;
-		ui.errorMessage = '';
-		ui.uploading = true;
-		ui.uploadProgress = 0;
+		ui.beginUpload();
 		try {
 			const res = await fetch('/api/media', {
 				method: 'PATCH',
@@ -378,13 +384,12 @@
 				const body = await res.json().catch(() => ({}));
 				throw new Error(body.message || 'Compress failed');
 			}
-			ui.uploadProgress = 100;
+			ui.setUploadProgress(100);
 			await library.refresh();
 		} catch (err) {
 			ui.errorMessage = err instanceof Error ? err.message : 'Compress failed';
 		} finally {
-			ui.uploading = false;
-			ui.uploadProgress = null;
+			ui.endUpload();
 		}
 	}
 
@@ -515,6 +520,15 @@
 		if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
 			return;
 		}
+		if (
+			ui.albumPicker.open ||
+			ui.confirmModal.open ||
+			ui.promptModal.open ||
+			ui.profileModal.open ||
+			ui.preview
+		) {
+			return;
+		}
 		const mod = e.ctrlKey || e.metaKey;
 		const key = e.key.toLowerCase();
 
@@ -629,6 +643,11 @@
 		if (!kind) return;
 		ui.confirmModalBusy = true;
 		try {
+			if (kind === 'upload-duplicates') {
+				resolveUploadDuplicatePrompt(true);
+				ui.closeConfirmModal();
+				return;
+			}
 			if (kind === 'delete-album' && albumId) {
 				await runDeleteAlbum(albumId);
 				ui.closeConfirmModal();
@@ -644,9 +663,45 @@
 		}
 	}
 
+	function handleConfirmModalCancel() {
+		if (ui.confirmModal.kind === 'upload-duplicates') {
+			resolveUploadDuplicatePrompt(false);
+		}
+		ui.closeConfirmModal();
+	}
+
 	async function handlePromptModalSubmit(value: string) {
 		if (!ui.promptModal.mediaId) return;
 		await runRenameMediaItem(ui.promptModal.mediaId, value);
+	}
+
+	let uploadDuplicateResolver: ((uploadDuplicates: boolean) => void) | null = null;
+
+	function resolveUploadDuplicatePrompt(uploadDuplicates: boolean) {
+		const resolve = uploadDuplicateResolver;
+		uploadDuplicateResolver = null;
+		resolve?.(uploadDuplicates);
+	}
+
+	function askUploadDuplicates(duplicateNames: string[]): Promise<boolean> {
+		const sample = duplicateNames.slice(0, 5).join(', ');
+		const extra =
+			duplicateNames.length > 5 ? ` and ${duplicateNames.length - 5} more` : '';
+		const message =
+			duplicateNames.length === 1
+				? `"${duplicateNames[0]}" is already in your library. Upload another copy anyway?`
+				: `${duplicateNames.length} files already exist by name (${sample}${extra}). Upload duplicates anyway?`;
+
+		return new Promise((resolve) => {
+			uploadDuplicateResolver = resolve;
+			ui.openConfirmModal({
+				kind: 'upload-duplicates',
+				title: 'Duplicate file names',
+				message,
+				confirmLabel: 'Upload duplicates',
+				cancelLabel: 'Skip duplicates'
+			});
+		});
 	}
 
 	async function uploadFiles(fileList: FileList | File[]) {
@@ -656,28 +711,63 @@
 			return;
 		}
 
-		ui.uploading = true;
-		ui.uploadProgress = 0;
-		ui.errorMessage = '';
+		const knownNames = new Set(library.media.map((m) => m.original_name.toLowerCase()));
+		const uniqueFiles: File[] = [];
+		const duplicateFiles: File[] = [];
+		const seenInBatch = new Set<string>();
+
+		for (const file of files) {
+			const key = file.name.toLowerCase();
+			if (knownNames.has(key) || seenInBatch.has(key)) {
+				duplicateFiles.push(file);
+			} else {
+				uniqueFiles.push(file);
+				seenInBatch.add(key);
+			}
+		}
+
+		let filesToUpload = uniqueFiles;
+		if (duplicateFiles.length) {
+			if (prefs.warnDuplicateUploads) {
+				const uploadDupes = await askUploadDuplicates([
+					...new Set(duplicateFiles.map((f) => f.name))
+				]);
+				if (uploadDupes) filesToUpload = [...uniqueFiles, ...duplicateFiles];
+			} else {
+				filesToUpload = [...uniqueFiles, ...duplicateFiles];
+			}
+		}
+
+		if (!filesToUpload.length) {
+			ui.errorMessage =
+				duplicateFiles.length > 0
+					? 'Upload skipped — duplicate names were not saved.'
+					: 'Nothing to upload.';
+			return;
+		}
+
+		ui.beginUpload();
 
 		const albumId = library.activeAlbum === 'all' || library.activeAlbum === null ? null : library.activeAlbum;
-		const fileProgress = files.map(() => 0);
+		const fileProgress = filesToUpload.map(() => 0);
 		const errors: string[] = [];
 
 		const bumpProgress = () => {
 			const sum = fileProgress.reduce((a, b) => a + b, 0);
-			ui.uploadProgress = Math.round((sum / files.length) * 100);
+			ui.setUploadProgress(Math.round((sum / filesToUpload.length) * 100));
 		};
 
 		try {
-			await mapWithConcurrency(files, UPLOAD_CONCURRENCY, async (file, i) => {
+			await mapWithConcurrency(filesToUpload, UPLOAD_CONCURRENCY, async (file, i) => {
 				try {
-					const dims =
-						(await probeImageDimensions(file)) ?? (await probeVideoDimensions(file));
+					const imageDims = await probeImageDimensions(file);
+					const videoDims = imageDims ? null : await probeVideoDimensions(file);
+					const dims = imageDims ?? videoDims;
 					const uploaded = await uploadMediaFile(file, {
 						albumId,
 						width: dims?.width ?? null,
 						height: dims?.height ?? null,
+						duration: videoDims?.duration ?? null,
 						compress: prefs.compressOnUpload,
 						onProgress: (pct) => {
 							// Reserve last 5% for thumbnail work on videos
@@ -700,19 +790,24 @@
 				}
 			});
 
-			ui.uploadProgress = 100;
+			ui.setUploadProgress(100);
 			await library.refresh();
 			if (errors.length) {
 				ui.errorMessage =
 					errors.length === 1
 						? errors[0]
-						: `${errors.length} of ${files.length} uploads failed: ${errors[0]}`;
+						: `${errors.length} of ${filesToUpload.length} uploads failed: ${errors[0]}`;
+			} else if (
+				prefs.warnDuplicateUploads &&
+				duplicateFiles.length &&
+				filesToUpload.length === uniqueFiles.length
+			) {
+				ui.convertResultMessage = `Uploaded ${uniqueFiles.length} file(s); skipped ${duplicateFiles.length} duplicate name(s).`;
 			}
 		} catch (err) {
 			ui.errorMessage = err instanceof Error ? err.message : 'Upload failed';
 		} finally {
-			ui.uploading = false;
-			ui.uploadProgress = null;
+			ui.endUpload();
 		}
 	}
 
@@ -877,6 +972,7 @@
 				selectedCount={selection.selectedIds.size}
 				uploading={ui.uploading}
 				compressOnUpload={prefs.compressOnUpload}
+				warnDuplicateUploads={prefs.warnDuplicateUploads}
 				theme={prefs.theme}
 				onviewMode={(m) => prefs.setViewMode(m)}
 				onshowImages={(v) => prefs.setShowImages(v)}
@@ -886,6 +982,7 @@
 				onsearchQuery={(v) => prefs.setSearchQuery(v)}
 				oncolumns={(v) => prefs.setColumns(v)}
 				oncompressOnUpload={(v) => prefs.setCompressOnUpload(v)}
+				onwarnDuplicateUploads={(v) => prefs.setWarnDuplicateUploads(v)}
 				ontoggleSelect={() => selection.toggleSelectMode()}
 				onclearSelection={() => selection.clear()}
 				onopenAlbumPicker={openAlbumPickerForSelection}
@@ -895,6 +992,12 @@
 				ontheme={(t) => prefs.setTheme(t)}
 			/>
 
+			{#if ui.uploading && ui.uploadProgress != null}
+				<div class="alert alert-info mx-4 mt-3 py-2 text-sm" role="status">
+					<span>Uploading… {ui.uploadProgress}%</span>
+					<button class="btn btn-ghost btn-xs" onclick={() => ui.endUpload()}>Dismiss</button>
+				</div>
+			{/if}
 			{#if ui.errorMessage}
 				<div class="alert alert-error mx-4 mt-3 py-2 text-sm" role="alert">
 					<span>{ui.errorMessage}</span>
@@ -904,10 +1007,6 @@
 				<div class="alert alert-success mx-4 mt-3 py-2 text-sm" role="status">
 					<span>{ui.convertResultMessage}</span>
 					<button class="btn btn-ghost btn-xs" onclick={() => (ui.convertResultMessage = '')}>Dismiss</button>
-				</div>
-			{:else if ui.uploading && ui.uploadProgress != null}
-				<div class="alert alert-info mx-4 mt-3 py-2 text-sm" role="status">
-					<span>Uploading… {ui.uploadProgress}%</span>
 				</div>
 			{/if}
 
@@ -1032,9 +1131,10 @@
 		title={ui.confirmModal.title}
 		message={ui.confirmModal.message}
 		confirmLabel={ui.confirmModal.confirmLabel}
+		cancelLabel={ui.confirmModal.cancelLabel}
 		destructive={ui.confirmModal.destructive}
 		busy={ui.confirmModalBusy}
-		oncancel={() => ui.closeConfirmModal()}
+		oncancel={handleConfirmModalCancel}
 		onconfirm={handleConfirmModal}
 	/>
 

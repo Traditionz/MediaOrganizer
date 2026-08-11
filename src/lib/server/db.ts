@@ -108,6 +108,7 @@ function createSchema() {
 			height INTEGER,
 			storage_key TEXT NOT NULL UNIQUE,
 			thumbnail_key TEXT,
+			duration REAL,
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		);
 
@@ -127,10 +128,13 @@ function createSchema() {
 		CREATE INDEX IF NOT EXISTS idx_album_media_album ON album_media(album_id);
 	`);
 
-	// Additive migration for DBs created before thumbnails
+	// Additive migrations for DBs created before thumbnails / duration
 	const mediaCols = tableColumns('media');
 	if (mediaCols.size > 0 && !mediaCols.has('thumbnail_key')) {
 		db.exec('ALTER TABLE media ADD COLUMN thumbnail_key TEXT');
+	}
+	if (mediaCols.size > 0 && !mediaCols.has('duration')) {
+		db.exec('ALTER TABLE media ADD COLUMN duration REAL');
 	}
 
 	const profileCols = tableColumns('profiles');
@@ -189,6 +193,7 @@ function migrateFoldersToAlbums() {
 					height INTEGER,
 					storage_key TEXT NOT NULL UNIQUE,
 					thumbnail_key TEXT,
+					duration REAL,
 					created_at TEXT NOT NULL DEFAULT (datetime('now'))
 				);
 

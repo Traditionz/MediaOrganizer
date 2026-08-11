@@ -1,7 +1,9 @@
 import type { MediaItem } from '$lib/types';
 import type { PasscodeModalMode } from '$lib/components/PasscodeModal.svelte';
 
-export type ConfirmKind = 'delete-album' | 'delete-media';
+const UPLOAD_PROGRESS_KEY = 'mo_upload_progress';
+
+export type ConfirmKind = 'delete-album' | 'delete-media' | 'upload-duplicates';
 
 export type ProfileModalState = {
 	open: boolean;
@@ -19,6 +21,7 @@ export type ConfirmModalState = {
 	title: string;
 	message: string;
 	confirmLabel: string;
+	cancelLabel: string;
 	destructive: boolean;
 	albumId: string | null;
 	mediaIds: string[];
@@ -81,6 +84,7 @@ export class UiState {
 		title: 'Confirm',
 		message: '',
 		confirmLabel: 'Confirm',
+		cancelLabel: 'Cancel',
 		destructive: false,
 		albumId: null,
 		mediaIds: []
@@ -101,6 +105,60 @@ export class UiState {
 		open: false,
 		mediaIds: []
 	});
+
+	constructor() {
+		this.restoreUploadProgress();
+	}
+
+	private persistUploadProgress() {
+		if (typeof sessionStorage === 'undefined') return;
+		try {
+			if (!this.uploading || this.uploadProgress == null) {
+				sessionStorage.removeItem(UPLOAD_PROGRESS_KEY);
+				return;
+			}
+			sessionStorage.setItem(
+				UPLOAD_PROGRESS_KEY,
+				JSON.stringify({ progress: this.uploadProgress })
+			);
+		} catch {
+			/* ignore */
+		}
+	}
+
+	private restoreUploadProgress() {
+		if (typeof sessionStorage === 'undefined') return;
+		try {
+			const raw = sessionStorage.getItem(UPLOAD_PROGRESS_KEY);
+			if (!raw) return;
+			const parsed = JSON.parse(raw) as { progress?: number };
+			if (typeof parsed.progress === 'number' && Number.isFinite(parsed.progress)) {
+				this.uploading = true;
+				this.uploadProgress = Math.min(100, Math.max(0, Math.round(parsed.progress)));
+			}
+		} catch {
+			/* ignore */
+		}
+	}
+
+	beginUpload() {
+		this.errorMessage = '';
+		this.convertResultMessage = '';
+		this.uploading = true;
+		this.uploadProgress = 0;
+		this.persistUploadProgress();
+	}
+
+	setUploadProgress(pct: number) {
+		this.uploadProgress = Math.min(100, Math.max(0, Math.round(pct)));
+		this.persistUploadProgress();
+	}
+
+	endUpload() {
+		this.uploading = false;
+		this.uploadProgress = null;
+		this.persistUploadProgress();
+	}
 
 	attachFileInput = (node: HTMLInputElement) => {
 		this.fileInput = node;
@@ -127,6 +185,7 @@ export class UiState {
 		title: string;
 		message: string;
 		confirmLabel?: string;
+		cancelLabel?: string;
 		destructive?: boolean;
 		albumId?: string | null;
 		mediaIds?: string[];
@@ -138,6 +197,7 @@ export class UiState {
 			title: opts.title,
 			message: opts.message,
 			confirmLabel: opts.confirmLabel ?? 'Confirm',
+			cancelLabel: opts.cancelLabel ?? 'Cancel',
 			destructive: opts.destructive ?? false,
 			albumId: opts.albumId ?? null,
 			mediaIds: opts.mediaIds ?? []

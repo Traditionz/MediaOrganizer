@@ -22,14 +22,22 @@ function runFfmpeg(args: string[]): Promise<void> {
 			reject(new Error('ffmpeg binary not found'));
 			return;
 		}
-		const child = spawn(ffmpegPath, args, { windowsHide: true });
+		// Cap CPU so background compress doesn't freeze the machine.
+		const child = spawn(ffmpegPath, ['-threads', '1', ...args], { windowsHide: true });
+		activeFfmpeg = child;
 		let stderr = '';
 		child.stderr.on('data', (chunk) => {
 			stderr += String(chunk);
 		});
-		child.on('error', reject);
+		child.on('error', (err) => {
+			if (activeFfmpeg === child) activeFfmpeg = null;
+			reject(err);
+		});
 		child.on('close', (code) => {
+			if (activeFfmpeg === child) activeFfmpeg = null;
 			if (code === 0) resolve();
+			else if (code === null)
+				reject(new Error('ffmpeg cancelled'));
 			else
 				reject(
 					new Error(
@@ -40,7 +48,42 @@ function runFfmpeg(args: string[]): Promise<void> {
 	});
 }
 
-function probeVideo(path: string): Promise<{ codec: string; width: number; height: number } | null> {
+let activeFfmpeg: ReturnType<typeof spawn> | null = null;
+let av1Cancelled = false;
+
+/** Stop in-flight AV1 encode and prevent further bulk work. */
+export function cancelAv1Work(): void {
+	av1Cancelled = true;
+	try {
+		activeFfmpeg?.kill('SIGKILL');
+	} catch {
+		/* ignore */
+	}
+	activeFfmpeg = null;
+}
+
+export function resetAv1Cancel(): void {
+	av1Cancelled = false;
+}
+
+export function isAv1Cancelled(): boolean {
+	return av1Cancelled;
+}
+
+function parseFfmpegDurationSeconds(stderr: string): number | null {
+	const match = stderr.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+	if (!match) return null;
+	const hours = Number(match[1]);
+	const minutes = Number(match[2]);
+	const seconds = Number(match[3]);
+	if (![hours, minutes, seconds].every(Number.isFinite)) return null;
+	const total = hours * 3600 + minutes * 60 + seconds;
+	return total > 0 ? total : null;
+}
+
+function probeVideo(
+	path: string
+): Promise<{ codec: string; width: number; height: number; duration: number | null } | null> {
 	return new Promise((resolve) => {
 		if (!ffmpegPath) {
 			resolve(null);
@@ -63,10 +106,17 @@ function probeVideo(path: string): Promise<{ codec: string; width: number; heigh
 			resolve({
 				codec: (codecMatch?.[1] ?? '').toLowerCase(),
 				width: dimMatch ? Number(dimMatch[1]) : 0,
-				height: dimMatch ? Number(dimMatch[2]) : 0
+				height: dimMatch ? Number(dimMatch[2]) : 0,
+				duration: parseFfmpegDurationSeconds(stderr)
 			});
 		});
 	});
+}
+
+/** Probe only duration (and dims) via ffmpeg — used to backfill DB metadata. */
+export async function probeVideoDuration(path: string): Promise<number | null> {
+	const info = await probeVideo(path);
+	return info?.duration ?? null;
 }
 
 /**

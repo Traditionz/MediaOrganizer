@@ -129,7 +129,16 @@
 	}
 
 	function onkeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape' && open && !busy) oncancel();
+		if (e.key !== 'Escape' || !open || busy) return;
+		e.preventDefault();
+		e.stopPropagation();
+		oncancel();
+	}
+
+	function onBackdropPointerDown(e: PointerEvent) {
+		if (e.target !== e.currentTarget || busy) return;
+		// Close on pointer down only — not mouseup/click, so releasing outside after a drag doesn't dismiss.
+		oncancel();
 	}
 </script>
 
@@ -144,11 +153,13 @@
 		aria-modal="true"
 		aria-label={title}
 		tabindex="-1"
-		onclick={(e) => {
-			if (e.target === e.currentTarget && !busy) oncancel();
-		}}
+		onpointerdown={onBackdropPointerDown}
 		onkeydown={(e) => {
-			if (e.key === 'Escape' && !busy) oncancel();
+			if (e.key === 'Escape' && !busy) {
+				e.preventDefault();
+				e.stopPropagation();
+				oncancel();
+			}
 		}}
 	>
 		<div

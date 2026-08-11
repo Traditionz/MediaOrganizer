@@ -1,6 +1,6 @@
 /**
  * Install-time UI defaults from PUBLIC_* env vars (.env / .env.local).
- * User overrides (theme, compress) still win via localStorage after first change.
+ * User overrides (theme, compress, duplicate warn) still win via localStorage after first change.
  */
 import { env } from '$env/dynamic/public';
 import type { ThemeMode, ViewMode } from '$lib/types';
@@ -51,6 +51,7 @@ export const appDefaults = {
 	showVideos: bool('PUBLIC_DEFAULT_SHOW_VIDEOS', true),
 	albumView: albumView('unassigned'),
 	compressOnUpload: bool('PUBLIC_DEFAULT_COMPRESS_ON_UPLOAD', true),
+	warnDuplicateUploads: bool('PUBLIC_DEFAULT_WARN_DUPLICATE_UPLOADS', true),
 	theme: theme('system'),
 	uploadConcurrency: int('PUBLIC_UPLOAD_CONCURRENCY', 4, 1, 8)
 } as const;
