@@ -15,7 +15,6 @@
 		selectMode: boolean;
 		selectedCount: number;
 		uploading: boolean;
-		compressOnUpload: boolean;
 		warnDuplicateUploads: boolean;
 		theme: ThemeMode;
 		onviewMode: (mode: ViewMode) => void;
@@ -25,7 +24,6 @@
 		ondateTo: (value: string) => void;
 		onsearchQuery: (value: string) => void;
 		oncolumns: (value: number) => void;
-		oncompressOnUpload: (value: boolean) => void;
 		onwarnDuplicateUploads: (value: boolean) => void;
 		ontoggleSelect: () => void;
 		onclearSelection: () => void;
@@ -47,7 +45,6 @@
 		selectMode,
 		selectedCount,
 		uploading,
-		compressOnUpload,
 		warnDuplicateUploads,
 		theme,
 		onviewMode,
@@ -57,7 +54,6 @@
 		ondateTo,
 		onsearchQuery,
 		oncolumns,
-		oncompressOnUpload,
 		onwarnDuplicateUploads,
 		ontoggleSelect,
 		onclearSelection,
@@ -188,18 +184,6 @@
 		<span class="text-base-content/55 text-xs font-semibold tracking-wide uppercase">
 			Upload settings
 		</span>
-		<label
-			class="flex cursor-pointer items-center gap-1.5 text-sm"
-			title="Videos → AV1, images → AVIF in the background after upload"
-		>
-			<input
-				type="checkbox"
-				class="checkbox checkbox-sm checkbox-primary"
-				checked={compressOnUpload}
-				onchange={(e) => oncompressOnUpload(e.currentTarget.checked)}
-			/>
-			<span class="whitespace-nowrap">Compress</span>
-		</label>
 		<label
 			class="flex cursor-pointer items-center gap-1.5 text-sm"
 			title="Ask before uploading a file whose name already exists in the library"

@@ -405,6 +405,12 @@ export async function uploadVideoThumbnail(mediaId: string, blob: Blob): Promise
 	return res.ok;
 }
 
+export type UploadProgressInfo = {
+	pct: number;
+	loaded: number;
+	total: number;
+};
+
 /** Stream upload via XHR for progress on large files. */
 export function uploadMediaFile(
 	file: File,
@@ -413,11 +419,16 @@ export function uploadMediaFile(
 		width?: number | null;
 		height?: number | null;
 		duration?: number | null;
-		compress?: boolean;
-		onProgress?: (pct: number) => void;
+		onProgress?: (info: UploadProgressInfo) => void;
+		signal?: AbortSignal;
 	}
 ): Promise<{ id: string; media_type?: string }> {
 	return new Promise((resolve, reject) => {
+		if (options.signal?.aborted) {
+			reject(new DOMException('Upload cancelled', 'AbortError'));
+			return;
+		}
+
 		const xhr = new XMLHttpRequest();
 		xhr.open('POST', '/api/media');
 		xhr.responseType = 'json';
@@ -431,7 +442,6 @@ export function uploadMediaFile(
 
 		xhr.setRequestHeader('Content-Type', mime);
 		xhr.setRequestHeader('X-Filename', encodeURIComponent(file.name));
-		xhr.setRequestHeader('X-Compress', options.compress === false ? '0' : '1');
 		if (options.albumId) xhr.setRequestHeader('X-Album-Id', options.albumId);
 		if (options.width != null) xhr.setRequestHeader('X-Width', String(options.width));
 		if (options.height != null) xhr.setRequestHeader('X-Height', String(options.height));
@@ -439,37 +449,80 @@ export function uploadMediaFile(
 			xhr.setRequestHeader('X-Duration', String(options.duration));
 		}
 
+		let settled = false;
+		const succeed = (value: { id: string; media_type?: string }) => {
+			if (settled) return;
+			settled = true;
+			resolve(value);
+		};
+		const fail = (err: Error) => {
+			if (settled) return;
+			settled = true;
+			reject(err);
+		};
+
+		const onAbort = () => {
+			xhr.abort();
+			fail(new DOMException('Upload cancelled', 'AbortError'));
+		};
+		options.signal?.addEventListener('abort', onAbort, { once: true });
+
 		xhr.upload.onprogress = (e) => {
-			if (e.lengthComputable && options.onProgress) {
-				// Cap at 95% until the server actually responds — bytes-sent
-				// 100% is what made the bar look stuck while the file was saved.
-				options.onProgress(Math.min(95, Math.round((e.loaded / e.total) * 95)));
-			}
+			if (settled || options.signal?.aborted) return;
+			if (!options.onProgress) return;
+			const total = e.lengthComputable && e.total > 0 ? e.total : file.size;
+			const loaded = e.loaded;
+			const pct = total > 0 ? Math.min(95, Math.round((loaded / total) * 95)) : 0;
+			options.onProgress({ pct, loaded, total });
 		};
 
 		xhr.onload = () => {
+			options.signal?.removeEventListener('abort', onAbort);
 			if (xhr.status >= 200 && xhr.status < 300) {
-				options.onProgress?.(100);
-				resolve(xhr.response as { id: string; media_type?: string });
+				options.onProgress?.({ pct: 100, loaded: file.size, total: file.size });
+				succeed(xhr.response as { id: string; media_type?: string });
 			} else {
 				const msg =
 					(xhr.response && (xhr.response.message || xhr.response.error)) ||
 					`Failed to upload ${file.name}`;
-				reject(new Error(typeof msg === 'string' ? msg : `Upload failed (${xhr.status})`));
+				fail(new Error(typeof msg === 'string' ? msg : `Upload failed (${xhr.status})`));
 			}
 		};
-		xhr.onerror = () => reject(new Error(`Network error uploading ${file.name}`));
-		xhr.ontimeout = () => reject(new Error(`Timed out uploading ${file.name}`));
+		xhr.onabort = () => {
+			options.signal?.removeEventListener('abort', onAbort);
+			fail(new DOMException('Upload cancelled', 'AbortError'));
+		};
+		xhr.onerror = () => {
+			options.signal?.removeEventListener('abort', onAbort);
+			fail(new Error(`Network error uploading ${file.name}`));
+		};
+		xhr.ontimeout = () => {
+			options.signal?.removeEventListener('abort', onAbort);
+			fail(new Error(`Timed out uploading ${file.name}`));
+		};
 		xhr.timeout = 0;
+		if (options.signal?.aborted) {
+			options.signal.removeEventListener('abort', onAbort);
+			fail(new DOMException('Upload cancelled', 'AbortError'));
+			return;
+		}
 		xhr.send(file);
 	});
+}
+
+export function isAbortError(err: unknown): boolean {
+	return (
+		(err instanceof DOMException && err.name === 'AbortError') ||
+		(err instanceof Error && err.name === 'AbortError')
+	);
 }
 
 /** Run async work over items with a fixed parallel pool (browser-friendly concurrency). */
 export async function mapWithConcurrency<T, R>(
 	items: readonly T[],
 	concurrency: number,
-	worker: (item: T, index: number) => Promise<R>
+	worker: (item: T, index: number) => Promise<R>,
+	signal?: AbortSignal
 ): Promise<R[]> {
 	const results = new Array<R>(items.length);
 	let next = 0;
@@ -477,8 +530,10 @@ export async function mapWithConcurrency<T, R>(
 
 	async function runWorker() {
 		while (true) {
+			if (signal?.aborted) return;
 			const i = next++;
 			if (i >= items.length) return;
+			if (signal?.aborted) return;
 			results[i] = await worker(items[i], i);
 		}
 	}

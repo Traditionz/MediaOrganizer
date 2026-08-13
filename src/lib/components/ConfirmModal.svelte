@@ -11,6 +11,8 @@
 		destructive?: boolean;
 		busy?: boolean;
 		oncancel: () => void;
+		/** Escape / backdrop. Defaults to oncancel. */
+		ondismiss?: () => void;
 		onconfirm: () => void | Promise<void>;
 	}
 
@@ -23,6 +25,7 @@
 		destructive = false,
 		busy = false,
 		oncancel,
+		ondismiss,
 		onconfirm
 	}: Props = $props();
 
@@ -32,12 +35,17 @@
 		await onconfirm();
 	}
 
+	function dismiss() {
+		if (busy || !open) return;
+		(ondismiss ?? oncancel)();
+	}
+
 	function onkeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape' && open && !busy) oncancel();
+		if (e.key === 'Escape') dismiss();
 	}
 
 	function onclick(e: MouseEvent) {
-		if (e.target === e.currentTarget && !busy) oncancel();
+		if (e.target === e.currentTarget) dismiss();
 	}
 </script>
 

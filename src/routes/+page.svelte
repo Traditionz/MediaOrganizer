@@ -8,6 +8,7 @@
 		uploadMediaFile,
 		uploadVideoThumbnail,
 		mapWithConcurrency,
+		isAbortError,
 		UPLOAD_CONCURRENCY
 	} from '$lib/utils';
 	import { invalidateAll } from '$app/navigation';
@@ -22,6 +23,7 @@
 	import MediaCollage from '$lib/components/MediaCollage.svelte';
 	import MediaLightbox from '$lib/components/MediaLightbox.svelte';
 	import ContextMenu, { type ContextMenuItem } from '$lib/components/ContextMenu.svelte';
+	import TransferPanel from '$lib/components/TransferPanel.svelte';
 	import { isInternalDragActive } from '$lib/dragSession';
 	import { fade } from 'svelte/transition';
 	import { createAppState, setAppState } from '$lib/state';
@@ -48,7 +50,7 @@
 		const profileId = data.activeProfile?.id ?? null;
 		if (profileId && profileId !== durationBackfilledForProfile) {
 			durationBackfilledForProfile = profileId;
-			// Duration metadata only — never auto-convert the library to AV1.
+			// Duration metadata only.
 			void (async () => {
 				try {
 					const res = await fetch('/api/media', {
@@ -678,20 +680,29 @@
 		ui.closeConfirmModal();
 	}
 
+	function handleConfirmModalDismiss() {
+		if (ui.confirmModal.kind === 'upload-duplicates') {
+			resolveUploadDuplicatePrompt(null);
+			ui.closeConfirmModal();
+			return;
+		}
+		handleConfirmModalCancel();
+	}
+
 	async function handlePromptModalSubmit(value: string) {
 		if (!ui.promptModal.mediaId) return;
 		await runRenameMediaItem(ui.promptModal.mediaId, value);
 	}
 
-	let uploadDuplicateResolver: ((uploadDuplicates: boolean) => void) | null = null;
+	let uploadDuplicateResolver: ((uploadDuplicates: boolean | null) => void) | null = null;
 
-	function resolveUploadDuplicatePrompt(uploadDuplicates: boolean) {
+	function resolveUploadDuplicatePrompt(uploadDuplicates: boolean | null) {
 		const resolve = uploadDuplicateResolver;
 		uploadDuplicateResolver = null;
 		resolve?.(uploadDuplicates);
 	}
 
-	function askUploadDuplicates(duplicateNames: string[]): Promise<boolean> {
+	function askUploadDuplicates(duplicateNames: string[]): Promise<boolean | null> {
 		const sample = duplicateNames.slice(0, 5).join(', ');
 		const extra = duplicateNames.length > 5 ? ` and ${duplicateNames.length - 5} more` : '';
 		const message =
@@ -739,6 +750,7 @@
 				const uploadDupes = await askUploadDuplicates([
 					...new Set(duplicateFiles.map((f) => f.name))
 				]);
+				if (uploadDupes == null) return;
 				if (uploadDupes) filesToUpload = [...uniqueFiles, ...duplicateFiles];
 			} else {
 				filesToUpload = [...uniqueFiles, ...duplicateFiles];
@@ -753,54 +765,83 @@
 			return;
 		}
 
+		const transferFiles = filesToUpload.map((file) => ({
+			id: crypto.randomUUID(),
+			name: file.name,
+			kind: (isVideoFile(file) ? 'video' : 'image') as 'video' | 'image',
+			progress: 0,
+			loaded: 0,
+			total: file.size,
+			status: 'queued' as const
+		}));
+
 		const jobId = ui.beginTransfer({
 			kind: 'upload',
 			label: filesToUpload.length === 1 ? filesToUpload[0].name : `${filesToUpload.length} files`,
-			fileCount: filesToUpload.length
+			fileCount: filesToUpload.length,
+			files: transferFiles
 		});
 
 		const albumId =
 			library.activeAlbum === 'all' || library.activeAlbum === null ? null : library.activeAlbum;
-		const fileProgress = filesToUpload.map(() => 0);
 		const errors: string[] = [];
-
-		const bumpProgress = () => {
-			const sum = fileProgress.reduce((a, b) => a + b, 0);
-			ui.setTransferProgress(jobId, Math.round((sum / filesToUpload.length) * 100));
-		};
+		const signal = ui.transferSignal(jobId);
 
 		try {
-			await mapWithConcurrency(filesToUpload, UPLOAD_CONCURRENCY, async (file, i) => {
-				try {
-					const uploaded = await uploadMediaFile(file, {
-						albumId,
-						compress: prefs.compressOnUpload,
-						onProgress: (pct) => {
-							fileProgress[i] = pct / 100;
-							bumpProgress();
-						}
-					});
-
-					if (isVideoFile(file) && uploaded?.id) {
-						const mediaId = uploaded.id;
-						void (async () => {
-							const thumb = await captureVideoThumbnail(file);
-							if (thumb) await uploadVideoThumbnail(mediaId, thumb);
-						})().catch(() => {
-							/* thumbnail backfill is optional */
+			await mapWithConcurrency(
+				filesToUpload,
+				UPLOAD_CONCURRENCY,
+				async (file, i) => {
+					if (signal?.aborted) return;
+					const fileId = transferFiles[i].id;
+					ui.setFileProgress(jobId, fileId, { status: 'uploading' });
+					try {
+						const uploaded = await uploadMediaFile(file, {
+							albumId,
+							signal,
+							onProgress: ({ pct, loaded, total }) => {
+								ui.setFileProgress(jobId, fileId, {
+									progress: pct,
+									loaded,
+									total,
+									status: pct >= 95 ? 'saving' : 'uploading'
+								});
+							}
 						});
-					}
-					fileProgress[i] = 1;
-					bumpProgress();
-				} catch (err) {
-					fileProgress[i] = 1;
-					bumpProgress();
-					errors.push(err instanceof Error ? err.message : `Failed to upload ${file.name}`);
-				}
-			});
 
-			ui.setTransferProgress(jobId, 100);
-			if (errors.length) {
+						if (signal?.aborted) return;
+
+						if (isVideoFile(file) && uploaded?.id) {
+							const mediaId = uploaded.id;
+							void (async () => {
+								const thumb = await captureVideoThumbnail(file);
+								if (thumb) await uploadVideoThumbnail(mediaId, thumb);
+							})().catch(() => {
+								/* thumbnail backfill is optional */
+							});
+						}
+						ui.setFileProgress(jobId, fileId, {
+							progress: 100,
+							loaded: file.size,
+							total: file.size,
+							status: 'done'
+						});
+					} catch (err) {
+						if (isAbortError(err) || signal?.aborted) {
+							ui.setFileProgress(jobId, fileId, { status: 'cancelled' });
+							return;
+						}
+						const message = err instanceof Error ? err.message : `Failed to upload ${file.name}`;
+						ui.setFileProgress(jobId, fileId, { status: 'error', progress: 100, error: message });
+						errors.push(message);
+					}
+				},
+				signal
+			);
+
+			if (ui.isTransferCancelled(jobId) || signal?.aborted) {
+				/* cancelled series — skip error/success toasts */
+			} else if (errors.length) {
 				ui.errorMessage =
 					errors.length === 1
 						? errors[0]
@@ -813,12 +854,21 @@
 				ui.convertResultMessage = `Uploaded ${uniqueFiles.length} file(s); skipped ${duplicateFiles.length} duplicate name(s).`;
 			}
 		} catch (err) {
-			ui.errorMessage = err instanceof Error ? err.message : 'Upload failed';
+			if (!isAbortError(err) && !signal?.aborted) {
+				ui.errorMessage = err instanceof Error ? err.message : 'Upload failed';
+			}
 		} finally {
-			ui.endTransfer(jobId);
 			void library.refresh().catch(() => {
 				/* list refresh is best-effort after upload */
 			});
+			if (ui.isTransferCancelled(jobId) || signal?.aborted) {
+				await new Promise((resolve) => setTimeout(resolve, 900));
+				ui.endTransfer(jobId);
+				return;
+			}
+			if (errors.length) return;
+			await new Promise((resolve) => setTimeout(resolve, 1400));
+			ui.endTransfer(jobId);
 		}
 	}
 
@@ -979,7 +1029,6 @@
 				selectMode={selection.selectMode}
 				selectedCount={selection.selectedIds.size}
 				uploading={ui.uploading}
-				compressOnUpload={prefs.compressOnUpload}
 				warnDuplicateUploads={prefs.warnDuplicateUploads}
 				theme={prefs.theme}
 				onviewMode={(m) => prefs.setViewMode(m)}
@@ -989,7 +1038,6 @@
 				ondateTo={(v) => prefs.setDateTo(v)}
 				onsearchQuery={(v) => prefs.setSearchQuery(v)}
 				oncolumns={(v) => prefs.setColumns(v)}
-				oncompressOnUpload={(v) => prefs.setCompressOnUpload(v)}
 				onwarnDuplicateUploads={(v) => prefs.setWarnDuplicateUploads(v)}
 				ontoggleSelect={() => selection.toggleSelectMode()}
 				onclearSelection={() => selection.clear()}
@@ -1000,34 +1048,6 @@
 				ontheme={(t) => prefs.setTheme(t)}
 			/>
 
-			{#if ui.jobs.length}
-				<div class="mx-4 mt-3 flex flex-col gap-2">
-					{#each ui.jobs as job (job.id)}
-						<div class="alert alert-info py-2 text-sm" role="status">
-							<div class="min-w-0 flex-1">
-								<div class="flex items-center justify-between gap-2">
-									<span class="truncate">
-										{job.kind === 'compress'
-											? 'Compressing'
-											: job.progress >= 95
-												? 'Saving'
-												: 'Uploading'}
-										{job.label} — {job.progress}%
-									</span>
-									<button
-										class="btn btn-ghost btn-xs shrink-0"
-										onclick={() => ui.endTransfer(job.id)}
-									>
-										Dismiss
-									</button>
-								</div>
-								<progress class="progress progress-info mt-1 w-full" value={job.progress} max="100"
-								></progress>
-							</div>
-						</div>
-					{/each}
-				</div>
-			{/if}
 			{#if ui.errorMessage}
 				<div class="alert alert-error mx-4 mt-3 py-2 text-sm" role="alert">
 					<span>{ui.errorMessage}</span>
@@ -1176,6 +1196,7 @@
 		destructive={ui.confirmModal.destructive}
 		busy={ui.confirmModalBusy}
 		oncancel={handleConfirmModalCancel}
+		ondismiss={handleConfirmModalDismiss}
 		onconfirm={handleConfirmModal}
 	/>
 
@@ -1198,3 +1219,5 @@
 		onconfirm={handleAlbumPickerConfirm}
 	/>
 {/if}
+
+<TransferPanel />
