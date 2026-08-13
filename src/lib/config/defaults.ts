@@ -53,7 +53,7 @@ export const appDefaults = {
 	compressOnUpload: bool('PUBLIC_DEFAULT_COMPRESS_ON_UPLOAD', true),
 	warnDuplicateUploads: bool('PUBLIC_DEFAULT_WARN_DUPLICATE_UPLOADS', true),
 	theme: theme('system'),
-	uploadConcurrency: int('PUBLIC_UPLOAD_CONCURRENCY', 4, 1, 8)
+	uploadConcurrency: int('PUBLIC_UPLOAD_CONCURRENCY', 6, 1, 12)
 } as const;
 
 export function defaultActiveAlbum(): string | null | 'all' {

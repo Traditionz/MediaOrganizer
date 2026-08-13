@@ -1,10 +1,10 @@
-import { getContext, setContext } from 'svelte';
+import { createContext } from 'svelte';
 import { PreferencesState } from './preferences.svelte';
 import { LibraryState, type LibraryLoad } from './library.svelte';
 import { SelectionState } from './selection.svelte';
 import { UiState } from './ui.svelte';
 
-const APP_STATE_KEY = Symbol('media-organizer-app-state');
+const [getAppStateContext, setAppStateContext] = createContext<AppState>();
 
 /**
  * Root client state. Created once per library page session and provided via
@@ -33,16 +33,12 @@ export function createAppState(): AppState {
 }
 
 export function setAppState(state: AppState): AppState {
-	setContext(APP_STATE_KEY, state);
+	setAppStateContext(state);
 	return state;
 }
 
 export function getAppState(): AppState {
-	const state = getContext<AppState>(APP_STATE_KEY);
-	if (!state) {
-		throw new Error('AppState context missing — call setAppState() in +page.svelte');
-	}
-	return state;
+	return getAppStateContext();
 }
 
 export type { LibraryLoad };

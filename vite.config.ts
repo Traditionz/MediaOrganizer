@@ -18,6 +18,6 @@ export default defineConfig({
 		external: ['better-sqlite3', 'sharp', 'ffmpeg-static']
 	},
 	optimizeDeps: {
-		exclude: ['better-sqlite3', 'sharp', 'ffmpeg-static']
+		exclude: ['better-sqlite3', 'sharp', 'ffmpeg-static', '@lucide/svelte']
 	}
 });

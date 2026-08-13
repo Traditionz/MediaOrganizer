@@ -25,11 +25,7 @@ function clearDragGhost() {
  * Tiny drag preview so drop targets stay visible under the cursor.
  * Call from dragstart; cleaned up in endInternalDrag / dragend.
  */
-export function setCompactMediaDragImage(
-	dt: DataTransfer,
-	sourceEl: HTMLElement,
-	count: number
-) {
+export function setCompactMediaDragImage(dt: DataTransfer, sourceEl: HTMLElement, count: number) {
 	clearDragGhost();
 
 	const size = 52;
@@ -49,10 +45,7 @@ export function setCompactMediaDragImage(
 		'z-index:99999'
 	].join(';');
 
-	const media = sourceEl.querySelector('img, video') as
-		| HTMLImageElement
-		| HTMLVideoElement
-		| null;
+	const media = sourceEl.querySelector('img, video') as HTMLImageElement | HTMLVideoElement | null;
 	if (media) {
 		const preview = document.createElement('img');
 		preview.alt = '';

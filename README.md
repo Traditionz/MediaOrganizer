@@ -1,6 +1,6 @@
 # Media Organizer
 
-A **local-only** media library for organizing pictures and videos. Built with **SvelteKit**, **DaisyUI**, and **SQLite**.
+A **local-only** media library for organizing pictures and videos. Built with **SvelteKit**, **DaisyUI**, **Drizzle**, and **SQLite**.
 
 - Metadata (profiles, albums, names) lives in a SQLite database: `data/media.db`
 - Media bytes are stored as files under `data/files/` and streamed on upload/playback
@@ -12,11 +12,12 @@ Each **profile** has its own albums and media. Passcodes are **optional** per pr
 
 ## Requirements (what you need)
 
-| Tool | Why | Version |
-|------|-----|---------|
-| **Git** | Clone / get the project | Any recent |
-| **Node.js** | Runs the app (`npm`) | **20+** (LTS recommended) |
-| **A browser** | Use the UI | Chrome, Firefox, Edge, Safari |
+| Tool          | Why                     | Version                       |
+| ------------- | ----------------------- | ----------------------------- |
+| **Git**       | Clone / get the project | Any recent                    |
+| **Node.js**   | Runs the app            | **20+** (LTS recommended)     |
+| **pnpm**      | Installs dependencies   | **11+** (`corepack enable`)   |
+| **A browser** | Use the UI              | Chrome, Firefox, Edge, Safari |
 
 No Docker or MongoDB install is required.
 
@@ -53,7 +54,7 @@ sudo apt install -y git
 git --version
 ```
 
-### B. Install Node.js (includes `npm`)
+### B. Install Node.js and pnpm
 
 1. Open [https://nodejs.org/](https://nodejs.org/).
 2. Download the **LTS** installer (20.x or newer).
@@ -62,7 +63,8 @@ git --version
 
 ```bash
 node -v
-npm -v
+corepack enable
+pnpm -v
 ```
 
 Optional: [nvm](https://github.com/nvm-sh/nvm) / [nvm-windows](https://github.com/coreybutler/nvm-windows), or `brew install node` on macOS.
@@ -87,13 +89,13 @@ cd path/to/MediaOrganizer
 ### 1. Install project dependencies
 
 ```bash
-npm install
+pnpm install
 ```
 
 ### 2. Start the dev server
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 The first run creates `data/media.db` and `data/files/` automatically.
@@ -118,8 +120,8 @@ Press `Ctrl+C` in the terminal. No background database process remains.
 
 ```bash
 cd MediaOrganizer
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 Open [http://localhost:5173](http://localhost:5173).
@@ -128,12 +130,12 @@ Open [http://localhost:5173](http://localhost:5173).
 
 ## How storage works (local efficiency)
 
-| Piece | Location | Notes |
-|-------|----------|--------|
-| Profiles, albums, media metadata | `data/media.db` (SQLite) | Embedded in the app process |
-| Images / videos | `data/files/<id>` | Streamed to/from disk; supports multi‑GB MP4 |
-| Upload | HTTP body → disk stream | Does not load whole files into RAM |
-| Playback | File stream + HTTP Range | Efficient seeking for large videos |
+| Piece                            | Location                 | Notes                                        |
+| -------------------------------- | ------------------------ | -------------------------------------------- |
+| Profiles, albums, media metadata | `data/media.db` (SQLite) | Embedded in the app process                  |
+| Images / videos                  | `data/files/<id>`        | Streamed to/from disk; supports multi‑GB MP4 |
+| Upload                           | HTTP body → disk stream  | Does not load whole files into RAM           |
+| Playback                         | File stream + HTTP Range | Efficient seeking for large videos           |
 
 Back up the whole `data/` folder to keep your library.
 
@@ -141,21 +143,21 @@ Back up the whole `data/` folder to keep your library.
 
 ## Troubleshooting
 
-| Problem | What to try |
-|---------|-------------|
-| `node` / `npm` not found | Reinstall Node LTS; reopen the terminal |
-| Port 5173 in use | `npm run dev -- --port 5174` |
-| Upload / APIs return 401 | Create or select a profile first |
-| `better-sqlite3` build errors | Use Node 20+ LTS; on Windows, a normal Node install is enough (prebuilds) |
-| Lost library after moving the project | Copy the `data/` directory with the project |
+| Problem                               | What to try                                                               |
+| ------------------------------------- | ------------------------------------------------------------------------- |
+| `node` / `pnpm` not found             | Reinstall Node LTS; run `corepack enable`; reopen the terminal            |
+| Port 5173 in use                      | `pnpm dev -- --port 5174`                                                 |
+| Upload / APIs return 401              | Create or select a profile first                                          |
+| `better-sqlite3` build errors         | Use Node 20+ LTS; on Windows, a normal Node install is enough (prebuilds) |
+| Lost library after moving the project | Copy the `data/` directory with the project                               |
 
 ---
 
 ## Production build (still local)
 
 ```bash
-npm run build
-npm run preview
+pnpm build
+pnpm preview
 ```
 
 Still uses local `data/` — this project is not intended for remote production servers.
@@ -198,16 +200,16 @@ Still uses local `data/` — this project is not intended for remote production 
 
 ### Media context menu (right‑click)
 
-| Action | Notes |
-|--------|--------|
-| Copy / Cut | Clipboard for paste |
-| Duplicate | Immediate copy in the current album |
-| Add to album… | Alphabetical popup; multi‑select albums, then confirm |
-| Copy name | System clipboard |
-| Rename | Single item |
-| Download | One or many |
-| Compress (AV1/AVIF) | Manual re‑encode (see Compression below) |
-| Delete | Confirms first |
+| Action              | Notes                                                 |
+| ------------------- | ----------------------------------------------------- |
+| Copy / Cut          | Clipboard for paste                                   |
+| Duplicate           | Immediate copy in the current album                   |
+| Add to album…       | Alphabetical popup; multi‑select albums, then confirm |
+| Copy name           | System clipboard                                      |
+| Rename              | Single item                                           |
+| Download            | One or many                                           |
+| Compress (AV1/AVIF) | Manual re‑encode (see Compression below)              |
+| Delete              | Confirms first                                        |
 
 Empty area: **Paste**, **Upload…**
 
@@ -215,19 +217,19 @@ Empty area: **Paste**, **Upload…**
 
 The toolbar **Upload settings** group (separate from filters) has:
 
-| Setting | Default | Effect |
-|---------|---------|--------|
-| **Compress** | on | After each **new upload** is saved, recompress that file in the **background** (videos → AV1 MP4, images → AVIF). Does not convert the existing library. |
-| **Warn duplicates** | on | If a file name already exists in the library (or twice in the same batch), ask before saving a duplicate. Turn off to always upload without prompting. |
+| Setting             | Default | Effect                                                                                                                                                   |
+| ------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Compress**        | on      | After each **new upload** is saved, recompress that file in the **background** (videos → AV1 MP4, images → AVIF). Does not convert the existing library. |
+| **Warn duplicates** | on      | If a file name already exists in the library (or twice in the same batch), ask before saving a duplicate. Turn off to always upload without prompting.   |
 
 ### Compression
 
 Compression has **three** paths. None of them block the upload progress bar.
 
-| When | What happens |
-|------|----------------|
-| **Compress** in Upload settings **on** | After each upload finishes and is saved, the server recompresses that file **in the background**. |
-| **Manual Compress** | Re‑encode selected media on demand. |
+| When                                               | What happens                                                                                                                |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **Compress** in Upload settings **on**             | After each upload finishes and is saved, the server recompresses that file **in the background**.                           |
+| **Manual Compress**                                | Re‑encode selected media on demand.                                                                                         |
 | **Manual Compress** (selection bar or right‑click) | Re‑encodes the selected items **now**. Use when Upload settings Compress was **off**, for a retry, or for items you choose. |
 
 Details:
@@ -238,24 +240,25 @@ Details:
 
 ### Keyboard shortcuts
 
-| Shortcut | Action |
-|----------|--------|
-| Ctrl/Cmd + C | Copy |
-| Ctrl/Cmd + X | Cut |
+| Shortcut     | Action                               |
+| ------------ | ------------------------------------ |
+| Ctrl/Cmd + C | Copy                                 |
+| Ctrl/Cmd + X | Cut                                  |
 | Ctrl/Cmd + V | Paste (copy → duplicate, cut → move) |
-| F2 | Rename |
-| Delete | Delete selection |
+| F2           | Rename                               |
+| Delete       | Delete selection                     |
 
 ---
 
 ## Project scripts
 
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Dev server with HMR |
-| `npm run build` | Production build |
-| `npm run preview` | Preview the production build |
-| `npm run check` | Typecheck / Svelte check |
+| Command        | Description                  |
+| -------------- | ---------------------------- |
+| `pnpm dev`     | Dev server with HMR          |
+| `pnpm build`   | Production build             |
+| `pnpm preview` | Preview the production build |
+| `pnpm check`   | Typecheck / Svelte check     |
+| `pnpm format`  | Format with Prettier         |
 
 ---
 
@@ -263,6 +266,9 @@ Details:
 
 - **SvelteKit** + **Svelte 5** (runes)
 - **Tailwind CSS** + **DaisyUI**
-- **SQLite** (`better-sqlite3`) for metadata
+- **Drizzle ORM** + **SQLite** (`better-sqlite3`) for metadata
+- **@lucide/svelte** for icons
+- **Prettier** for formatting
+- **pnpm** for packages
 - **Local filesystem** under `data/files/` for media bytes
 - **ffmpeg-static** + **sharp** for optional AV1 / AVIF compression

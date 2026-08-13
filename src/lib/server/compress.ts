@@ -36,13 +36,10 @@ function runFfmpeg(args: string[]): Promise<void> {
 		child.on('close', (code) => {
 			if (activeFfmpeg === child) activeFfmpeg = null;
 			if (code === 0) resolve();
-			else if (code === null)
-				reject(new Error('ffmpeg cancelled'));
+			else if (code === null) reject(new Error('ffmpeg cancelled'));
 			else
 				reject(
-					new Error(
-						stderr.trim().split('\n').slice(-8).join('\n') || `ffmpeg exited ${code}`
-					)
+					new Error(stderr.trim().split('\n').slice(-8).join('\n') || `ffmpeg exited ${code}`)
 				);
 		});
 	});
@@ -274,6 +271,18 @@ export async function compressImageToAvif(inputPath: string): Promise<CompressRe
 			/* ignore */
 		}
 		throw err;
+	}
+}
+
+export async function probeImageSize(
+	path: string
+): Promise<{ width: number; height: number } | null> {
+	try {
+		const meta = await sharp(path).metadata();
+		if (!meta.width || !meta.height) return null;
+		return { width: meta.width, height: meta.height };
+	} catch {
+		return null;
 	}
 }
 

@@ -122,24 +122,20 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		contentType === 'application/octet-stream';
 
 	if (isStreamUpload && request.body) {
-		const originalName = filenameHeader
-			? decodeURIComponent(filenameHeader)
-			: 'upload.bin';
+		const originalName = filenameHeader ? decodeURIComponent(filenameHeader) : 'upload.bin';
 		const mediaType = mediaTypeFrom(contentType, originalName);
 		if (!mediaType) {
 			throw error(400, 'Only image and video files are supported');
 		}
 
 		const mimeType = guessMime(contentType, originalName, mediaType);
-		const albumRaw =
-			request.headers.get('x-album-id') ?? request.headers.get('x-folder-id');
+		const albumRaw = request.headers.get('x-album-id') ?? request.headers.get('x-folder-id');
 		const albumId = parseAlbumId(albumRaw);
 		const widthRaw = request.headers.get('x-width');
 		const heightRaw = request.headers.get('x-height');
 		const duration = parseDuration(request.headers.get('x-duration'));
 		const compress =
-			request.headers.get('x-compress') !== '0' &&
-			request.headers.get('x-compress') !== 'false';
+			request.headers.get('x-compress') !== '0' && request.headers.get('x-compress') !== 'false';
 
 		try {
 			const item = await insertMediaFromStream(profile.id, {

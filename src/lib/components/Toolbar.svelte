@@ -1,4 +1,7 @@
 <script lang="ts">
+	import Moon from '@lucide/svelte/icons/moon';
+	import Search from '@lucide/svelte/icons/search';
+	import Sun from '@lucide/svelte/icons/sun';
 	import type { ThemeMode, ViewMode } from '$lib/types';
 
 	interface Props {
@@ -68,14 +71,12 @@
 	const showSelectionActions = $derived(selectMode || selectedCount > 0);
 </script>
 
-<div class="flex flex-wrap items-center gap-2 border-b border-base-300 bg-base-100/90 px-4 py-3 backdrop-blur">
+<div
+	class="border-base-300 bg-base-100/90 flex flex-wrap items-center gap-2 border-b px-4 py-3 backdrop-blur"
+>
 	{#if showSelectionActions}
 		<span class="badge badge-primary badge-outline">{selectedCount} selected</span>
-		<button
-			class="btn btn-sm btn-primary"
-			disabled={!selectedCount}
-			onclick={onopenAlbumPicker}
-		>
+		<button class="btn btn-sm btn-primary" disabled={!selectedCount} onclick={onopenAlbumPicker}>
 			Add to album…
 		</button>
 		<button class="btn btn-sm" disabled={!selectedCount || uploading} onclick={() => oncompress()}>
@@ -88,13 +89,11 @@
 		<button class="btn btn-sm btn-ghost" onclick={ontoggleSelect}>Done</button>
 	{:else}
 		<button class="btn btn-sm btn-outline" onclick={ontoggleSelect}>Select</button>
-		<button class="btn btn-sm btn-primary" onclick={onuploadClick} disabled={uploading}>
+		<button class="btn btn-sm btn-primary" onclick={onuploadClick}>
 			{#if uploading}
 				<span class="loading loading-spinner loading-xs"></span>
-				Uploading…
-			{:else}
-				Upload
 			{/if}
+			Upload
 		</button>
 	{/if}
 
@@ -113,7 +112,7 @@
 				Collage
 			</button>
 		</div>
-		<label class="flex items-center gap-2 text-sm text-base-content/70">
+		<label class="text-base-content/70 flex items-center gap-2 text-sm">
 			<span class="whitespace-nowrap">Cols {columns}</span>
 			<input
 				type="range"
@@ -127,20 +126,10 @@
 		</label>
 	</div>
 
-	<label class="input input-bordered input-sm flex min-w-[10rem] max-w-xs flex-1 items-center gap-2">
-		<svg
-			xmlns="http://www.w3.org/2000/svg"
-			viewBox="0 0 20 20"
-			fill="currentColor"
-			class="h-4 w-4 shrink-0 opacity-50"
-			aria-hidden="true"
-		>
-			<path
-				fill-rule="evenodd"
-				d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z"
-				clip-rule="evenodd"
-			/>
-		</svg>
+	<label
+		class="input input-bordered input-sm flex max-w-xs min-w-[10rem] flex-1 items-center gap-2"
+	>
+		<Search class="h-4 w-4 shrink-0 opacity-50" aria-hidden="true" />
 		<input
 			type="search"
 			class="grow bg-transparent outline-none"
@@ -172,7 +161,7 @@
 		</label>
 	</div>
 
-	<label class="flex items-center gap-1.5 text-sm text-base-content/70">
+	<label class="text-base-content/70 flex items-center gap-1.5 text-sm">
 		<span class="hidden sm:inline">From</span>
 		<input
 			type="date"
@@ -181,7 +170,7 @@
 			onchange={(e) => ondateFrom(e.currentTarget.value)}
 		/>
 	</label>
-	<label class="flex items-center gap-1.5 text-sm text-base-content/70">
+	<label class="text-base-content/70 flex items-center gap-1.5 text-sm">
 		<span class="hidden sm:inline">To</span>
 		<input
 			type="date"
@@ -192,11 +181,11 @@
 	</label>
 
 	<div
-		class="flex flex-wrap items-center gap-3 rounded-lg border border-base-300 bg-base-200/50 px-3 py-1.5"
+		class="border-base-300 bg-base-200/50 flex flex-wrap items-center gap-3 rounded-lg border px-3 py-1.5"
 		role="group"
 		aria-label="Upload settings"
 	>
-		<span class="text-xs font-semibold uppercase tracking-wide text-base-content/55">
+		<span class="text-base-content/55 text-xs font-semibold tracking-wide uppercase">
 			Upload settings
 		</span>
 		<label
@@ -232,21 +221,9 @@
 		title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
 	>
 		{#if theme === 'dark'}
-			<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-5 w-5">
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z"
-				/>
-			</svg>
+			<Sun class="h-5 w-5" />
 		{:else}
-			<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-5 w-5">
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z"
-				/>
-			</svg>
+			<Moon class="h-5 w-5" />
 		{/if}
 	</button>
 </div>

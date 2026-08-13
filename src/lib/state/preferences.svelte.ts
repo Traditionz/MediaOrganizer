@@ -45,9 +45,7 @@ export class PreferencesState {
 	dateTo = $state('');
 	searchQuery = $state('');
 	compressOnUpload = $state(readStoredFlag(COMPRESS_KEY, appDefaults.compressOnUpload));
-	warnDuplicateUploads = $state(
-		readStoredFlag(WARN_DUPES_KEY, appDefaults.warnDuplicateUploads)
-	);
+	warnDuplicateUploads = $state(readStoredFlag(WARN_DUPES_KEY, appDefaults.warnDuplicateUploads));
 	theme = $state<ThemeMode>(readStoredTheme(appDefaults.theme));
 
 	setViewMode(mode: ViewMode) {

@@ -3,8 +3,6 @@
 	import type { MediaItem } from '$lib/types';
 	import {
 		isSupportedMediaFile,
-		probeImageDimensions,
-		probeVideoDimensions,
 		captureVideoThumbnail,
 		isVideoFile,
 		uploadMediaFile,
@@ -287,7 +285,10 @@
 		await library.refresh();
 	}
 
-	async function duplicateMedia(ids: string[], albumId: string | null = library.pasteTargetAlbumId()) {
+	async function duplicateMedia(
+		ids: string[],
+		albumId: string | null = library.pasteTargetAlbumId()
+	) {
 		if (!ids.length) return;
 		const res = await fetch('/api/media', {
 			method: 'POST',
@@ -373,7 +374,11 @@
 
 	async function compressMediaIds(ids: string[]) {
 		if (!ids.length) return;
-		ui.beginUpload();
+		const jobId = ui.beginTransfer({
+			kind: 'compress',
+			label: ids.length === 1 ? '1 file' : `${ids.length} files`,
+			fileCount: ids.length
+		});
 		try {
 			const res = await fetch('/api/media', {
 				method: 'PATCH',
@@ -384,12 +389,12 @@
 				const body = await res.json().catch(() => ({}));
 				throw new Error(body.message || 'Compress failed');
 			}
-			ui.setUploadProgress(100);
+			ui.setTransferProgress(jobId, 100);
 			await library.refresh();
 		} catch (err) {
 			ui.errorMessage = err instanceof Error ? err.message : 'Compress failed';
 		} finally {
-			ui.endUpload();
+			ui.endTransfer(jobId);
 		}
 	}
 
@@ -517,7 +522,10 @@
 
 	function onKeydown(e: KeyboardEvent) {
 		const target = e.target as HTMLElement | null;
-		if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+		if (
+			target &&
+			(target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+		) {
 			return;
 		}
 		if (
@@ -685,8 +693,7 @@
 
 	function askUploadDuplicates(duplicateNames: string[]): Promise<boolean> {
 		const sample = duplicateNames.slice(0, 5).join(', ');
-		const extra =
-			duplicateNames.length > 5 ? ` and ${duplicateNames.length - 5} more` : '';
+		const extra = duplicateNames.length > 5 ? ` and ${duplicateNames.length - 5} more` : '';
 		const message =
 			duplicateNames.length === 1
 				? `"${duplicateNames[0]}" is already in your library. Upload another copy anyway?`
@@ -746,40 +753,42 @@
 			return;
 		}
 
-		ui.beginUpload();
+		const jobId = ui.beginTransfer({
+			kind: 'upload',
+			label: filesToUpload.length === 1 ? filesToUpload[0].name : `${filesToUpload.length} files`,
+			fileCount: filesToUpload.length
+		});
 
-		const albumId = library.activeAlbum === 'all' || library.activeAlbum === null ? null : library.activeAlbum;
+		const albumId =
+			library.activeAlbum === 'all' || library.activeAlbum === null ? null : library.activeAlbum;
 		const fileProgress = filesToUpload.map(() => 0);
 		const errors: string[] = [];
 
 		const bumpProgress = () => {
 			const sum = fileProgress.reduce((a, b) => a + b, 0);
-			ui.setUploadProgress(Math.round((sum / filesToUpload.length) * 100));
+			ui.setTransferProgress(jobId, Math.round((sum / filesToUpload.length) * 100));
 		};
 
 		try {
 			await mapWithConcurrency(filesToUpload, UPLOAD_CONCURRENCY, async (file, i) => {
 				try {
-					const imageDims = await probeImageDimensions(file);
-					const videoDims = imageDims ? null : await probeVideoDimensions(file);
-					const dims = imageDims ?? videoDims;
 					const uploaded = await uploadMediaFile(file, {
 						albumId,
-						width: dims?.width ?? null,
-						height: dims?.height ?? null,
-						duration: videoDims?.duration ?? null,
 						compress: prefs.compressOnUpload,
 						onProgress: (pct) => {
-							// Reserve last 5% for thumbnail work on videos
-							const weight = isVideoFile(file) ? 0.95 : 1;
-							fileProgress[i] = (pct / 100) * weight;
+							fileProgress[i] = pct / 100;
 							bumpProgress();
 						}
 					});
 
 					if (isVideoFile(file) && uploaded?.id) {
-						const thumb = await captureVideoThumbnail(file);
-						if (thumb) await uploadVideoThumbnail(uploaded.id, thumb);
+						const mediaId = uploaded.id;
+						void (async () => {
+							const thumb = await captureVideoThumbnail(file);
+							if (thumb) await uploadVideoThumbnail(mediaId, thumb);
+						})().catch(() => {
+							/* thumbnail backfill is optional */
+						});
 					}
 					fileProgress[i] = 1;
 					bumpProgress();
@@ -790,8 +799,7 @@
 				}
 			});
 
-			ui.setUploadProgress(100);
-			await library.refresh();
+			ui.setTransferProgress(jobId, 100);
 			if (errors.length) {
 				ui.errorMessage =
 					errors.length === 1
@@ -807,7 +815,10 @@
 		} catch (err) {
 			ui.errorMessage = err instanceof Error ? err.message : 'Upload failed';
 		} finally {
-			ui.endUpload();
+			ui.endTransfer(jobId);
+			void library.refresh().catch(() => {
+				/* list refresh is best-effort after upload */
+			});
 		}
 	}
 
@@ -905,10 +916,7 @@
 			const cx = r.left - contentRect.left + selection.contentEl.scrollLeft;
 			const cy = r.top - contentRect.top + selection.contentEl.scrollTop;
 			const intersects =
-				cx < box.x + box.w &&
-				cx + r.width > box.x &&
-				cy < box.y + box.h &&
-				cy + r.height > box.y;
+				cx < box.x + box.w && cx + r.width > box.x && cy < box.y + box.h && cy + r.height > box.y;
 			if (intersects) {
 				const id = card.dataset.id;
 				if (id) {
@@ -933,7 +941,7 @@
 	<ProfileGate profiles={library.profiles} onselect={selectProfile} oncreate={createProfile} />
 {:else}
 	<div
-		class="flex h-screen bg-base-200 text-base-content"
+		class="bg-base-200 text-base-content flex h-screen"
 		ondragenter={onDragEnter}
 		ondragover={onDragOver}
 		ondragleave={onDragLeave}
@@ -992,21 +1000,47 @@
 				ontheme={(t) => prefs.setTheme(t)}
 			/>
 
-			{#if ui.uploading && ui.uploadProgress != null}
-				<div class="alert alert-info mx-4 mt-3 py-2 text-sm" role="status">
-					<span>Uploading… {ui.uploadProgress}%</span>
-					<button class="btn btn-ghost btn-xs" onclick={() => ui.endUpload()}>Dismiss</button>
+			{#if ui.jobs.length}
+				<div class="mx-4 mt-3 flex flex-col gap-2">
+					{#each ui.jobs as job (job.id)}
+						<div class="alert alert-info py-2 text-sm" role="status">
+							<div class="min-w-0 flex-1">
+								<div class="flex items-center justify-between gap-2">
+									<span class="truncate">
+										{job.kind === 'compress'
+											? 'Compressing'
+											: job.progress >= 95
+												? 'Saving'
+												: 'Uploading'}
+										{job.label} — {job.progress}%
+									</span>
+									<button
+										class="btn btn-ghost btn-xs shrink-0"
+										onclick={() => ui.endTransfer(job.id)}
+									>
+										Dismiss
+									</button>
+								</div>
+								<progress class="progress progress-info mt-1 w-full" value={job.progress} max="100"
+								></progress>
+							</div>
+						</div>
+					{/each}
 				</div>
 			{/if}
 			{#if ui.errorMessage}
 				<div class="alert alert-error mx-4 mt-3 py-2 text-sm" role="alert">
 					<span>{ui.errorMessage}</span>
-					<button class="btn btn-ghost btn-xs" onclick={() => (ui.errorMessage = '')}>Dismiss</button>
+					<button class="btn btn-ghost btn-xs" onclick={() => (ui.errorMessage = '')}
+						>Dismiss</button
+					>
 				</div>
 			{:else if ui.convertResultMessage}
 				<div class="alert alert-success mx-4 mt-3 py-2 text-sm" role="status">
 					<span>{ui.convertResultMessage}</span>
-					<button class="btn btn-ghost btn-xs" onclick={() => (ui.convertResultMessage = '')}>Dismiss</button>
+					<button class="btn btn-ghost btn-xs" onclick={() => (ui.convertResultMessage = '')}
+						>Dismiss</button
+					>
 				</div>
 			{/if}
 
@@ -1021,8 +1055,10 @@
 				oncontextmenu={openEmptyContextMenu}
 			>
 				{#if library.filteredMedia.length === 0}
-					<div class="flex h-full min-h-64 flex-col items-center justify-center text-center text-base-content/60">
-						<p class="text-lg font-medium text-base-content/80">
+					<div
+						class="text-base-content/60 flex h-full min-h-64 flex-col items-center justify-center text-center"
+					>
+						<p class="text-base-content/80 text-lg font-medium">
 							{prefs.searchQuery.trim()
 								? 'No matching media'
 								: library.activeAlbum === null
@@ -1035,7 +1071,8 @@
 							{:else if library.activeAlbum === null}
 								Upload files here, or remove items from albums to see them in Unassigned.
 							{:else}
-								Drag and drop pictures or videos here, or use Upload. Double-click an item to expand it.
+								Drag and drop pictures or videos here, or use Upload. Double-click an item to expand
+								it.
 							{/if}
 						</p>
 					</div>
@@ -1063,7 +1100,7 @@
 
 				{#if selection.selectionRect && selection.selecting}
 					<div
-						class="pointer-events-none absolute z-20 border border-primary bg-primary/15"
+						class="border-primary bg-primary/15 pointer-events-none absolute z-20 border"
 						style:left="{selection.selectionRect.x}px"
 						style:top="{selection.selectionRect.y}px"
 						style:width="{selection.selectionRect.w}px"
@@ -1075,12 +1112,14 @@
 
 		{#if ui.dragOver}
 			<div
-				class="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-primary/20 backdrop-blur-[2px]"
+				class="bg-primary/20 pointer-events-none fixed inset-0 z-40 flex items-center justify-center backdrop-blur-[2px]"
 				transition:fade={{ duration: 120 }}
 			>
-				<div class="rounded-2xl border-2 border-dashed border-primary bg-base-100/90 px-10 py-8 text-center shadow-xl">
-					<p class="text-xl font-semibold text-primary">Drop to upload</p>
-					<p class="mt-1 text-sm text-base-content/60">Images and videos</p>
+				<div
+					class="border-primary bg-base-100/90 rounded-2xl border-2 border-dashed px-10 py-8 text-center shadow-xl"
+				>
+					<p class="text-primary text-xl font-semibold">Drop to upload</p>
+					<p class="text-base-content/60 mt-1 text-sm">Images and videos</p>
 				</div>
 			</div>
 		{/if}
@@ -1117,7 +1156,9 @@
 	<PasscodeModal
 		open={ui.profileModal.open}
 		mode={ui.profileModal.mode}
-		profileName={ui.profileModal.mode === 'create' ? ui.profileModal.prefillName : ui.profileModal.profileName}
+		profileName={ui.profileModal.mode === 'create'
+			? ui.profileModal.prefillName
+			: ui.profileModal.profileName}
 		mediaCount={ui.profileModal.mediaCount}
 		requiresPasscode={ui.profileModal.requiresPasscode}
 		busy={ui.profileModalBusy}

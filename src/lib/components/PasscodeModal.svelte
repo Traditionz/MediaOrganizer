@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { fade, scale } from 'svelte/transition';
-
-	export type PasscodeModalMode = 'unlock' | 'create' | 'delete';
+	import type { PasscodeModalMode } from '$lib/types';
 
 	interface Props {
 		open: boolean;
@@ -60,11 +59,7 @@
 	});
 
 	const title = $derived(
-		mode === 'unlock'
-			? 'Enter passcode'
-			: mode === 'create'
-				? 'New profile'
-				: 'Delete profile'
+		mode === 'unlock' ? 'Enter passcode' : mode === 'create' ? 'New profile' : 'Delete profile'
 	);
 
 	const subtitle = $derived(
@@ -161,14 +156,14 @@
 		}}
 	>
 		<form
-			class="w-full max-w-md rounded-2xl border border-base-300 bg-base-100 p-5 shadow-2xl"
+			class="border-base-300 bg-base-100 w-full max-w-md rounded-2xl border p-5 shadow-2xl"
 			transition:scale={{ duration: 140, start: 0.96 }}
 			onsubmit={submit}
 		>
 			<header class="mb-4">
 				<h2 class="text-lg font-semibold">{title}</h2>
 				{#if subtitle}
-					<p class="mt-1 text-sm text-base-content/60">{subtitle}</p>
+					<p class="text-base-content/60 mt-1 text-sm">{subtitle}</p>
 				{/if}
 			</header>
 
@@ -180,7 +175,7 @@
 
 			{#if mode === 'create'}
 				<label class="form-control mb-3 w-full">
-					<span class="mb-1 text-xs font-medium text-base-content/60">Name</span>
+					<span class="text-base-content/60 mb-1 text-xs font-medium">Name</span>
 					<input
 						class="input input-bordered input-sm w-full"
 						placeholder="Profile name"
@@ -203,9 +198,7 @@
 
 			{#if mode === 'delete'}
 				<label class="form-control mb-3 w-full">
-					<span class="mb-1 text-xs font-medium text-base-content/60">
-						Type profile name
-					</span>
+					<span class="text-base-content/60 mb-1 text-xs font-medium"> Type profile name </span>
 					<input
 						class="input input-bordered input-sm w-full"
 						placeholder={profileName}
@@ -216,9 +209,7 @@
 					/>
 				</label>
 				<label class="form-control mb-3 w-full">
-					<span class="mb-1 text-xs font-medium text-base-content/60">
-						Type media count
-					</span>
+					<span class="text-base-content/60 mb-1 text-xs font-medium"> Type media count </span>
 					<input
 						class="input input-bordered input-sm w-full"
 						type="number"
@@ -232,10 +223,10 @@
 					/>
 				</label>
 			{:else if mode === 'unlock' && !requiresPasscode}
-				<p class="mb-4 text-sm text-base-content/70">This profile has no passcode.</p>
+				<p class="text-base-content/70 mb-4 text-sm">This profile has no passcode.</p>
 			{:else if (mode === 'create' && usePasscode) || (mode === 'unlock' && requiresPasscode)}
 				<label class="form-control mb-3 w-full">
-					<span class="mb-1 text-xs font-medium text-base-content/60">Passcode</span>
+					<span class="text-base-content/60 mb-1 text-xs font-medium">Passcode</span>
 					<input
 						class="input input-bordered input-sm w-full"
 						type="password"
@@ -250,7 +241,7 @@
 
 				{#if mode === 'create' && usePasscode}
 					<label class="form-control mb-3 w-full">
-						<span class="mb-1 text-xs font-medium text-base-content/60">Confirm</span>
+						<span class="text-base-content/60 mb-1 text-xs font-medium">Confirm</span>
 						<input
 							class="input input-bordered input-sm w-full"
 							type="password"

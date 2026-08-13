@@ -4,10 +4,7 @@ import type { RequestHandler } from './$types';
 import { getMediaForServe, openFileReadStream } from '$lib/server/media';
 import { resolveProfileFromCookies } from '$lib/server/profileContext';
 
-function parseRange(
-	header: string | null,
-	size: number
-): { start: number; end: number } | null {
+function parseRange(header: string | null, size: number): { start: number; end: number } | null {
 	if (!header || !header.startsWith('bytes=')) return null;
 	const part = header.slice('bytes='.length).split(',')[0]?.trim();
 	if (!part) return null;

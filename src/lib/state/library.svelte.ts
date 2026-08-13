@@ -88,16 +88,11 @@ export class LibraryState {
 
 	setMediaDuration(id: string, duration: number) {
 		if (!Number.isFinite(duration) || duration <= 0) return;
-		this.media = this.media.map((item) =>
-			item.id === id ? { ...item, duration } : item
-		);
+		this.media = this.media.map((item) => (item.id === id ? { ...item, duration } : item));
 	}
 
 	async refresh() {
-		const [mediaRes, albumsRes] = await Promise.all([
-			fetch('/api/media'),
-			fetch('/api/albums')
-		]);
+		const [mediaRes, albumsRes] = await Promise.all([fetch('/api/media'), fetch('/api/albums')]);
 		const media = (await mediaRes.json()) as MediaItem[];
 		this.media = media.map((item) =>
 			this.thumbReady.has(item.id) ? { ...item, has_thumbnail: true } : item

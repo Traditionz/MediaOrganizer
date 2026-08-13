@@ -65,7 +65,8 @@
 			if (typeof ResizeObserver === 'undefined') return;
 			const ro = new ResizeObserver((entries) => {
 				const entry = entries[0];
-				if (entry) rememberCardHeight(id, entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height);
+				if (entry)
+					rememberCardHeight(id, entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height);
 			});
 			ro.observe(node);
 			rememberCardHeight(id, node.getBoundingClientRect().height);

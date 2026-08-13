@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { MediaItem } from '$lib/types';
+	import Play from '@lucide/svelte/icons/play';
 	import { beginMediaDrag, endInternalDrag, setCompactMediaDragImage } from '$lib/dragSession';
 	import { getAppState } from '$lib/state';
 	import { enqueueThumbnailJob } from '$lib/thumbnailQueue';
@@ -149,8 +150,7 @@
 
 	function attachCard(node: HTMLDivElement) {
 		cardEl = node;
-		const needsThumb =
-			item.media_type === 'video' && !item.has_thumbnail && !localThumb;
+		const needsThumb = item.media_type === 'video' && !item.has_thumbnail && !localThumb;
 		const needsDuration =
 			item.media_type === 'video' &&
 			!(item.duration != null && Number.isFinite(item.duration) && item.duration > 0);
@@ -194,10 +194,10 @@
 <div
 	{@attach attachCard}
 	class={[
-		'media-card group relative overflow-hidden bg-base-200 transition-shadow',
-		variant === 'grid' && 'rounded-xl shadow-sm hover:shadow-md aspect-square',
-		variant === 'collage' && 'rounded-lg w-full shadow-sm hover:shadow-md',
-		selected && 'ring-2 ring-primary ring-offset-2 ring-offset-base-100',
+		'media-card group bg-base-200 relative overflow-hidden transition-shadow',
+		variant === 'grid' && 'aspect-square rounded-xl shadow-sm hover:shadow-md',
+		variant === 'collage' && 'w-full rounded-lg shadow-sm hover:shadow-md',
+		selected && 'ring-primary ring-offset-base-100 ring-2 ring-offset-2',
 		dragging && 'opacity-40',
 		showCheckbox ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
 	]}
@@ -219,7 +219,13 @@
 	}}
 >
 	{#if item.media_type === 'image'}
-		<img {src} alt={item.original_name} class="h-full w-full object-cover" loading="lazy" draggable="false" />
+		<img
+			{src}
+			alt={item.original_name}
+			class="h-full w-full object-cover"
+			loading="lazy"
+			draggable="false"
+		/>
 	{:else if showPoster}
 		<img
 			src={thumbSrc}
@@ -230,37 +236,37 @@
 			onerror={onPosterError}
 		/>
 		<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
-			<span class="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white shadow">
-				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="ml-0.5 h-5 w-5">
-					<path d="M8 5v14l11-7z" />
-				</svg>
+			<span
+				class="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white shadow"
+			>
+				<Play class="ml-0.5 h-5 w-5" fill="currentColor" />
 			</span>
 		</div>
 	{:else if generatingThumbnail}
 		<div
-			class="flex h-full w-full flex-col items-center justify-center gap-2 bg-base-300"
+			class="bg-base-300 flex h-full w-full flex-col items-center justify-center gap-2"
 			aria-busy="true"
 			aria-label="Generating thumbnail"
 		>
 			<span class="loading loading-spinner loading-md text-base-content/55"></span>
-			<span class="text-[10px] font-medium uppercase tracking-wide text-base-content/45">
+			<span class="text-base-content/45 text-[10px] font-medium tracking-wide uppercase">
 				Thumbnail
 			</span>
 		</div>
 	{:else}
-		<div class="relative h-full w-full bg-base-300">
+		<div class="bg-base-300 relative h-full w-full">
 			<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
-				<span class="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white shadow">
-					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="ml-0.5 h-5 w-5">
-						<path d="M8 5v14l11-7z" />
-					</svg>
+				<span
+					class="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white shadow"
+				>
+					<Play class="ml-0.5 h-5 w-5" fill="currentColor" />
 				</span>
 			</div>
 		</div>
 	{/if}
 
 	{#if showCheckbox}
-		<div class="absolute left-2 top-2 z-10">
+		<div class="absolute top-2 left-2 z-10">
 			<input
 				type="checkbox"
 				class="checkbox checkbox-primary checkbox-sm bg-base-100/90"
@@ -276,13 +282,13 @@
 	{/if}
 
 	<div
-		class="absolute inset-x-0 bottom-0 bg-base-100/95 px-2.5 py-2 text-base-content opacity-0 transition-opacity group-hover:opacity-100"
+		class="bg-base-100/95 text-base-content absolute inset-x-0 bottom-0 px-2.5 py-2 opacity-0 transition-opacity group-hover:opacity-100"
 		class:opacity-100={selected}
 	>
 		<p class="truncate text-xs font-medium">{item.original_name}</p>
-		<div class="mt-1 flex items-center justify-between gap-2 text-[10px] text-base-content/70">
+		<div class="text-base-content/70 mt-1 flex items-center justify-between gap-2 text-[10px]">
 			{#if showAlbumChip && albumLabel}
-				<span class="badge badge-sm max-w-[70%] truncate border-0 bg-base-200" title={albumTitle}>
+				<span class="badge badge-sm bg-base-200 max-w-[70%] truncate border-0" title={albumTitle}>
 					{albumLabel}
 				</span>
 			{:else}
@@ -294,7 +300,7 @@
 
 	{#if durationLabel}
 		<span
-			class="pointer-events-none absolute bottom-2 right-2 z-10 rounded px-1.5 py-0.5 text-[11px] font-medium leading-none text-white tabular-nums bg-black/75"
+			class="pointer-events-none absolute right-2 bottom-2 z-10 rounded bg-black/75 px-1.5 py-0.5 text-[11px] leading-none font-medium text-white tabular-nums"
 		>
 			{durationLabel}
 		</span>
@@ -302,7 +308,7 @@
 
 	{#if !showCheckbox && showAlbumChip && albumLabel}
 		<span
-			class="badge badge-sm absolute left-2 top-2 max-w-[75%] truncate border-0 bg-base-100/90 text-base-content shadow-sm"
+			class="badge badge-sm bg-base-100/90 text-base-content absolute top-2 left-2 max-w-[75%] truncate border-0 shadow-sm"
 			title={albumTitle}
 		>
 			{albumLabel}

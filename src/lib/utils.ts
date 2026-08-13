@@ -1,3 +1,5 @@
+import { appDefaults } from '$lib/config/defaults';
+
 /** Format bytes for display */
 export function formatBytes(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
@@ -54,8 +56,7 @@ export function layoutCollage(
 
 	for (const item of items) {
 		const col = heights.indexOf(Math.min(...heights));
-		const aspect =
-			item.width && item.height ? item.height / item.width : item.width ? 1 : 0.75;
+		const aspect = item.width && item.height ? item.height / item.width : item.width ? 1 : 0.75;
 		const h = Math.max(80, colWidth * aspect);
 		layouts.push({
 			id: item.id,
@@ -108,7 +109,9 @@ export function thumbnailSeekTime(duration: number): number {
 	return Math.min(at, Math.max(0, duration - 0.05));
 }
 
-export function probeImageDimensions(file: File): Promise<{ width: number; height: number } | null> {
+export function probeImageDimensions(
+	file: File
+): Promise<{ width: number; height: number } | null> {
 	if (!isImageFile(file)) return Promise.resolve(null);
 	return new Promise((resolve) => {
 		const url = URL.createObjectURL(file);
@@ -167,10 +170,7 @@ export function probeVideoDimensions(
 }
 
 /** Probe duration from a media URL (for lazy duration backfill). */
-export function probeVideoDurationFromUrl(
-	src: string,
-	timeoutMs = 12000
-): Promise<number | null> {
+export function probeVideoDurationFromUrl(src: string, timeoutMs = 12000): Promise<number | null> {
 	return new Promise((resolve) => {
 		const video = document.createElement('video');
 		video.preload = 'metadata';
@@ -212,10 +212,7 @@ export async function persistMediaDuration(mediaId: string, duration: number): P
 }
 
 /** Capture a JPEG preview frame from a video File (for upload-time thumbnails). */
-export function captureVideoThumbnail(
-	file: File,
-	maxEdge = 480
-): Promise<Blob | null> {
+export function captureVideoThumbnail(file: File, maxEdge = 480): Promise<Blob | null> {
 	if (!isVideoFile(file)) return Promise.resolve(null);
 
 	return new Promise((resolve) => {
@@ -324,14 +321,18 @@ export function captureVideoThumbnailFromUrl(
 					return;
 				}
 				ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-				canvas.toBlob((blob) => {
-					// Reject near-empty / solid-color captures (bad seek)
-					if (!blob || blob.size < 3000) {
-						finish(null);
-						return;
-					}
-					finish(blob);
-				}, 'image/jpeg', 0.85);
+				canvas.toBlob(
+					(blob) => {
+						// Reject near-empty / solid-color captures (bad seek)
+						if (!blob || blob.size < 3000) {
+							finish(null);
+							return;
+						}
+						finish(blob);
+					},
+					'image/jpeg',
+					0.85
+				);
 			} catch {
 				finish(null);
 			}
@@ -440,16 +441,15 @@ export function uploadMediaFile(
 
 		xhr.upload.onprogress = (e) => {
 			if (e.lengthComputable && options.onProgress) {
-				options.onProgress(Math.round((e.loaded / e.total) * 100));
+				// Cap at 95% until the server actually responds — bytes-sent
+				// 100% is what made the bar look stuck while the file was saved.
+				options.onProgress(Math.min(95, Math.round((e.loaded / e.total) * 95)));
 			}
-		};
-		// Bytes finished; server may still be writing/indexing before onload.
-		xhr.upload.onload = () => {
-			options.onProgress?.(100);
 		};
 
 		xhr.onload = () => {
 			if (xhr.status >= 200 && xhr.status < 300) {
+				options.onProgress?.(100);
 				resolve(xhr.response as { id: string; media_type?: string });
 			} else {
 				const msg =
@@ -460,6 +460,7 @@ export function uploadMediaFile(
 		};
 		xhr.onerror = () => reject(new Error(`Network error uploading ${file.name}`));
 		xhr.ontimeout = () => reject(new Error(`Timed out uploading ${file.name}`));
+		xhr.timeout = 0;
 		xhr.send(file);
 	});
 }
@@ -485,8 +486,6 @@ export async function mapWithConcurrency<T, R>(
 	await Promise.all(Array.from({ length: limit }, () => runWorker()));
 	return results;
 }
-
-import { appDefaults } from '$lib/config/defaults';
 
 /** Parallel upload slots — browsers typically allow ~6 connections per host. */
 export const UPLOAD_CONCURRENCY = appDefaults.uploadConcurrency;

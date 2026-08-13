@@ -10,6 +10,8 @@
 </script>
 
 <script lang="ts">
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+
 	interface Props {
 		open: boolean;
 		x: number;
@@ -130,10 +132,10 @@
 		role="menu"
 		aria-label="Context menu"
 	>
-		<ul class="menu min-w-[11rem] rounded-box border border-base-300 bg-base-100 p-1 shadow-lg">
+		<ul class="menu rounded-box border-base-300 bg-base-100 min-w-[11rem] border p-1 shadow-lg">
 			{#each items as item, i (item.separator ? `sep-${i}` : item.id)}
 				{#if item.separator}
-					<li class="menu-title my-0.5 h-px bg-base-300 p-0"></li>
+					<li class="menu-title bg-base-300 my-0.5 h-px p-0"></li>
 				{:else}
 					<li>
 						<button
@@ -154,20 +156,7 @@
 						>
 							<span>{item.label}</span>
 							{#if item.children?.length}
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke-width="1.5"
-									stroke="currentColor"
-									class="h-3.5 w-3.5 shrink-0 opacity-70"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										d="M8.25 4.5l7.5 7.5-7.5 7.5"
-									/>
-								</svg>
+								<ChevronRight class="h-3.5 w-3.5 shrink-0 opacity-70" />
 							{/if}
 						</button>
 					</li>
@@ -178,14 +167,14 @@
 		{#if openSubmenu}
 			<ul
 				data-submenu
-				class="menu fixed z-50 max-h-[min(20rem,70vh)] min-w-[11rem] overflow-y-auto rounded-box border border-base-300 bg-base-100 p-1 shadow-lg"
+				class="menu rounded-box border-base-300 bg-base-100 fixed z-50 max-h-[min(20rem,70vh)] min-w-[11rem] overflow-y-auto border p-1 shadow-lg"
 				style:left="{submenuPos.left}px"
 				style:top="{submenuPos.top}px"
 				role="menu"
 			>
 				{#each openSubmenu as child, i (child.separator ? `sub-sep-${i}` : child.id)}
 					{#if child.separator}
-						<li class="menu-title my-0.5 h-px bg-base-300 p-0"></li>
+						<li class="menu-title bg-base-300 my-0.5 h-px p-0"></li>
 					{:else}
 						<li>
 							<button

@@ -1,7 +1,16 @@
-import type { MediaItem } from '$lib/types';
-import type { PasscodeModalMode } from '$lib/components/PasscodeModal.svelte';
+import type { MediaItem, PasscodeModalMode } from '$lib/types';
 
-const UPLOAD_PROGRESS_KEY = 'mo_upload_progress';
+const UPLOAD_PROGRESS_KEY = 'mo_upload_jobs';
+
+export type TransferKind = 'upload' | 'compress';
+
+export type TransferJob = {
+	id: string;
+	kind: TransferKind;
+	label: string;
+	progress: number;
+	fileCount: number;
+};
 
 export type ConfirmKind = 'delete-album' | 'delete-media' | 'upload-duplicates';
 
@@ -51,8 +60,8 @@ export type ContextMenuState = {
 /** Ephemeral chrome: modals, upload progress, preview, clipboard, toasts. */
 export class UiState {
 	preview = $state<MediaItem | null>(null);
-	uploading = $state(false);
-	uploadProgress = $state<number | null>(null);
+	jobs = $state<TransferJob[]>([]);
+	uploading = $derived(this.jobs.some((job) => job.kind === 'upload'));
 	dragOver = $state(false);
 	errorMessage = $state('');
 	convertResultMessage = $state('');
@@ -113,14 +122,11 @@ export class UiState {
 	private persistUploadProgress() {
 		if (typeof sessionStorage === 'undefined') return;
 		try {
-			if (!this.uploading || this.uploadProgress == null) {
+			if (!this.jobs.length) {
 				sessionStorage.removeItem(UPLOAD_PROGRESS_KEY);
 				return;
 			}
-			sessionStorage.setItem(
-				UPLOAD_PROGRESS_KEY,
-				JSON.stringify({ progress: this.uploadProgress })
-			);
+			sessionStorage.setItem(UPLOAD_PROGRESS_KEY, JSON.stringify(this.jobs));
 		} catch {
 			/* ignore */
 		}
@@ -131,32 +137,58 @@ export class UiState {
 		try {
 			const raw = sessionStorage.getItem(UPLOAD_PROGRESS_KEY);
 			if (!raw) return;
-			const parsed = JSON.parse(raw) as { progress?: number };
-			if (typeof parsed.progress === 'number' && Number.isFinite(parsed.progress)) {
-				this.uploading = true;
-				this.uploadProgress = Math.min(100, Math.max(0, Math.round(parsed.progress)));
+			const parsed = JSON.parse(raw) as unknown;
+			if (!Array.isArray(parsed)) return;
+			const jobs: TransferJob[] = [];
+			for (const item of parsed) {
+				if (!item || typeof item !== 'object') continue;
+				const row = item as Partial<TransferJob>;
+				if (typeof row.id !== 'string' || (row.kind !== 'upload' && row.kind !== 'compress')) {
+					continue;
+				}
+				const progress =
+					typeof row.progress === 'number' && Number.isFinite(row.progress)
+						? Math.min(100, Math.max(0, Math.round(row.progress)))
+						: 0;
+				jobs.push({
+					id: row.id,
+					kind: row.kind,
+					label: typeof row.label === 'string' ? row.label : 'Transfer',
+					progress,
+					fileCount:
+						typeof row.fileCount === 'number' && Number.isFinite(row.fileCount)
+							? Math.max(1, Math.round(row.fileCount))
+							: 1
+				});
 			}
+			this.jobs = jobs;
 		} catch {
 			/* ignore */
 		}
 	}
 
-	beginUpload() {
-		this.errorMessage = '';
-		this.convertResultMessage = '';
-		this.uploading = true;
-		this.uploadProgress = 0;
+	beginTransfer(opts: { kind: TransferKind; label: string; fileCount: number }): string {
+		const id = crypto.randomUUID();
+		this.jobs.push({
+			id,
+			kind: opts.kind,
+			label: opts.label,
+			progress: 0,
+			fileCount: Math.max(1, opts.fileCount)
+		});
+		this.persistUploadProgress();
+		return id;
+	}
+
+	setTransferProgress(id: string, pct: number) {
+		const job = this.jobs.find((item) => item.id === id);
+		if (!job) return;
+		job.progress = Math.min(100, Math.max(0, Math.round(pct)));
 		this.persistUploadProgress();
 	}
 
-	setUploadProgress(pct: number) {
-		this.uploadProgress = Math.min(100, Math.max(0, Math.round(pct)));
-		this.persistUploadProgress();
-	}
-
-	endUpload() {
-		this.uploading = false;
-		this.uploadProgress = null;
+	endTransfer(id: string) {
+		this.jobs = this.jobs.filter((item) => item.id !== id);
 		this.persistUploadProgress();
 	}
 
@@ -236,12 +268,7 @@ export class UiState {
 		this.profileModalError = '';
 	}
 
-	openContextMenu(opts: {
-		x: number;
-		y: number;
-		mediaIds: string[];
-		kind: 'media' | 'empty';
-	}) {
+	openContextMenu(opts: { x: number; y: number; mediaIds: string[]; kind: 'media' | 'empty' }) {
 		this.contextMenu = {
 			open: true,
 			x: opts.x,
