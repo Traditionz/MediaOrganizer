@@ -53,8 +53,7 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 			: body?.newPasscode === null
 				? null
 				: '';
-	const currentPasscode =
-		typeof body?.currentPasscode === 'string' ? body.currentPasscode : null;
+	const currentPasscode = typeof body?.currentPasscode === 'string' ? body.currentPasscode : null;
 
 	try {
 		const profile = setProfilePasscode(id, currentPasscode, newPasscode);

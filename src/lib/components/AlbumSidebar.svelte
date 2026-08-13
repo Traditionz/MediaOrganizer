@@ -1,4 +1,12 @@
 <script lang="ts">
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import Folder from '@lucide/svelte/icons/folder';
+	import Images from '@lucide/svelte/icons/images';
+	import Inbox from '@lucide/svelte/icons/inbox';
+	import Plus from '@lucide/svelte/icons/plus';
+	import Search from '@lucide/svelte/icons/search';
+	import Trash2 from '@lucide/svelte/icons/trash-2';
+	import User from '@lucide/svelte/icons/user';
 	import type { Album, Profile } from '$lib/types';
 	import { endInternalDrag, getInternalDrag, isInternalDragActive } from '$lib/dragSession';
 	import ContextMenu, { type ContextMenuItem } from './ContextMenu.svelte';
@@ -53,6 +61,7 @@
 	let profileBusy = $state(false);
 	let renamingId = $state<string | null>(null);
 	let renameName = $state('');
+	let albumQuery = $state('');
 	let contextMenu = $state<{
 		open: boolean;
 		x: number;
@@ -64,6 +73,12 @@
 	const isBusy = $derived(profileBusy || profileBusyProp);
 
 	const sortedAlbums = $derived([...albums].sort((a, b) => a.name.localeCompare(b.name)));
+	const albumQueryNorm = $derived(albumQuery.trim().toLowerCase());
+	const visibleAlbums = $derived(
+		albumQueryNorm
+			? sortedAlbums.filter((album) => album.name.toLowerCase().includes(albumQueryNorm))
+			: sortedAlbums
+	);
 
 	const contextAlbum = $derived(
 		contextMenu.albumId ? (albums.find((a) => a.id === contextMenu.albumId) ?? null) : null
@@ -280,9 +295,11 @@
 	}
 </script>
 
-<aside class="flex h-full w-[var(--media-sidebar-width)] shrink-0 flex-col border-r border-base-300 bg-base-100">
-	<div class="border-b border-base-300 px-4 py-5">
-		<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/50">Library</p>
+<aside
+	class="border-base-300 bg-base-100 flex h-full w-[var(--media-sidebar-width)] shrink-0 flex-col border-r"
+>
+	<div class="border-base-300 border-b px-4 py-5">
+		<p class="text-base-content/50 text-xs font-semibold tracking-[0.14em] uppercase">Library</p>
 		<h1 class="mt-1 text-xl font-bold tracking-tight">Media Organizer</h1>
 
 		<div class="relative mt-3">
@@ -301,41 +318,26 @@
 				}}
 			>
 				<span class="flex min-w-0 items-center gap-2">
-					<svg
-						xmlns="http://www.w3.org/2000/svg"
-						fill="none"
-						viewBox="0 0 24 24"
-						stroke-width="1.5"
-						stroke="currentColor"
-						class="h-4 w-4 shrink-0 text-base-content/60"
-					>
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"
-						/>
-					</svg>
+					<User class="text-base-content/60 h-4 w-4 shrink-0" />
 					<span class="truncate font-medium">{profile.name}</span>
 				</span>
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					fill="none"
-					viewBox="0 0 24 24"
-					stroke-width="1.5"
-					stroke="currentColor"
-					class={['h-4 w-4 shrink-0 opacity-60 transition-transform', profileMenuOpen && 'rotate-180']}
-				>
-					<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-				</svg>
+				<ChevronDown
+					class={[
+						'h-4 w-4 shrink-0 opacity-60 transition-transform',
+						profileMenuOpen && 'rotate-180'
+					]}
+				/>
 			</button>
 
 			{#if profileMenuOpen}
 				<div
-					class="absolute left-0 right-0 z-30 mt-1 rounded-box border border-base-300 bg-base-100 p-1 shadow-lg"
+					class="rounded-box border-base-300 bg-base-100 absolute right-0 left-0 z-30 mt-1 border p-1 shadow-lg"
 					role="menu"
 				>
 					{#if otherProfiles.length > 0}
-						<p class="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-base-content/50">
+						<p
+							class="text-base-content/50 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase"
+						>
 							Switch to…
 						</p>
 						{#each otherProfiles as p (p.id)}
@@ -349,7 +351,7 @@
 								{p.name}
 							</button>
 						{/each}
-						<div class="my-1 h-px bg-base-300"></div>
+						<div class="bg-base-300 my-1 h-px"></div>
 					{/if}
 
 					{#if creatingProfile}
@@ -387,41 +389,19 @@
 								newProfileName = '';
 							}}
 						>
-							<svg
-								xmlns="http://www.w3.org/2000/svg"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke-width="1.5"
-								stroke="currentColor"
-								class="h-4 w-4"
-							>
-								<path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-							</svg>
+							<Plus class="h-4 w-4" />
 							New profile…
 						</button>
 					{/if}
 
 					<button
 						type="button"
-						class="btn btn-ghost btn-sm w-full justify-start gap-2 font-normal text-error"
+						class="btn btn-ghost btn-sm text-error w-full justify-start gap-2 font-normal"
 						role="menuitem"
 						disabled={isBusy}
 						onclick={deleteCurrentProfile}
 					>
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke-width="1.5"
-							stroke="currentColor"
-							class="h-4 w-4"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
-							/>
-						</svg>
+						<Trash2 class="h-4 w-4" />
 						Delete current profile
 					</button>
 				</div>
@@ -432,52 +412,32 @@
 	<nav class="media-scroll flex-1 overflow-y-auto p-3">
 		<button
 			type="button"
-			class={['btn btn-ghost w-full justify-start gap-2 font-medium', activeAlbum === 'all' && 'btn-active bg-base-200']}
+			class={[
+				'btn btn-ghost w-full justify-start gap-2 font-medium',
+				activeAlbum === 'all' && 'btn-active bg-base-200'
+			]}
 			onclick={() => onselect('all')}
 		>
-			<svg
-				xmlns="http://www.w3.org/2000/svg"
-				fill="none"
-				viewBox="0 0 24 24"
-				stroke-width="1.5"
-				stroke="currentColor"
-				class="h-5 w-5"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-19.5 0A2.25 2.25 0 004.5 15h15a2.25 2.25 0 002.25-2.25m-19.5 0v.243a2.25 2.25 0 001.07 1.916l7.43 4.15a2.25 2.25 0 002.1 0l7.43-4.15a2.25 2.25 0 001.07-1.916V12.75"
-				/>
-			</svg>
+			<Images class="h-5 w-5" />
 			All media
 			<span class="badge badge-ghost ml-auto">{totalCount}</span>
 		</button>
 
 		<button
 			type="button"
-			class={['btn btn-ghost mt-1 w-full justify-start gap-2 font-medium', activeAlbum === null && 'btn-active bg-base-200']}
+			class={[
+				'btn btn-ghost mt-1 w-full justify-start gap-2 font-medium',
+				activeAlbum === null && 'btn-active bg-base-200'
+			]}
 			onclick={() => onselect(null)}
 		>
-			<svg
-				xmlns="http://www.w3.org/2000/svg"
-				fill="none"
-				viewBox="0 0 24 24"
-				stroke-width="1.5"
-				stroke="currentColor"
-				class="h-5 w-5"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m6.75 12H9.75m10.125-5.25H8.25m5.625-5.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"
-				/>
-			</svg>
+			<Inbox class="h-5 w-5" />
 			Unassigned
 			<span class="badge badge-ghost ml-auto">{unassignedCount}</span>
 		</button>
 
 		<div class="mt-4 mb-2 flex items-center justify-between rounded-lg px-2 py-1">
-			<span class="text-xs font-semibold uppercase tracking-wide text-base-content/50">Albums</span>
+			<span class="text-base-content/50 text-xs font-semibold tracking-wide uppercase">Albums</span>
 			<button
 				type="button"
 				class="btn btn-ghost btn-xs btn-circle"
@@ -485,18 +445,20 @@
 				aria-label="New album"
 				title="New album"
 			>
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					fill="none"
-					viewBox="0 0 24 24"
-					stroke-width="1.5"
-					stroke="currentColor"
-					class="h-4 w-4"
-				>
-					<path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-				</svg>
+				<Plus class="h-4 w-4" />
 			</button>
 		</div>
+
+		<label class="input input-bordered input-sm mb-2 flex w-full items-center gap-2">
+			<Search class="h-4 w-4 shrink-0 opacity-50" aria-hidden="true" />
+			<input
+				type="search"
+				class="grow bg-transparent outline-none"
+				placeholder="Search albums…"
+				bind:value={albumQuery}
+				aria-label="Search albums"
+			/>
+		</label>
 
 		{#if creating}
 			<form
@@ -523,7 +485,7 @@
 		{/if}
 
 		<ul class="menu menu-sm w-full gap-0.5 p-0">
-			{#each sortedAlbums as album (album.id)}
+			{#each visibleAlbums as album (album.id)}
 				<li>
 					<div
 						class={[
@@ -569,22 +531,11 @@
 								onclick={() => onselect(album.id)}
 								title={album.name}
 							>
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke-width="1.5"
-									stroke="currentColor"
-									class="h-4 w-4 shrink-0"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-19.5 0A2.25 2.25 0 004.5 15h15a2.25 2.25 0 002.25-2.25m-19.5 0v.243a2.25 2.25 0 001.07 1.916l7.43 4.15a2.25 2.25 0 002.1 0l7.43-4.15a2.25 2.25 0 001.07-1.916V12.75"
-									/>
-								</svg>
+								<Folder class="h-4 w-4 shrink-0" />
 								<span class="truncate">{album.name}</span>
-								<span class="badge badge-ghost badge-sm ml-auto shrink-0">{album.media_count ?? 0}</span>
+								<span class="badge badge-ghost badge-sm ml-auto shrink-0"
+									>{album.media_count ?? 0}</span
+								>
 							</button>
 						{/if}
 
@@ -598,22 +549,13 @@
 								ondelete(album.id);
 							}}
 						>
-							<svg
-								xmlns="http://www.w3.org/2000/svg"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke-width="1.5"
-								stroke="currentColor"
-								class="h-4 w-4"
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
-								/>
-							</svg>
+							<Trash2 class="h-4 w-4" />
 						</button>
 					</div>
+				</li>
+			{:else}
+				<li class="text-base-content/60 px-2 py-6 text-center text-sm">
+					{albums.length === 0 ? 'No albums yet.' : 'No albums match your search.'}
 				</li>
 			{/each}
 		</ul>

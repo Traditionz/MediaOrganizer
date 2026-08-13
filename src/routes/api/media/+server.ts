@@ -3,15 +3,17 @@ import { Readable } from 'node:stream';
 import type { RequestHandler } from './$types';
 import {
 	addMediaToAlbum,
-	compressAllVideos,
+	backfillMissingDurations,
 	compressMedia,
 	deleteMedia,
 	duplicateMedia,
+	enqueueAv1Backfill,
 	insertMediaFromStream,
 	listMedia,
 	maybeCompressUploaded,
 	removeMediaFromAlbum,
-	renameMedia
+	renameMedia,
+	updateMediaDuration
 } from '$lib/server/media';
 import { resolveProfileFromCookies } from '$lib/server/profileContext';
 import type { MediaType } from '$lib/types';
@@ -58,6 +60,12 @@ function parseAlbumId(raw: unknown): string | null {
 		return null;
 	}
 	return String(raw);
+}
+
+function parseDuration(raw: unknown): number | null {
+	if (raw === null || raw === undefined || raw === '') return null;
+	const n = typeof raw === 'number' ? raw : Number(raw);
+	return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 export const GET: RequestHandler = async ({ url, cookies }) => {
@@ -114,23 +122,20 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		contentType === 'application/octet-stream';
 
 	if (isStreamUpload && request.body) {
-		const originalName = filenameHeader
-			? decodeURIComponent(filenameHeader)
-			: 'upload.bin';
+		const originalName = filenameHeader ? decodeURIComponent(filenameHeader) : 'upload.bin';
 		const mediaType = mediaTypeFrom(contentType, originalName);
 		if (!mediaType) {
 			throw error(400, 'Only image and video files are supported');
 		}
 
 		const mimeType = guessMime(contentType, originalName, mediaType);
-		const albumRaw =
-			request.headers.get('x-album-id') ?? request.headers.get('x-folder-id');
+		const albumRaw = request.headers.get('x-album-id') ?? request.headers.get('x-folder-id');
 		const albumId = parseAlbumId(albumRaw);
 		const widthRaw = request.headers.get('x-width');
 		const heightRaw = request.headers.get('x-height');
+		const duration = parseDuration(request.headers.get('x-duration'));
 		const compress =
-			request.headers.get('x-compress') !== '0' &&
-			request.headers.get('x-compress') !== 'false';
+			request.headers.get('x-compress') !== '0' && request.headers.get('x-compress') !== 'false';
 
 		try {
 			const item = await insertMediaFromStream(profile.id, {
@@ -140,6 +145,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				albumId,
 				width: widthRaw ? Number(widthRaw) : null,
 				height: heightRaw ? Number(heightRaw) : null,
+				duration,
 				body: request.body
 			});
 			// Compress after responding — AV1 can take minutes and was freezing the
@@ -163,6 +169,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 	const albumRaw = form.get('albumId') ?? form.get('folderId');
 	const widthRaw = form.get('width');
 	const heightRaw = form.get('height');
+	const duration = parseDuration(form.get('duration'));
 
 	if (!(file instanceof File)) {
 		throw error(400, 'File is required');
@@ -183,6 +190,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			albumId,
 			width: widthRaw ? Number(widthRaw) : null,
 			height: heightRaw ? Number(heightRaw) : null,
+			duration,
 			body: Readable.fromWeb(file.stream() as import('node:stream/web').ReadableStream)
 		});
 		const compressFlag = String(form.get('compress') ?? '1');
@@ -219,6 +227,21 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 		}
 	}
 
+	if (body?.action === 'set-duration') {
+		const id = typeof body?.id === 'string' ? body.id : '';
+		const duration = parseDuration(body?.duration);
+		if (!id) throw error(400, 'Media id is required');
+		if (duration == null) throw error(400, 'Duration must be a finite number greater than 0');
+		try {
+			return json(updateMediaDuration(profile.id, id, duration));
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'Failed to set duration';
+			if (message.includes('not found')) throw error(404, message);
+			if (message.includes('Duration')) throw error(400, message);
+			throw error(500, message);
+		}
+	}
+
 	if (body?.action === 'compress') {
 		const ids = Array.isArray(body?.ids) ? body.ids.map(String).filter(Boolean) : [];
 		if (!ids.length) throw error(400, 'At least one media id is required');
@@ -236,13 +259,13 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 	}
 
 	if (body?.action === 'compress-all-videos') {
-		try {
-			const summary = await compressAllVideos(profile.id);
-			return json(summary);
-		} catch (err) {
-			const message = err instanceof Error ? err.message : 'Bulk compress failed';
-			throw error(500, message);
-		}
+		enqueueAv1Backfill(profile.id);
+		return json({ started: true });
+	}
+
+	if (body?.action === 'backfill-durations') {
+		const summary = await backfillMissingDurations(profile.id);
+		return json(summary);
 	}
 
 	const ids = Array.isArray(body?.ids) ? body.ids.map(String).filter(Boolean) : [];

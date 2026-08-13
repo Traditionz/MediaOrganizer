@@ -3,8 +3,6 @@
 	import type { MediaItem } from '$lib/types';
 	import {
 		isSupportedMediaFile,
-		probeImageDimensions,
-		probeVideoDimensions,
 		captureVideoThumbnail,
 		isVideoFile,
 		uploadMediaFile,
@@ -18,6 +16,7 @@
 	import PasscodeModal from '$lib/components/PasscodeModal.svelte';
 	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
 	import PromptModal from '$lib/components/PromptModal.svelte';
+	import AlbumPickerModal from '$lib/components/AlbumPickerModal.svelte';
 	import Toolbar from '$lib/components/Toolbar.svelte';
 	import MediaGrid from '$lib/components/MediaGrid.svelte';
 	import MediaCollage from '$lib/components/MediaCollage.svelte';
@@ -36,6 +35,8 @@
 	const app = setAppState(createAppState());
 	const { prefs, library, selection, ui } = app;
 
+	let durationBackfilledForProfile: string | null = null;
+
 	$effect(() => {
 		library.sync({
 			albums: data.albums,
@@ -44,6 +45,25 @@
 			profiles: data.profiles,
 			activeProfile: data.activeProfile
 		});
+		const profileId = data.activeProfile?.id ?? null;
+		if (profileId && profileId !== durationBackfilledForProfile) {
+			durationBackfilledForProfile = profileId;
+			// Duration metadata only — never auto-convert the library to AV1.
+			void (async () => {
+				try {
+					const res = await fetch('/api/media', {
+						method: 'PATCH',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ action: 'backfill-durations' })
+					});
+					if (!res.ok) return;
+					const summary = (await res.json()) as { updated?: number };
+					if ((summary.updated ?? 0) > 0) await library.refresh();
+				} catch {
+					/* duration backfill optional */
+				}
+			})();
+		}
 	});
 
 	async function selectProfile(id: string, passcode = '') {
@@ -178,41 +198,6 @@
 		openDeleteProfileModal(id);
 	}
 
-	async function convertLibraryToAv1() {
-		ui.openConfirmModal({
-			kind: 'convert-av1',
-			title: 'Convert to AV1',
-			message:
-				'Convert all videos in this profile to AV1? This can take a long time for large libraries.',
-			confirmLabel: 'Convert'
-		});
-	}
-
-	async function runConvertLibraryToAv1() {
-		ui.uploading = true;
-		ui.uploadProgress = 0;
-		ui.errorMessage = '';
-		ui.convertResultMessage = '';
-		try {
-			const res = await fetch('/api/media', {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ action: 'compress-all-videos' })
-			});
-			const body = await res.json().catch(() => ({}));
-			if (!res.ok) throw new Error(body.message || 'Conversion failed');
-			ui.uploadProgress = 100;
-			await library.refresh();
-			const savedMb = ((body.bytesSaved ?? 0) / (1024 * 1024)).toFixed(1);
-			ui.convertResultMessage = `AV1 conversion done — converted ${body.converted}, skipped ${body.skipped}, failed ${body.failed}, saved ${savedMb} MB`;
-		} catch (err) {
-			ui.errorMessage = err instanceof Error ? err.message : 'Conversion failed';
-		} finally {
-			ui.uploading = false;
-			ui.uploadProgress = null;
-		}
-	}
-
 	async function createAlbum(name: string) {
 		const res = await fetch('/api/albums', {
 			method: 'POST',
@@ -300,7 +285,10 @@
 		await library.refresh();
 	}
 
-	async function duplicateMedia(ids: string[], albumId: string | null = library.pasteTargetAlbumId()) {
+	async function duplicateMedia(
+		ids: string[],
+		albumId: string | null = library.pasteTargetAlbumId()
+	) {
 		if (!ids.length) return;
 		const res = await fetch('/api/media', {
 			method: 'POST',
@@ -386,9 +374,11 @@
 
 	async function compressMediaIds(ids: string[]) {
 		if (!ids.length) return;
-		ui.errorMessage = '';
-		ui.uploading = true;
-		ui.uploadProgress = 0;
+		const jobId = ui.beginTransfer({
+			kind: 'compress',
+			label: ids.length === 1 ? '1 file' : `${ids.length} files`,
+			fileCount: ids.length
+		});
 		try {
 			const res = await fetch('/api/media', {
 				method: 'PATCH',
@@ -399,26 +389,14 @@
 				const body = await res.json().catch(() => ({}));
 				throw new Error(body.message || 'Compress failed');
 			}
-			ui.uploadProgress = 100;
+			ui.setTransferProgress(jobId, 100);
 			await library.refresh();
 		} catch (err) {
 			ui.errorMessage = err instanceof Error ? err.message : 'Compress failed';
 		} finally {
-			ui.uploading = false;
-			ui.uploadProgress = null;
+			ui.endTransfer(jobId);
 		}
 	}
-
-	const albumMenuChildren = $derived.by((): ContextMenuItem[] => {
-		const sorted = [...library.albums].sort((a, b) => a.name.localeCompare(b.name));
-		if (!sorted.length) {
-			return [{ id: 'add:none', label: 'No albums yet', disabled: true }];
-		}
-		return sorted.map((a) => ({
-			id: `add:${a.id}`,
-			label: a.name
-		}));
-	});
 
 	const contextMenuItems = $derived.by((): ContextMenuItem[] => {
 		if (ui.contextMenu.kind === 'empty') {
@@ -438,11 +416,7 @@
 			{ id: 'copy', label: count > 1 ? `Copy ${count} items` : 'Copy' },
 			{ id: 'cut', label: count > 1 ? `Cut ${count} items` : 'Cut' },
 			{ id: 'duplicate', label: count > 1 ? `Duplicate ${count}` : 'Duplicate' },
-			{
-				id: 'add-to-album',
-				label: 'Add to album…',
-				children: albumMenuChildren
-			},
+			{ id: 'add-to-album', label: 'Add to album…' },
 			...(typeof library.activeAlbum === 'string' && library.activeAlbum !== 'all'
 				? [{ id: 'remove-from-album', label: 'Remove from album' } as ContextMenuItem]
 				: []),
@@ -541,15 +515,26 @@
 			}
 			return;
 		}
-		if (id.startsWith('add:')) {
-			const albumId = id.slice('add:'.length);
-			if (albumId) await addMediaToAlbum(ids, albumId);
+		if (id === 'add-to-album') {
+			if (ids.length) ui.openAlbumPicker(ids);
 		}
 	}
 
 	function onKeydown(e: KeyboardEvent) {
 		const target = e.target as HTMLElement | null;
-		if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+		if (
+			target &&
+			(target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+		) {
+			return;
+		}
+		if (
+			ui.albumPicker.open ||
+			ui.confirmModal.open ||
+			ui.promptModal.open ||
+			ui.profileModal.open ||
+			ui.preview
+		) {
 			return;
 		}
 		const mod = e.ctrlKey || e.metaKey;
@@ -607,9 +592,35 @@
 		}
 	}
 
-	async function addSelectedToAlbum(albumId: string) {
-		await addMediaToAlbum([...selection.selectedIds], albumId);
+	async function handleAlbumPickerConfirm(albumIds: string[]) {
+		const ids = ui.albumPicker.mediaIds;
+		ui.closeAlbumPicker();
+		for (const albumId of albumIds) {
+			await addMediaToAlbum(ids, albumId);
+		}
 	}
+
+	function openAlbumPickerForSelection() {
+		const ids = [...selection.selectedIds];
+		if (!ids.length) return;
+		ui.openAlbumPicker(ids);
+	}
+
+	/** Albums that every selected picker item already belongs to. */
+	const albumPickerMemberIds = $derived.by(() => {
+		const ids = ui.albumPicker.mediaIds;
+		if (!ids.length) return new Set<string>();
+		const items = ids
+			.map((id) => library.media.find((m) => m.id === id))
+			.filter((m): m is NonNullable<typeof m> => Boolean(m));
+		if (!items.length) return new Set<string>();
+		let shared = new Set(items[0].album_ids);
+		for (let i = 1; i < items.length; i++) {
+			const next = new Set(items[i].album_ids);
+			shared = new Set([...shared].filter((id) => next.has(id)));
+		}
+		return shared;
+	});
 
 	async function deleteSelected() {
 		if (!selection.selectedIds.size) return;
@@ -640,9 +651,9 @@
 		if (!kind) return;
 		ui.confirmModalBusy = true;
 		try {
-			if (kind === 'convert-av1') {
+			if (kind === 'upload-duplicates') {
+				resolveUploadDuplicatePrompt(true);
 				ui.closeConfirmModal();
-				await runConvertLibraryToAv1();
 				return;
 			}
 			if (kind === 'delete-album' && albumId) {
@@ -660,9 +671,44 @@
 		}
 	}
 
+	function handleConfirmModalCancel() {
+		if (ui.confirmModal.kind === 'upload-duplicates') {
+			resolveUploadDuplicatePrompt(false);
+		}
+		ui.closeConfirmModal();
+	}
+
 	async function handlePromptModalSubmit(value: string) {
 		if (!ui.promptModal.mediaId) return;
 		await runRenameMediaItem(ui.promptModal.mediaId, value);
+	}
+
+	let uploadDuplicateResolver: ((uploadDuplicates: boolean) => void) | null = null;
+
+	function resolveUploadDuplicatePrompt(uploadDuplicates: boolean) {
+		const resolve = uploadDuplicateResolver;
+		uploadDuplicateResolver = null;
+		resolve?.(uploadDuplicates);
+	}
+
+	function askUploadDuplicates(duplicateNames: string[]): Promise<boolean> {
+		const sample = duplicateNames.slice(0, 5).join(', ');
+		const extra = duplicateNames.length > 5 ? ` and ${duplicateNames.length - 5} more` : '';
+		const message =
+			duplicateNames.length === 1
+				? `"${duplicateNames[0]}" is already in your library. Upload another copy anyway?`
+				: `${duplicateNames.length} files already exist by name (${sample}${extra}). Upload duplicates anyway?`;
+
+		return new Promise((resolve) => {
+			uploadDuplicateResolver = resolve;
+			ui.openConfirmModal({
+				kind: 'upload-duplicates',
+				title: 'Duplicate file names',
+				message,
+				confirmLabel: 'Upload duplicates',
+				cancelLabel: 'Skip duplicates'
+			});
+		});
 	}
 
 	async function uploadFiles(fileList: FileList | File[]) {
@@ -672,40 +718,77 @@
 			return;
 		}
 
-		ui.uploading = true;
-		ui.uploadProgress = 0;
-		ui.errorMessage = '';
+		const knownNames = new Set(library.media.map((m) => m.original_name.toLowerCase()));
+		const uniqueFiles: File[] = [];
+		const duplicateFiles: File[] = [];
+		const seenInBatch = new Set<string>();
 
-		const albumId = library.activeAlbum === 'all' || library.activeAlbum === null ? null : library.activeAlbum;
-		const fileProgress = files.map(() => 0);
+		for (const file of files) {
+			const key = file.name.toLowerCase();
+			if (knownNames.has(key) || seenInBatch.has(key)) {
+				duplicateFiles.push(file);
+			} else {
+				uniqueFiles.push(file);
+				seenInBatch.add(key);
+			}
+		}
+
+		let filesToUpload = uniqueFiles;
+		if (duplicateFiles.length) {
+			if (prefs.warnDuplicateUploads) {
+				const uploadDupes = await askUploadDuplicates([
+					...new Set(duplicateFiles.map((f) => f.name))
+				]);
+				if (uploadDupes) filesToUpload = [...uniqueFiles, ...duplicateFiles];
+			} else {
+				filesToUpload = [...uniqueFiles, ...duplicateFiles];
+			}
+		}
+
+		if (!filesToUpload.length) {
+			ui.errorMessage =
+				duplicateFiles.length > 0
+					? 'Upload skipped — duplicate names were not saved.'
+					: 'Nothing to upload.';
+			return;
+		}
+
+		const jobId = ui.beginTransfer({
+			kind: 'upload',
+			label: filesToUpload.length === 1 ? filesToUpload[0].name : `${filesToUpload.length} files`,
+			fileCount: filesToUpload.length
+		});
+
+		const albumId =
+			library.activeAlbum === 'all' || library.activeAlbum === null ? null : library.activeAlbum;
+		const fileProgress = filesToUpload.map(() => 0);
 		const errors: string[] = [];
 
 		const bumpProgress = () => {
 			const sum = fileProgress.reduce((a, b) => a + b, 0);
-			ui.uploadProgress = Math.round((sum / files.length) * 100);
+			ui.setTransferProgress(jobId, Math.round((sum / filesToUpload.length) * 100));
 		};
 
 		try {
-			await mapWithConcurrency(files, UPLOAD_CONCURRENCY, async (file, i) => {
+			await mapWithConcurrency(filesToUpload, UPLOAD_CONCURRENCY, async (file, i) => {
 				try {
-					const dims =
-						(await probeImageDimensions(file)) ?? (await probeVideoDimensions(file));
 					const uploaded = await uploadMediaFile(file, {
 						albumId,
-						width: dims?.width ?? null,
-						height: dims?.height ?? null,
 						compress: prefs.compressOnUpload,
 						onProgress: (pct) => {
-							// Reserve last 5% for thumbnail work on videos
-							const weight = isVideoFile(file) ? 0.95 : 1;
-							fileProgress[i] = (pct / 100) * weight;
+							fileProgress[i] = pct / 100;
 							bumpProgress();
 						}
 					});
 
 					if (isVideoFile(file) && uploaded?.id) {
-						const thumb = await captureVideoThumbnail(file);
-						if (thumb) await uploadVideoThumbnail(uploaded.id, thumb);
+						const mediaId = uploaded.id;
+						void (async () => {
+							const thumb = await captureVideoThumbnail(file);
+							if (thumb) await uploadVideoThumbnail(mediaId, thumb);
+						})().catch(() => {
+							/* thumbnail backfill is optional */
+						});
 					}
 					fileProgress[i] = 1;
 					bumpProgress();
@@ -716,19 +799,26 @@
 				}
 			});
 
-			ui.uploadProgress = 100;
-			await library.refresh();
+			ui.setTransferProgress(jobId, 100);
 			if (errors.length) {
 				ui.errorMessage =
 					errors.length === 1
 						? errors[0]
-						: `${errors.length} of ${files.length} uploads failed: ${errors[0]}`;
+						: `${errors.length} of ${filesToUpload.length} uploads failed: ${errors[0]}`;
+			} else if (
+				prefs.warnDuplicateUploads &&
+				duplicateFiles.length &&
+				filesToUpload.length === uniqueFiles.length
+			) {
+				ui.convertResultMessage = `Uploaded ${uniqueFiles.length} file(s); skipped ${duplicateFiles.length} duplicate name(s).`;
 			}
 		} catch (err) {
 			ui.errorMessage = err instanceof Error ? err.message : 'Upload failed';
 		} finally {
-			ui.uploading = false;
-			ui.uploadProgress = null;
+			ui.endTransfer(jobId);
+			void library.refresh().catch(() => {
+				/* list refresh is best-effort after upload */
+			});
 		}
 	}
 
@@ -826,10 +916,7 @@
 			const cx = r.left - contentRect.left + selection.contentEl.scrollLeft;
 			const cy = r.top - contentRect.top + selection.contentEl.scrollTop;
 			const intersects =
-				cx < box.x + box.w &&
-				cx + r.width > box.x &&
-				cy < box.y + box.h &&
-				cy + r.height > box.y;
+				cx < box.x + box.w && cx + r.width > box.x && cy < box.y + box.h && cy + r.height > box.y;
 			if (intersects) {
 				const id = card.dataset.id;
 				if (id) {
@@ -854,7 +941,7 @@
 	<ProfileGate profiles={library.profiles} onselect={selectProfile} oncreate={createProfile} />
 {:else}
 	<div
-		class="flex h-screen bg-base-200 text-base-content"
+		class="bg-base-200 text-base-content flex h-screen"
 		ondragenter={onDragEnter}
 		ondragover={onDragOver}
 		ondragleave={onDragLeave}
@@ -891,9 +978,9 @@
 				columns={prefs.columns}
 				selectMode={selection.selectMode}
 				selectedCount={selection.selectedIds.size}
-				albums={library.albums}
 				uploading={ui.uploading}
 				compressOnUpload={prefs.compressOnUpload}
+				warnDuplicateUploads={prefs.warnDuplicateUploads}
 				theme={prefs.theme}
 				onviewMode={(m) => prefs.setViewMode(m)}
 				onshowImages={(v) => prefs.setShowImages(v)}
@@ -903,29 +990,57 @@
 				onsearchQuery={(v) => prefs.setSearchQuery(v)}
 				oncolumns={(v) => prefs.setColumns(v)}
 				oncompressOnUpload={(v) => prefs.setCompressOnUpload(v)}
-				onconvertLibrary={convertLibraryToAv1}
+				onwarnDuplicateUploads={(v) => prefs.setWarnDuplicateUploads(v)}
 				ontoggleSelect={() => selection.toggleSelectMode()}
 				onclearSelection={() => selection.clear()}
-				onaddToAlbum={addSelectedToAlbum}
+				onopenAlbumPicker={openAlbumPickerForSelection}
 				oncompress={() => compressMediaIds([...selection.selectedIds])}
 				ondelete={deleteSelected}
 				onuploadClick={() => ui.fileInput?.click()}
 				ontheme={(t) => prefs.setTheme(t)}
 			/>
 
+			{#if ui.jobs.length}
+				<div class="mx-4 mt-3 flex flex-col gap-2">
+					{#each ui.jobs as job (job.id)}
+						<div class="alert alert-info py-2 text-sm" role="status">
+							<div class="min-w-0 flex-1">
+								<div class="flex items-center justify-between gap-2">
+									<span class="truncate">
+										{job.kind === 'compress'
+											? 'Compressing'
+											: job.progress >= 95
+												? 'Saving'
+												: 'Uploading'}
+										{job.label} — {job.progress}%
+									</span>
+									<button
+										class="btn btn-ghost btn-xs shrink-0"
+										onclick={() => ui.endTransfer(job.id)}
+									>
+										Dismiss
+									</button>
+								</div>
+								<progress class="progress progress-info mt-1 w-full" value={job.progress} max="100"
+								></progress>
+							</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
 			{#if ui.errorMessage}
 				<div class="alert alert-error mx-4 mt-3 py-2 text-sm" role="alert">
 					<span>{ui.errorMessage}</span>
-					<button class="btn btn-ghost btn-xs" onclick={() => (ui.errorMessage = '')}>Dismiss</button>
+					<button class="btn btn-ghost btn-xs" onclick={() => (ui.errorMessage = '')}
+						>Dismiss</button
+					>
 				</div>
 			{:else if ui.convertResultMessage}
 				<div class="alert alert-success mx-4 mt-3 py-2 text-sm" role="status">
 					<span>{ui.convertResultMessage}</span>
-					<button class="btn btn-ghost btn-xs" onclick={() => (ui.convertResultMessage = '')}>Dismiss</button>
-				</div>
-			{:else if ui.uploading && ui.uploadProgress != null}
-				<div class="alert alert-info mx-4 mt-3 py-2 text-sm" role="status">
-					<span>Uploading… {ui.uploadProgress}%</span>
+					<button class="btn btn-ghost btn-xs" onclick={() => (ui.convertResultMessage = '')}
+						>Dismiss</button
+					>
 				</div>
 			{/if}
 
@@ -940,8 +1055,10 @@
 				oncontextmenu={openEmptyContextMenu}
 			>
 				{#if library.filteredMedia.length === 0}
-					<div class="flex h-full min-h-64 flex-col items-center justify-center text-center text-base-content/60">
-						<p class="text-lg font-medium text-base-content/80">
+					<div
+						class="text-base-content/60 flex h-full min-h-64 flex-col items-center justify-center text-center"
+					>
+						<p class="text-base-content/80 text-lg font-medium">
 							{prefs.searchQuery.trim()
 								? 'No matching media'
 								: library.activeAlbum === null
@@ -954,7 +1071,8 @@
 							{:else if library.activeAlbum === null}
 								Upload files here, or remove items from albums to see them in Unassigned.
 							{:else}
-								Drag and drop pictures or videos here, or use Upload. Double-click an item to expand it.
+								Drag and drop pictures or videos here, or use Upload. Double-click an item to expand
+								it.
 							{/if}
 						</p>
 					</div>
@@ -982,7 +1100,7 @@
 
 				{#if selection.selectionRect && selection.selecting}
 					<div
-						class="pointer-events-none absolute z-20 border border-primary bg-primary/15"
+						class="border-primary bg-primary/15 pointer-events-none absolute z-20 border"
 						style:left="{selection.selectionRect.x}px"
 						style:top="{selection.selectionRect.y}px"
 						style:width="{selection.selectionRect.w}px"
@@ -994,12 +1112,14 @@
 
 		{#if ui.dragOver}
 			<div
-				class="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-primary/20 backdrop-blur-[2px]"
+				class="bg-primary/20 pointer-events-none fixed inset-0 z-40 flex items-center justify-center backdrop-blur-[2px]"
 				transition:fade={{ duration: 120 }}
 			>
-				<div class="rounded-2xl border-2 border-dashed border-primary bg-base-100/90 px-10 py-8 text-center shadow-xl">
-					<p class="text-xl font-semibold text-primary">Drop to upload</p>
-					<p class="mt-1 text-sm text-base-content/60">Images and videos</p>
+				<div
+					class="border-primary bg-base-100/90 rounded-2xl border-2 border-dashed px-10 py-8 text-center shadow-xl"
+				>
+					<p class="text-primary text-xl font-semibold">Drop to upload</p>
+					<p class="text-base-content/60 mt-1 text-sm">Images and videos</p>
 				</div>
 			</div>
 		{/if}
@@ -1036,7 +1156,9 @@
 	<PasscodeModal
 		open={ui.profileModal.open}
 		mode={ui.profileModal.mode}
-		profileName={ui.profileModal.mode === 'create' ? ui.profileModal.prefillName : ui.profileModal.profileName}
+		profileName={ui.profileModal.mode === 'create'
+			? ui.profileModal.prefillName
+			: ui.profileModal.profileName}
 		mediaCount={ui.profileModal.mediaCount}
 		requiresPasscode={ui.profileModal.requiresPasscode}
 		busy={ui.profileModalBusy}
@@ -1050,9 +1172,10 @@
 		title={ui.confirmModal.title}
 		message={ui.confirmModal.message}
 		confirmLabel={ui.confirmModal.confirmLabel}
+		cancelLabel={ui.confirmModal.cancelLabel}
 		destructive={ui.confirmModal.destructive}
 		busy={ui.confirmModalBusy}
-		oncancel={() => ui.closeConfirmModal()}
+		oncancel={handleConfirmModalCancel}
 		onconfirm={handleConfirmModal}
 	/>
 
@@ -1065,5 +1188,13 @@
 		errorMessage={ui.promptModalError}
 		oncancel={() => ui.closePromptModal()}
 		onsubmit={handlePromptModalSubmit}
+	/>
+
+	<AlbumPickerModal
+		open={ui.albumPicker.open}
+		albums={library.albums}
+		memberAlbumIds={albumPickerMemberIds}
+		oncancel={() => ui.closeAlbumPicker()}
+		onconfirm={handleAlbumPickerConfirm}
 	/>
 {/if}

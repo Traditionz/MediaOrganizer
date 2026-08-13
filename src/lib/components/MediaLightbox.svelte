@@ -2,6 +2,8 @@
 	import type { MediaItem } from '$lib/types';
 	import { formatBytes, formatDate } from '$lib/utils';
 	import { fade, scale } from 'svelte/transition';
+	import MoveDiagonal2 from '@lucide/svelte/icons/move-diagonal-2';
+	import CustomPlayer from './CustomPlayer.svelte';
 
 	interface Props {
 		item: MediaItem | null;
@@ -46,13 +48,6 @@
 		if (e.key === 'Escape') onclose();
 	}
 
-	function onVideoMeta(e: Event) {
-		const video = e.currentTarget as HTMLVideoElement;
-		if (video.videoWidth > 0 && video.videoHeight > 0) {
-			intrinsic = { w: video.videoWidth, h: video.videoHeight };
-		}
-	}
-
 	function startResize(e: PointerEvent) {
 		e.preventDefault();
 		e.stopPropagation();
@@ -90,7 +85,7 @@
 
 {#if item}
 	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+		class="fixed inset-0 z-50 flex items-center justify-center p-4"
 		transition:fade={{ duration: 150 }}
 		role="dialog"
 		aria-modal="true"
@@ -104,29 +99,30 @@
 		}}
 	>
 		<div
-			class="relative flex max-h-[92vh] flex-col overflow-hidden rounded-2xl bg-base-100 shadow-2xl"
+			class="bg-base-100 relative flex max-h-[92vh] flex-col overflow-hidden rounded-2xl shadow-2xl"
 			class:w-full={item.media_type === 'image'}
 			class:max-w-5xl={item.media_type === 'image'}
 			style:width={item.media_type === 'video' ? `${videoWidth + 24}px` : undefined}
 			transition:scale={{ duration: 160, start: 0.96 }}
 		>
-			<header class="flex items-start justify-between gap-3 border-b border-base-300 px-3 py-3">
+			<header class="border-base-300 flex items-start justify-between gap-3 border-b px-3 py-3">
 				<div class="min-w-0 flex-1">
 					<h2 class="truncate text-base font-semibold">{item.original_name}</h2>
-					<p class="mt-0.5 truncate text-xs text-base-content/60">
+					<p class="text-base-content/60 mt-0.5 truncate text-xs">
 						{albumSummary} · {formatDate(item.created_at)} · {formatBytes(item.size)}
-						{#if item.media_type === 'video'}
-							<span class="text-base-content/40"> · drag corner to resize</span>
-						{/if}
 					</p>
 				</div>
-				<button class="btn btn-ghost btn-sm btn-circle shrink-0" onclick={onclose} aria-label="Close">
+				<button
+					class="btn btn-ghost btn-sm btn-circle shrink-0"
+					onclick={onclose}
+					aria-label="Close"
+				>
 					✕
 				</button>
 			</header>
 
 			<div
-				class="flex items-center justify-center bg-base-200"
+				class="bg-base-200 flex items-center justify-center"
 				class:p-3={item.media_type === 'image'}
 				class:px-3={item.media_type === 'video'}
 				class:pb-3={item.media_type === 'video'}
@@ -145,28 +141,22 @@
 						style:height={`${videoHeight}px`}
 						class:select-none={resizing}
 					>
-						<video
+						<CustomPlayer
 							src={`/api/media/${item.id}`}
-							class="h-full w-full object-contain"
-							controls
-							autoplay
-							onloadedmetadata={onVideoMeta}
-						>
-							<track kind="captions" />
-						</video>
+							onmetadata={(meta) => {
+								intrinsic = { w: meta.w, h: meta.h };
+							}}
+						/>
 						<button
 							type="button"
-							class="resize-handle absolute bottom-1 right-1 z-10 flex h-5 w-5 cursor-se-resize items-end justify-end rounded-sm border border-white/30 bg-black/50 p-0.5 text-white/80 hover:bg-black/70"
+							class="resize-handle absolute right-1 bottom-2 z-30 flex h-5 w-5 cursor-se-resize items-end justify-end rounded-sm border border-white/30 bg-white/15 p-0.5 text-white/90 hover:bg-white/25"
 							aria-label="Resize video"
 							onpointerdown={startResize}
 							onpointermove={onResizeMove}
 							onpointerup={endResize}
 							onpointercancel={endResize}
 						>
-							<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" class="h-3 w-3" fill="currentColor" aria-hidden="true">
-								<path d="M10 2v8H2" fill="none" stroke="currentColor" stroke-width="1.5" />
-								<path d="M7 10h3V7M4 10h.01M10 4v.01" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-							</svg>
+							<MoveDiagonal2 class="h-3 w-3" />
 						</button>
 					</div>
 				{/if}

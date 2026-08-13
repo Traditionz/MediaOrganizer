@@ -4,6 +4,7 @@ import type { ThemeMode, ViewMode } from '$lib/types';
 
 const THEME_KEY = 'theme';
 const COMPRESS_KEY = 'mo_compress';
+const WARN_DUPES_KEY = 'mo_warn_dupes';
 
 function readStoredTheme(fallback: ThemeMode | 'system'): ThemeMode {
 	if (!browser) {
@@ -22,10 +23,10 @@ function readStoredTheme(fallback: ThemeMode | 'system'): ThemeMode {
 	return 'light';
 }
 
-function readStoredCompress(fallback: boolean): boolean {
+function readStoredFlag(key: string, fallback: boolean): boolean {
 	if (!browser) return fallback;
 	try {
-		const stored = localStorage.getItem(COMPRESS_KEY);
+		const stored = localStorage.getItem(key);
 		if (stored === '0') return false;
 		if (stored === '1') return true;
 	} catch {
@@ -43,7 +44,8 @@ export class PreferencesState {
 	dateFrom = $state('');
 	dateTo = $state('');
 	searchQuery = $state('');
-	compressOnUpload = $state(readStoredCompress(appDefaults.compressOnUpload));
+	compressOnUpload = $state(readStoredFlag(COMPRESS_KEY, appDefaults.compressOnUpload));
+	warnDuplicateUploads = $state(readStoredFlag(WARN_DUPES_KEY, appDefaults.warnDuplicateUploads));
 	theme = $state<ThemeMode>(readStoredTheme(appDefaults.theme));
 
 	setViewMode(mode: ViewMode) {
@@ -79,6 +81,16 @@ export class PreferencesState {
 		if (!browser) return;
 		try {
 			localStorage.setItem(COMPRESS_KEY, value ? '1' : '0');
+		} catch {
+			/* ignore */
+		}
+	}
+
+	setWarnDuplicateUploads(value: boolean) {
+		this.warnDuplicateUploads = value;
+		if (!browser) return;
+		try {
+			localStorage.setItem(WARN_DUPES_KEY, value ? '1' : '0');
 		} catch {
 			/* ignore */
 		}

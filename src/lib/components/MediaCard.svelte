@@ -1,7 +1,17 @@
 <script lang="ts">
 	import type { MediaItem } from '$lib/types';
+	import Play from '@lucide/svelte/icons/play';
 	import { beginMediaDrag, endInternalDrag, setCompactMediaDragImage } from '$lib/dragSession';
-	import { captureThumbnailFromVideoEl, formatDate, thumbnailSeekTime, uploadVideoThumbnail } from '$lib/utils';
+	import { getAppState } from '$lib/state';
+	import { enqueueThumbnailJob } from '$lib/thumbnailQueue';
+	import {
+		captureVideoThumbnailFromUrl,
+		formatDate,
+		formatDuration,
+		persistMediaDuration,
+		probeVideoDurationFromUrl,
+		uploadVideoThumbnail
+	} from '$lib/utils';
 
 	interface Props {
 		item: MediaItem;
@@ -39,14 +49,23 @@
 	const albumTitle = $derived(item.album_names?.join(', ') ?? '');
 	const showAlbumChip = $derived(Boolean(item.album_names?.length));
 	const showCheckbox = $derived(selected || selectMode);
+	const durationLabel = $derived(
+		item.media_type === 'video' &&
+			item.duration != null &&
+			Number.isFinite(item.duration) &&
+			item.duration > 0
+			? formatDuration(item.duration)
+			: null
+	);
 
-	let localThumb = $state(false);
-	let previewVideoEl: HTMLVideoElement | undefined = $state();
-	let backfillStarted = false;
 	let dragging = $state(false);
 	let cardEl: HTMLDivElement | undefined = $state();
+	let localThumb = $state(false);
+	let generatingThumbnail = $state(false);
+	let thumbStarted = false;
+	let durationStarted = false;
 
-	const showPoster = $derived(item.has_thumbnail || localThumb);
+	const showPoster = $derived(Boolean(item.has_thumbnail) || localThumb);
 
 	function handleDragStart(e: DragEvent) {
 		if (!e.dataTransfer) return;
@@ -72,60 +91,113 @@
 		oncontextmenu?.(e, item);
 	}
 
-	async function tryBackfillThumbnail() {
-		if (backfillStarted || item.has_thumbnail || item.media_type !== 'video') return;
-		const video = previewVideoEl;
-		if (!video) return;
-		backfillStarted = true;
+	function startLazyThumbnail(force = false) {
+		if (!force && (thumbStarted || item.has_thumbnail || localThumb)) return;
+		if (item.media_type !== 'video') return;
+		thumbStarted = true;
+		generatingThumbnail = true;
 
-		const seekAndCapture = async () => {
-			if (!video.videoWidth) return null;
-			const seekTo = thumbnailSeekTime(video.duration);
-			if (seekTo > 0 && Math.abs(video.currentTime - seekTo) > 0.05) {
-				await new Promise<void>((resolve) => {
-					const done = () => {
-						video.removeEventListener('seeked', done);
-						resolve();
-					};
-					video.addEventListener('seeked', done);
-					try {
-						video.currentTime = seekTo;
-					} catch {
-						resolve();
-					}
-				});
+		const mediaId = item.id;
+		enqueueThumbnailJob(async () => {
+			try {
+				const blob = await captureVideoThumbnailFromUrl(`/api/media/${mediaId}`);
+				if (!blob) return;
+				const ok = await uploadVideoThumbnail(mediaId, blob);
+				if (!ok) return;
+				localThumb = true;
+				try {
+					getAppState().library.markHasThumbnail(mediaId);
+				} catch {
+					/* outside app context */
+				}
+			} catch {
+				/* leave placeholder */
+			} finally {
+				generatingThumbnail = false;
 			}
-			return captureThumbnailFromVideoEl(video);
-		};
-
-		const blob = await seekAndCapture();
-		if (!blob) return;
-		const ok = await uploadVideoThumbnail(item.id, blob);
-		if (ok) localThumb = true;
+		});
 	}
 
-	$effect(() => {
-		if (item.media_type !== 'video' || item.has_thumbnail || localThumb) return;
-		const video = previewVideoEl;
-		if (!video) return;
+	function startLazyDuration() {
+		if (durationStarted) return;
+		if (item.media_type !== 'video') return;
+		if (item.duration != null && Number.isFinite(item.duration) && item.duration > 0) return;
+		durationStarted = true;
 
-		const onReady = () => {
-			void tryBackfillThumbnail();
+		const mediaId = item.id;
+		enqueueThumbnailJob(async () => {
+			try {
+				const duration = await probeVideoDurationFromUrl(`/api/media/${mediaId}`);
+				if (duration == null) return;
+				const ok = await persistMediaDuration(mediaId, duration);
+				if (!ok) return;
+				try {
+					getAppState().library.setMediaDuration(mediaId, duration);
+				} catch {
+					/* outside app context */
+				}
+			} catch {
+				/* leave without badge */
+			}
+		});
+	}
+
+	function onPosterError() {
+		localThumb = false;
+		thumbStarted = false;
+		startLazyThumbnail(true);
+	}
+
+	function attachCard(node: HTMLDivElement) {
+		cardEl = node;
+		const needsThumb = item.media_type === 'video' && !item.has_thumbnail && !localThumb;
+		const needsDuration =
+			item.media_type === 'video' &&
+			!(item.duration != null && Number.isFinite(item.duration) && item.duration > 0);
+
+		if (!needsThumb && !needsDuration) {
+			return () => {
+				if (cardEl === node) cardEl = undefined;
+			};
+		}
+
+		const runVisibleWork = () => {
+			if (needsThumb) startLazyThumbnail();
+			if (needsDuration) startLazyDuration();
 		};
-		if (video.readyState >= 2) onReady();
-		else video.addEventListener('loadeddata', onReady, { once: true });
 
-		return () => video.removeEventListener('loadeddata', onReady);
-	});
+		if (typeof IntersectionObserver === 'undefined') {
+			runVisibleWork();
+			return () => {
+				if (cardEl === node) cardEl = undefined;
+			};
+		}
+
+		const io = new IntersectionObserver(
+			(entries) => {
+				if (entries.some((entry) => entry.isIntersecting)) {
+					runVisibleWork();
+					io.disconnect();
+				}
+			},
+			{ root: null, rootMargin: '200px 0px', threshold: 0.01 }
+		);
+		io.observe(node);
+
+		return () => {
+			io.disconnect();
+			if (cardEl === node) cardEl = undefined;
+		};
+	}
 </script>
 
 <div
-	bind:this={cardEl}
+	{@attach attachCard}
 	class={[
-		'media-card group relative overflow-hidden bg-base-200 transition-shadow',
-		variant === 'grid' && 'rounded-xl shadow-sm hover:shadow-md aspect-square',
-		variant === 'collage' && 'rounded-lg w-full shadow-sm hover:shadow-md',
-		selected && 'ring-2 ring-primary ring-offset-2 ring-offset-base-100',
+		'media-card group bg-base-200 relative overflow-hidden transition-shadow',
+		variant === 'grid' && 'aspect-square rounded-xl shadow-sm hover:shadow-md',
+		variant === 'collage' && 'w-full rounded-lg shadow-sm hover:shadow-md',
+		selected && 'ring-primary ring-offset-base-100 ring-2 ring-offset-2',
 		dragging && 'opacity-40',
 		showCheckbox ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
 	]}
@@ -147,7 +219,13 @@
 	}}
 >
 	{#if item.media_type === 'image'}
-		<img {src} alt={item.original_name} class="h-full w-full object-cover" loading="lazy" draggable="false" />
+		<img
+			{src}
+			alt={item.original_name}
+			class="h-full w-full object-cover"
+			loading="lazy"
+			draggable="false"
+		/>
 	{:else if showPoster}
 		<img
 			src={thumbSrc}
@@ -155,37 +233,40 @@
 			class="h-full w-full object-cover"
 			loading="lazy"
 			draggable="false"
+			onerror={onPosterError}
 		/>
 		<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
-			<span class="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white shadow">
-				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="ml-0.5 h-5 w-5">
-					<path d="M8 5v14l11-7z" />
-				</svg>
+			<span
+				class="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white shadow"
+			>
+				<Play class="ml-0.5 h-5 w-5" fill="currentColor" />
+			</span>
+		</div>
+	{:else if generatingThumbnail}
+		<div
+			class="bg-base-300 flex h-full w-full flex-col items-center justify-center gap-2"
+			aria-busy="true"
+			aria-label="Generating thumbnail"
+		>
+			<span class="loading loading-spinner loading-md text-base-content/55"></span>
+			<span class="text-base-content/45 text-[10px] font-medium tracking-wide uppercase">
+				Thumbnail
 			</span>
 		</div>
 	{:else}
-		<video
-			bind:this={previewVideoEl}
-			{src}
-			class="h-full w-full object-cover"
-			muted
-			preload="metadata"
-			playsinline
-			draggable="false"
-		>
-			<track kind="captions" />
-		</video>
-		<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
-			<span class="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white shadow">
-				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="ml-0.5 h-5 w-5">
-					<path d="M8 5v14l11-7z" />
-				</svg>
-			</span>
+		<div class="bg-base-300 relative h-full w-full">
+			<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
+				<span
+					class="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white shadow"
+				>
+					<Play class="ml-0.5 h-5 w-5" fill="currentColor" />
+				</span>
+			</div>
 		</div>
 	{/if}
 
 	{#if showCheckbox}
-		<div class="absolute left-2 top-2 z-10">
+		<div class="absolute top-2 left-2 z-10">
 			<input
 				type="checkbox"
 				class="checkbox checkbox-primary checkbox-sm bg-base-100/90"
@@ -201,13 +282,13 @@
 	{/if}
 
 	<div
-		class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 via-black/40 to-transparent px-2.5 pb-2 pt-8 text-white opacity-0 transition-opacity group-hover:opacity-100"
+		class="bg-base-100/95 text-base-content absolute inset-x-0 bottom-0 px-2.5 py-2 opacity-0 transition-opacity group-hover:opacity-100"
 		class:opacity-100={selected}
 	>
 		<p class="truncate text-xs font-medium">{item.original_name}</p>
-		<div class="mt-1 flex items-center justify-between gap-2 text-[10px] opacity-90">
+		<div class="text-base-content/70 mt-1 flex items-center justify-between gap-2 text-[10px]">
 			{#if showAlbumChip && albumLabel}
-				<span class="badge badge-sm max-w-[70%] truncate border-0 bg-white/20 text-white" title={albumTitle}>
+				<span class="badge badge-sm bg-base-200 max-w-[70%] truncate border-0" title={albumTitle}>
 					{albumLabel}
 				</span>
 			{:else}
@@ -217,9 +298,17 @@
 		</div>
 	</div>
 
+	{#if durationLabel}
+		<span
+			class="pointer-events-none absolute right-2 bottom-2 z-10 rounded bg-black/75 px-1.5 py-0.5 text-[11px] leading-none font-medium text-white tabular-nums"
+		>
+			{durationLabel}
+		</span>
+	{/if}
+
 	{#if !showCheckbox && showAlbumChip && albumLabel}
 		<span
-			class="badge badge-sm absolute left-2 top-2 max-w-[75%] truncate border-0 bg-base-100/90 text-base-content shadow-sm"
+			class="badge badge-sm bg-base-100/90 text-base-content absolute top-2 left-2 max-w-[75%] truncate border-0 shadow-sm"
 			title={albumTitle}
 		>
 			{albumLabel}

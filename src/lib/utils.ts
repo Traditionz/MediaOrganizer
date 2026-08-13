@@ -1,3 +1,5 @@
+import { appDefaults } from '$lib/config/defaults';
+
 /** Format bytes for display */
 export function formatBytes(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
@@ -14,6 +16,16 @@ export function formatDate(iso: string): string {
 		month: 'short',
 		day: 'numeric'
 	});
+}
+
+/** Format seconds as m:ss or h:mm:ss */
+export function formatDuration(seconds: number): string {
+	if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+	const s = Math.floor(seconds % 60);
+	const m = Math.floor(seconds / 60) % 60;
+	const h = Math.floor(seconds / 3600);
+	const pad = (n: number) => String(n).padStart(2, '0');
+	return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
 export interface CollageItem {
@@ -44,8 +56,7 @@ export function layoutCollage(
 
 	for (const item of items) {
 		const col = heights.indexOf(Math.min(...heights));
-		const aspect =
-			item.width && item.height ? item.height / item.width : item.width ? 1 : 0.75;
+		const aspect = item.width && item.height ? item.height / item.width : item.width ? 1 : 0.75;
 		const h = Math.max(80, colWidth * aspect);
 		layouts.push({
 			id: item.id,
@@ -98,7 +109,9 @@ export function thumbnailSeekTime(duration: number): number {
 	return Math.min(at, Math.max(0, duration - 0.05));
 }
 
-export function probeImageDimensions(file: File): Promise<{ width: number; height: number } | null> {
+export function probeImageDimensions(
+	file: File
+): Promise<{ width: number; height: number } | null> {
 	if (!isImageFile(file)) return Promise.resolve(null);
 	return new Promise((resolve) => {
 		const url = URL.createObjectURL(file);
@@ -118,10 +131,10 @@ export function probeImageDimensions(file: File): Promise<{ width: number; heigh
 export function probeVideoDimensions(
 	file: File,
 	timeoutMs = 4000
-): Promise<{ width: number; height: number } | null> {
+): Promise<{ width: number; height: number; duration: number | null } | null> {
 	if (!isVideoFile(file)) return Promise.resolve(null);
 	if (file.size > PROBE_SIZE_LIMIT) {
-		return Promise.resolve({ width: 16, height: 9 });
+		return Promise.resolve({ width: 16, height: 9, duration: null });
 	}
 
 	return new Promise((resolve) => {
@@ -130,35 +143,76 @@ export function probeVideoDimensions(
 		video.preload = 'metadata';
 		let settled = false;
 
-		const done = (value: { width: number; height: number } | null) => {
+		const done = (value: { width: number; height: number; duration: number | null } | null) => {
 			if (settled) return;
 			settled = true;
 			URL.revokeObjectURL(url);
 			resolve(value);
 		};
 
-		const timer = setTimeout(() => done({ width: 16, height: 9 }), timeoutMs);
+		const timer = setTimeout(() => done({ width: 16, height: 9, duration: null }), timeoutMs);
 
 		video.onloadedmetadata = () => {
 			clearTimeout(timer);
+			const d = video.duration;
 			done({
 				width: video.videoWidth || 16,
-				height: video.videoHeight || 9
+				height: video.videoHeight || 9,
+				duration: Number.isFinite(d) && d > 0 ? d : null
 			});
 		};
 		video.onerror = () => {
 			clearTimeout(timer);
-			done({ width: 16, height: 9 });
+			done({ width: 16, height: 9, duration: null });
 		};
 		video.src = url;
 	});
 }
 
+/** Probe duration from a media URL (for lazy duration backfill). */
+export function probeVideoDurationFromUrl(src: string, timeoutMs = 12000): Promise<number | null> {
+	return new Promise((resolve) => {
+		const video = document.createElement('video');
+		video.preload = 'metadata';
+		video.muted = true;
+		video.playsInline = true;
+
+		let settled = false;
+		const finish = (value: number | null) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			video.removeAttribute('src');
+			video.load();
+			resolve(value);
+		};
+
+		const timer = setTimeout(() => finish(null), timeoutMs);
+
+		const takeDuration = () => {
+			const d = video.duration;
+			if (Number.isFinite(d) && d > 0) finish(d);
+		};
+
+		video.onloadedmetadata = takeDuration;
+		video.ondurationchange = takeDuration;
+		video.onerror = () => finish(null);
+		video.src = src;
+	});
+}
+
+export async function persistMediaDuration(mediaId: string, duration: number): Promise<boolean> {
+	if (!Number.isFinite(duration) || duration <= 0) return false;
+	const res = await fetch('/api/media', {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ action: 'set-duration', id: mediaId, duration })
+	});
+	return res.ok;
+}
+
 /** Capture a JPEG preview frame from a video File (for upload-time thumbnails). */
-export function captureVideoThumbnail(
-	file: File,
-	maxEdge = 480
-): Promise<Blob | null> {
+export function captureVideoThumbnail(file: File, maxEdge = 480): Promise<Blob | null> {
 	if (!isVideoFile(file)) return Promise.resolve(null);
 
 	return new Promise((resolve) => {
@@ -225,6 +279,93 @@ export function captureVideoThumbnail(
 	});
 }
 
+/** Capture a JPEG preview from a media URL (for lazy thumbnail backfill). */
+export function captureVideoThumbnailFromUrl(
+	src: string,
+	maxEdge = 480,
+	timeoutMs = 20000
+): Promise<Blob | null> {
+	return new Promise((resolve) => {
+		const video = document.createElement('video');
+		video.muted = true;
+		video.playsInline = true;
+		video.preload = 'auto';
+
+		let settled = false;
+		const finish = (blob: Blob | null) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			video.removeAttribute('src');
+			video.load();
+			resolve(blob);
+		};
+
+		const timer = setTimeout(() => finish(null), timeoutMs);
+
+		const draw = () => {
+			try {
+				const w = video.videoWidth;
+				const h = video.videoHeight;
+				if (!w || !h) {
+					finish(null);
+					return;
+				}
+				const scale = Math.min(1, maxEdge / Math.max(w, h));
+				const canvas = document.createElement('canvas');
+				canvas.width = Math.max(1, Math.round(w * scale));
+				canvas.height = Math.max(1, Math.round(h * scale));
+				const ctx = canvas.getContext('2d');
+				if (!ctx) {
+					finish(null);
+					return;
+				}
+				ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+				canvas.toBlob(
+					(blob) => {
+						// Reject near-empty / solid-color captures (bad seek)
+						if (!blob || blob.size < 3000) {
+							finish(null);
+							return;
+						}
+						finish(blob);
+					},
+					'image/jpeg',
+					0.85
+				);
+			} catch {
+				finish(null);
+			}
+		};
+
+		const seekAndCapture = () => {
+			const seekTo = Math.max(0.25, thumbnailSeekTime(video.duration) || 0.5);
+			const onSeeked = () => {
+				video.removeEventListener('seeked', onSeeked);
+				requestAnimationFrame(() => requestAnimationFrame(draw));
+			};
+			video.addEventListener('seeked', onSeeked);
+			try {
+				video.currentTime = Math.min(seekTo, Math.max(0, (video.duration || seekTo) - 0.05));
+			} catch {
+				video.removeEventListener('seeked', onSeeked);
+				draw();
+			}
+		};
+
+		video.addEventListener(
+			'loadeddata',
+			() => {
+				if (video.readyState >= 2) seekAndCapture();
+				else video.addEventListener('canplay', seekAndCapture, { once: true });
+			},
+			{ once: true }
+		);
+		video.onerror = () => finish(null);
+		video.src = src;
+	});
+}
+
 /** Capture a JPEG frame from an already-loaded video element. */
 export function captureThumbnailFromVideoEl(
 	video: HTMLVideoElement,
@@ -271,6 +412,7 @@ export function uploadMediaFile(
 		albumId: string | null;
 		width?: number | null;
 		height?: number | null;
+		duration?: number | null;
 		compress?: boolean;
 		onProgress?: (pct: number) => void;
 	}
@@ -293,19 +435,21 @@ export function uploadMediaFile(
 		if (options.albumId) xhr.setRequestHeader('X-Album-Id', options.albumId);
 		if (options.width != null) xhr.setRequestHeader('X-Width', String(options.width));
 		if (options.height != null) xhr.setRequestHeader('X-Height', String(options.height));
+		if (options.duration != null && Number.isFinite(options.duration) && options.duration > 0) {
+			xhr.setRequestHeader('X-Duration', String(options.duration));
+		}
 
 		xhr.upload.onprogress = (e) => {
 			if (e.lengthComputable && options.onProgress) {
-				options.onProgress(Math.round((e.loaded / e.total) * 100));
+				// Cap at 95% until the server actually responds — bytes-sent
+				// 100% is what made the bar look stuck while the file was saved.
+				options.onProgress(Math.min(95, Math.round((e.loaded / e.total) * 95)));
 			}
-		};
-		// Bytes finished; server may still be writing/indexing before onload.
-		xhr.upload.onload = () => {
-			options.onProgress?.(100);
 		};
 
 		xhr.onload = () => {
 			if (xhr.status >= 200 && xhr.status < 300) {
+				options.onProgress?.(100);
 				resolve(xhr.response as { id: string; media_type?: string });
 			} else {
 				const msg =
@@ -316,6 +460,7 @@ export function uploadMediaFile(
 		};
 		xhr.onerror = () => reject(new Error(`Network error uploading ${file.name}`));
 		xhr.ontimeout = () => reject(new Error(`Timed out uploading ${file.name}`));
+		xhr.timeout = 0;
 		xhr.send(file);
 	});
 }
@@ -341,8 +486,6 @@ export async function mapWithConcurrency<T, R>(
 	await Promise.all(Array.from({ length: limit }, () => runWorker()));
 	return results;
 }
-
-import { appDefaults } from '$lib/config/defaults';
 
 /** Parallel upload slots — browsers typically allow ~6 connections per host. */
 export const UPLOAD_CONCURRENCY = appDefaults.uploadConcurrency;

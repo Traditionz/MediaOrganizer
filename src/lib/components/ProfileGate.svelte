@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Profile } from '$lib/types';
+	import User from '@lucide/svelte/icons/user';
 
 	interface Props {
 		profiles: Profile[];
@@ -19,9 +20,7 @@
 	let unlockId = $state<string | null>(null);
 	let unlockPasscode = $state('');
 
-	const unlocking = $derived(
-		unlockId ? (profiles.find((p) => p.id === unlockId) ?? null) : null
-	);
+	const unlocking = $derived(unlockId ? (profiles.find((p) => p.id === unlockId) ?? null) : null);
 
 	async function beginUnlock(profile: Profile) {
 		errorMessage = '';
@@ -87,12 +86,12 @@
 	}
 </script>
 
-<div class="flex min-h-screen items-center justify-center bg-base-200 px-4 py-10">
+<div class="bg-base-200 flex min-h-screen items-center justify-center px-4 py-10">
 	<div class="w-full max-w-md">
 		<div class="mb-8 text-center">
-			<p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/50">Welcome</p>
+			<p class="text-base-content/50 text-xs font-semibold tracking-[0.14em] uppercase">Welcome</p>
 			<h1 class="mt-2 text-3xl font-bold tracking-tight">Media Organizer</h1>
-			<p class="mt-2 text-sm text-base-content/60">
+			<p class="text-base-content/60 mt-2 text-sm">
 				Choose a profile to continue, or create a new one. Passcodes are optional.
 			</p>
 		</div>
@@ -108,10 +107,10 @@
 
 		{#if unlocking}
 			<form
-				class="mb-6 rounded-box border border-base-300 bg-base-100 p-4 shadow-lg"
+				class="rounded-box border-base-300 bg-base-100 mb-6 border p-4 shadow-lg"
 				onsubmit={submitUnlock}
 			>
-				<p class="mb-1 text-xs font-semibold uppercase tracking-wide text-base-content/50">
+				<p class="text-base-content/50 mb-1 text-xs font-semibold tracking-wide uppercase">
 					Enter passcode
 				</p>
 				<p class="mb-3 truncate text-sm font-medium">{unlocking.name}</p>
@@ -139,10 +138,10 @@
 			</form>
 		{:else if profiles.length > 0}
 			<div class="mb-6">
-				<p class="mb-2 text-xs font-semibold uppercase tracking-wide text-base-content/50">
+				<p class="text-base-content/50 mb-2 text-xs font-semibold tracking-wide uppercase">
 					Profiles
 				</p>
-				<ul class="menu w-full gap-1 rounded-box border border-base-300 bg-base-100 p-2">
+				<ul class="menu rounded-box border-base-300 bg-base-100 w-full gap-1 border p-2">
 					{#each profiles as profile (profile.id)}
 						<li>
 							<button
@@ -151,20 +150,7 @@
 								disabled={busy}
 								onclick={() => beginUnlock(profile)}
 							>
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke-width="1.5"
-									stroke="currentColor"
-									class="h-5 w-5 shrink-0 text-base-content/60"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"
-									/>
-								</svg>
+								<User class="text-base-content/60 h-5 w-5 shrink-0" />
 								<span class="truncate font-medium">{profile.name}</span>
 								{#if profile.has_passcode}
 									<span class="badge badge-ghost badge-sm ml-auto">Locked</span>
@@ -177,9 +163,9 @@
 		{/if}
 
 		{#if !unlocking}
-			<form class="rounded-box border border-base-300 bg-base-100 p-4" onsubmit={submitCreate}>
+			<form class="rounded-box border-base-300 bg-base-100 border p-4" onsubmit={submitCreate}>
 				<label class="form-control w-full">
-					<span class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-base-content/50">
+					<span class="text-base-content/50 mb-1.5 text-xs font-semibold tracking-wide uppercase">
 						New profile
 					</span>
 					<input

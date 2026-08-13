@@ -35,6 +35,10 @@
 	function onkeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape' && open && !busy) oncancel();
 	}
+
+	function onclick(e: MouseEvent) {
+		if (e.target === e.currentTarget && !busy) oncancel();
+	}
 </script>
 
 <svelte:window {onkeydown} />
@@ -47,21 +51,17 @@
 		aria-modal="true"
 		aria-label={title}
 		tabindex="-1"
-		onclick={(e) => {
-			if (e.target === e.currentTarget && !busy) oncancel();
-		}}
-		onkeydown={(e) => {
-			if (e.key === 'Escape' && !busy) oncancel();
-		}}
+		{onclick}
+		{onkeydown}
 	>
 		<form
-			class="w-full max-w-md rounded-2xl border border-base-300 bg-base-100 p-5 shadow-2xl"
+			class="border-base-300 bg-base-100 w-full max-w-md rounded-2xl border p-5 shadow-2xl"
 			transition:scale={{ duration: 140, start: 0.96 }}
 			onsubmit={submit}
 		>
 			<header class="mb-4">
 				<h2 class="text-lg font-semibold">{title}</h2>
-				<p class="mt-1 text-sm text-base-content/60">{message}</p>
+				<p class="text-base-content/60 mt-1 text-sm">{message}</p>
 			</header>
 
 			<footer class="mt-2 flex justify-end gap-2">

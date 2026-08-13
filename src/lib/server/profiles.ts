@@ -1,14 +1,10 @@
+import { count, eq, sql } from 'drizzle-orm';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
-import { unlinkSync, existsSync } from 'node:fs';
+import { existsSync, unlinkSync } from 'node:fs';
 import type { Profile } from '$lib/types';
-import db, { filePathForKey, newId } from './db';
-
-type ProfileRow = {
-	id: string;
-	name: string;
-	passcode_hash: string | null;
-	created_at: string;
-};
+import db, { filePathForKey, isUniqueConstraintError, newId } from './db';
+import { media, profiles } from './schema';
+import type { ProfileRow } from './schema';
 
 const MIN_PASSCODE_LEN = 4;
 
@@ -16,10 +12,8 @@ function mapProfile(row: ProfileRow): Profile {
 	return {
 		id: row.id,
 		name: row.name,
-		created_at: row.created_at.includes('T')
-			? row.created_at
-			: `${row.created_at.replace(' ', 'T')}Z`,
-		has_passcode: Boolean(row.passcode_hash)
+		created_at: row.createdAt.includes('T') ? row.createdAt : `${row.createdAt.replace(' ', 'T')}Z`,
+		has_passcode: Boolean(row.passcodeHash)
 	};
 }
 
@@ -52,26 +46,20 @@ export function assertPasscodeFormat(passcode: string): string {
 
 export function listProfiles(): Profile[] {
 	const rows = db
-		.prepare(
-			'SELECT id, name, passcode_hash, created_at FROM profiles ORDER BY name COLLATE NOCASE'
-		)
-		.all() as ProfileRow[];
+		.select()
+		.from(profiles)
+		.orderBy(sql`${profiles.name} COLLATE NOCASE`)
+		.all();
 	return rows.map(mapProfile);
 }
 
 export function getProfile(id: string): Profile | null {
-	const row = db
-		.prepare('SELECT id, name, passcode_hash, created_at FROM profiles WHERE id = ?')
-		.get(id) as ProfileRow | undefined;
+	const row = db.select().from(profiles).where(eq(profiles.id, id)).get();
 	return row ? mapProfile(row) : null;
 }
 
 function getProfileRow(id: string): ProfileRow | null {
-	return (
-		(db
-			.prepare('SELECT id, name, passcode_hash, created_at FROM profiles WHERE id = ?')
-			.get(id) as ProfileRow | undefined) ?? null
-	);
+	return db.select().from(profiles).where(eq(profiles.id, id)).get() ?? null;
 }
 
 export function createProfile(name: string, passcode?: string | null): Profile {
@@ -82,14 +70,15 @@ export function createProfile(name: string, passcode?: string | null): Profile {
 
 	const id = newId();
 	try {
-		db.prepare('INSERT INTO profiles (id, name, passcode_hash) VALUES (?, ?, ?)').run(
-			id,
-			trimmed,
-			code ? hashPasscode(code) : null
-		);
+		db.insert(profiles)
+			.values({
+				id,
+				name: trimmed,
+				passcodeHash: code ? hashPasscode(code) : null
+			})
+			.run();
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		if (message.includes('UNIQUE')) {
+		if (isUniqueConstraintError(err)) {
 			throw new Error('A profile with that name already exists');
 		}
 		throw err;
@@ -103,8 +92,8 @@ export function unlockProfile(id: string, passcode = ''): Profile {
 	const row = getProfileRow(id);
 	if (!row) throw new Error('Profile not found');
 
-	if (row.passcode_hash) {
-		if (!verifyPasscode(row.passcode_hash, passcode)) {
+	if (row.passcodeHash) {
+		if (!verifyPasscode(row.passcodeHash, passcode)) {
 			throw new Error('Incorrect passcode');
 		}
 	}
@@ -121,15 +110,15 @@ export function setProfilePasscode(
 	const row = getProfileRow(id);
 	if (!row) throw new Error('Profile not found');
 
-	if (row.passcode_hash) {
-		if (!currentPasscode || !verifyPasscode(row.passcode_hash, currentPasscode)) {
+	if (row.passcodeHash) {
+		if (!currentPasscode || !verifyPasscode(row.passcodeHash, currentPasscode)) {
 			throw new Error('Incorrect passcode');
 		}
 	}
 
 	const trimmed = newPasscode?.trim() ?? '';
 	const hash = trimmed ? hashPasscode(assertPasscodeFormat(trimmed)) : null;
-	db.prepare('UPDATE profiles SET passcode_hash = ? WHERE id = ?').run(hash, id);
+	db.update(profiles).set({ passcodeHash: hash }).where(eq(profiles.id, id)).run();
 	return getProfile(id)!;
 }
 
@@ -147,21 +136,25 @@ export function deleteProfile(
 		throw new Error('Profile name does not match');
 	}
 
-	const actualCount = (
-		db.prepare('SELECT COUNT(*) AS c FROM media WHERE profile_id = ?').get(id) as { c: number }
-	).c;
+	const actualCount =
+		db.select({ c: count() }).from(media).where(eq(media.profileId, id)).get()?.c ?? 0;
 	if (!Number.isInteger(confirmation.mediaCount) || confirmation.mediaCount !== actualCount) {
 		throw new Error('Media count does not match');
 	}
 
 	const keys = db
-		.prepare('SELECT storage_key, thumbnail_key FROM media WHERE profile_id = ?')
-		.all(id) as Array<{ storage_key: string; thumbnail_key: string | null }>;
+		.select({
+			storageKey: media.storageKey,
+			thumbnailKey: media.thumbnailKey
+		})
+		.from(media)
+		.where(eq(media.profileId, id))
+		.all();
 
-	db.prepare('DELETE FROM profiles WHERE id = ?').run(id);
+	db.delete(profiles).where(eq(profiles.id, id)).run();
 
 	for (const keyRow of keys) {
-		for (const key of [keyRow.storage_key, keyRow.thumbnail_key]) {
+		for (const key of [keyRow.storageKey, keyRow.thumbnailKey]) {
 			if (!key) continue;
 			const path = filePathForKey(key);
 			try {

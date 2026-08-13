@@ -19,11 +19,20 @@ export class LibraryState {
 	activeProfile = $state.raw<Profile | null>(null);
 	activeAlbum = $state<string | null | 'all'>(defaultActiveAlbum());
 
+	/** Client-confirmed thumbs (survives refresh before server reflects thumbnail_key). */
+	private thumbReady = new Set<string>();
+
 	constructor(private readonly prefs: PreferencesState) {}
 
 	sync(data: LibraryLoad) {
+		const prevProfileId = this.activeProfile?.id ?? null;
+		const nextProfileId = data.activeProfile?.id ?? null;
+		if (prevProfileId !== nextProfileId) this.thumbReady.clear();
+
 		this.albums = data.albums;
-		this.media = data.media;
+		this.media = data.media.map((item) =>
+			this.thumbReady.has(item.id) ? { ...item, has_thumbnail: true } : item
+		);
 		this.totalCount = data.totalCount;
 		this.profiles = data.profiles;
 		this.activeProfile = data.activeProfile;
@@ -70,12 +79,24 @@ export class LibraryState {
 		return this.activeAlbum === 'all' || this.activeAlbum === null ? null : this.activeAlbum;
 	}
 
+	markHasThumbnail(id: string) {
+		this.thumbReady.add(id);
+		this.media = this.media.map((item) =>
+			item.id === id ? { ...item, has_thumbnail: true } : item
+		);
+	}
+
+	setMediaDuration(id: string, duration: number) {
+		if (!Number.isFinite(duration) || duration <= 0) return;
+		this.media = this.media.map((item) => (item.id === id ? { ...item, duration } : item));
+	}
+
 	async refresh() {
-		const [mediaRes, albumsRes] = await Promise.all([
-			fetch('/api/media'),
-			fetch('/api/albums')
-		]);
-		this.media = await mediaRes.json();
+		const [mediaRes, albumsRes] = await Promise.all([fetch('/api/media'), fetch('/api/albums')]);
+		const media = (await mediaRes.json()) as MediaItem[];
+		this.media = media.map((item) =>
+			this.thumbReady.has(item.id) ? { ...item, has_thumbnail: true } : item
+		);
 		this.albums = await albumsRes.json();
 		this.totalCount = this.media.length;
 	}

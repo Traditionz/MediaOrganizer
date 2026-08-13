@@ -1,3 +1,7 @@
+/// <reference types="@sveltejs/kit" />
+/// <reference types="svelte" />
+/// <reference path="../node_modules/svelte/svelte-html.d.ts" />
+
 // See https://svelte.dev/docs/kit/types#app.d.ts
 // for information about these interfaces
 declare global {

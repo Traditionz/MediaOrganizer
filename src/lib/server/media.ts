@@ -5,27 +5,20 @@ import {
 	unlinkSync,
 	copyFileSync,
 	statSync,
-	renameSync
+	renameSync,
+	readdirSync
 } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
+import { and, count, eq, exists, inArray, notExists, sql } from 'drizzle-orm';
 import type { MediaItem, MediaType } from '$lib/types';
-import db, { filePathForKey, newId } from './db';
+import db, { FILES_DIR, filePathForKey, newId } from './db';
+import { albumMedia, albums, media } from './schema';
+import type { MediaRow } from './schema';
 import { listAlbums } from './albums';
 
-type MediaRow = {
-	id: string;
-	profile_id: string;
-	original_name: string;
-	mime_type: string;
-	media_type: MediaType;
-	size: number;
-	width: number | null;
-	height: number | null;
-	storage_key: string;
-	thumbnail_key: string | null;
-	created_at: string;
-};
+/** Reject near-empty / black-frame JPEGs from failed captures. */
+const MIN_THUMB_BYTES = 3000;
 
 export interface MediaQuery {
 	albumId?: string | null | 'all';
@@ -46,48 +39,74 @@ function loadAlbumMembership(
 	for (const id of mediaIds) map.set(id, { ids: [], names: [] });
 	if (!mediaIds.length) return map;
 
-	const albums = listAlbums(profileId);
-	const albumNameById = new Map(albums.map((a) => [a.id, a.name]));
+	const albumList = listAlbums(profileId);
+	const albumNameById = new Map(albumList.map((a) => [a.id, a.name]));
 
-	const placeholders = mediaIds.map(() => '?').join(', ');
 	const rows = db
-		.prepare(
-			`
-			SELECT am.media_id, am.album_id
-			FROM album_media am
-			INNER JOIN albums a ON a.id = am.album_id
-			WHERE a.profile_id = ? AND am.media_id IN (${placeholders})
-			ORDER BY a.name COLLATE NOCASE
-		`
-		)
-		.all(profileId, ...mediaIds) as Array<{ media_id: string; album_id: string }>;
+		.select({
+			mediaId: albumMedia.mediaId,
+			albumId: albumMedia.albumId
+		})
+		.from(albumMedia)
+		.innerJoin(albums, eq(albums.id, albumMedia.albumId))
+		.where(and(eq(albums.profileId, profileId), inArray(albumMedia.mediaId, mediaIds)))
+		.orderBy(sql`${albums.name} COLLATE NOCASE`)
+		.all();
 
 	for (const row of rows) {
-		const entry = map.get(row.media_id);
+		const entry = map.get(row.mediaId);
 		if (!entry) continue;
-		entry.ids.push(row.album_id);
-		entry.names.push(albumNameById.get(row.album_id) ?? row.album_id);
+		entry.ids.push(row.albumId);
+		entry.names.push(albumNameById.get(row.albumId) ?? row.albumId);
 	}
 	return map;
 }
 
-function mapRow(
-	row: MediaRow,
-	albumIds: string[],
-	albumNames: string[]
-): MediaItem {
+function isValidThumbnail(thumbnailKey: string | null | undefined): boolean {
+	if (!thumbnailKey) return false;
+	const path = filePathForKey(thumbnailKey);
+	if (!existsSync(path)) return false;
+	try {
+		return statSync(path).size >= MIN_THUMB_BYTES;
+	} catch {
+		return false;
+	}
+}
+
+function clearInvalidThumbnail(profileId: string, id: string, thumbnailKey: string | null) {
+	if (!thumbnailKey) return;
+	const path = filePathForKey(thumbnailKey);
+	try {
+		if (existsSync(path)) unlinkSync(path);
+	} catch {
+		/* ignore */
+	}
+	db.update(media)
+		.set({ thumbnailKey: null })
+		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+		.run();
+}
+
+function normalizeDuration(value: number | null | undefined): number | null {
+	if (value == null) return null;
+	const n = Number(value);
+	return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function mapRow(row: MediaRow, albumIds: string[], albumNames: string[]): MediaItem {
 	return {
 		id: row.id,
-		original_name: row.original_name,
-		mime_type: row.mime_type,
-		media_type: row.media_type,
+		original_name: row.originalName,
+		mime_type: row.mimeType,
+		media_type: row.mediaType,
 		album_ids: albumIds,
 		album_names: albumNames,
 		size: row.size,
 		width: row.width,
 		height: row.height,
-		created_at: normalizeCreated(row.created_at),
-		has_thumbnail: Boolean(row.thumbnail_key)
+		duration: normalizeDuration(row.duration),
+		created_at: normalizeCreated(row.createdAt),
+		has_thumbnail: isValidThumbnail(row.thumbnailKey)
 	};
 }
 
@@ -102,55 +121,55 @@ function attachAlbums(profileId: string, rows: MediaRow[]): MediaItem[] {
 	});
 }
 
+function getMediaRow(profileId: string, id: string): MediaRow | undefined {
+	return db
+		.select()
+		.from(media)
+		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+		.get();
+}
+
 export function listMedia(profileId: string, query: MediaQuery = {}): MediaItem[] {
-	const clauses = ['m.profile_id = ?'];
-	const params: unknown[] = [profileId];
+	const clauses = [eq(media.profileId, profileId)];
 
 	if (query.albumId !== undefined && query.albumId !== 'all') {
 		if (query.albumId === null) {
-			clauses.push(
-				`NOT EXISTS (SELECT 1 FROM album_media am WHERE am.media_id = m.id)`
-			);
+			clauses.push(notExists(db.select().from(albumMedia).where(eq(albumMedia.mediaId, media.id))));
 		} else {
 			clauses.push(
-				`EXISTS (SELECT 1 FROM album_media am WHERE am.media_id = m.id AND am.album_id = ?)`
+				exists(
+					db
+						.select()
+						.from(albumMedia)
+						.where(and(eq(albumMedia.mediaId, media.id), eq(albumMedia.albumId, query.albumId)))
+				)
 			);
-			params.push(query.albumId);
 		}
 	}
 
 	if (query.mediaType && query.mediaType !== 'all') {
-		clauses.push('m.media_type = ?');
-		params.push(query.mediaType);
+		clauses.push(eq(media.mediaType, query.mediaType));
 	}
 
 	if (query.dateFrom) {
-		clauses.push('date(m.created_at) >= date(?)');
-		params.push(query.dateFrom);
+		clauses.push(sql`date(${media.createdAt}) >= date(${query.dateFrom})`);
 	}
 	if (query.dateTo) {
-		clauses.push('date(m.created_at) <= date(?)');
-		params.push(query.dateTo);
+		clauses.push(sql`date(${media.createdAt}) <= date(${query.dateTo})`);
 	}
 
 	const rows = db
-		.prepare(
-			`
-			SELECT m.*
-			FROM media m
-			WHERE ${clauses.join(' AND ')}
-			ORDER BY m.created_at DESC, m.id DESC
-		`
-		)
-		.all(...params) as MediaRow[];
+		.select()
+		.from(media)
+		.where(and(...clauses))
+		.orderBy(sql`${media.createdAt} DESC, ${media.id} DESC`)
+		.all();
 
 	return attachAlbums(profileId, rows);
 }
 
 export function getMediaMeta(profileId: string, id: string): MediaItem | undefined {
-	const row = db
-		.prepare('SELECT * FROM media WHERE id = ? AND profile_id = ?')
-		.get(id, profileId) as MediaRow | undefined;
+	const row = getMediaRow(profileId, id);
 	if (!row) return undefined;
 	return attachAlbums(profileId, [row])[0];
 }
@@ -165,27 +184,41 @@ export function getMediaForServe(
 	mimeType: string;
 	originalName: string;
 } | null {
-	const row = db
-		.prepare('SELECT * FROM media WHERE id = ? AND profile_id = ?')
-		.get(id, profileId) as MediaRow | undefined;
+	const row = getMediaRow(profileId, id);
 	if (!row) return null;
-	const path = filePathForKey(row.storage_key);
+	const path = filePathForKey(row.storageKey);
 	if (!existsSync(path)) return null;
 	const meta = attachAlbums(profileId, [row])[0];
 	return {
 		meta,
 		path,
 		size: row.size,
-		mimeType: row.mime_type,
-		originalName: row.original_name
+		mimeType: row.mimeType,
+		originalName: row.originalName
 	};
 }
 
 function assertAlbum(profileId: string, albumId: string): void {
 	const album = db
-		.prepare('SELECT id FROM albums WHERE id = ? AND profile_id = ?')
-		.get(albumId, profileId);
+		.select({ id: albums.id })
+		.from(albums)
+		.where(and(eq(albums.id, albumId), eq(albums.profileId, profileId)))
+		.get();
 	if (!album) throw new Error('Album not found');
+}
+
+async function fillImageDimensions(profileId: string, id: string, path: string): Promise<void> {
+	try {
+		const { probeImageSize } = await import('./compress');
+		const dims = await probeImageSize(path);
+		if (!dims) return;
+		db.update(media)
+			.set({ width: dims.width, height: dims.height })
+			.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+			.run();
+	} catch {
+		/* dims are optional for layout */
+	}
 }
 
 export async function insertMediaFromStream(
@@ -197,6 +230,7 @@ export async function insertMediaFromStream(
 		albumId: string | null;
 		width: number | null;
 		height: number | null;
+		duration?: number | null;
 		body: ReadableStream<Uint8Array> | Readable;
 	}
 ): Promise<MediaItem> {
@@ -206,6 +240,8 @@ export async function insertMediaFromStream(
 	const storageKey = id;
 	const dest = filePathForKey(storageKey);
 	const tmp = `${dest}.tmp`;
+	const duration = normalizeDuration(input.duration);
+	let size = 0;
 
 	const nodeReadable =
 		input.body instanceof Readable
@@ -213,37 +249,29 @@ export async function insertMediaFromStream(
 			: Readable.fromWeb(input.body as import('node:stream/web').ReadableStream);
 
 	try {
-		await pipeline(nodeReadable, createWriteStream(tmp));
-		const size = statSync(tmp).size;
+		await pipeline(nodeReadable, createWriteStream(tmp, { highWaterMark: 4 * 1024 * 1024 }));
+		size = statSync(tmp).size;
 		renameSync(tmp, dest);
 
-		const tx = db.transaction(() => {
-			db.prepare(
-				`
-				INSERT INTO media (
-					id, profile_id, original_name, mime_type, media_type,
-					size, width, height, storage_key
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-			`
-			).run(
-				id,
-				profileId,
-				input.originalName,
-				input.mimeType,
-				input.mediaType,
-				size,
-				input.width,
-				input.height,
-				storageKey
-			);
+		db.transaction((tx) => {
+			tx.insert(media)
+				.values({
+					id,
+					profileId,
+					originalName: input.originalName,
+					mimeType: input.mimeType,
+					mediaType: input.mediaType,
+					size,
+					width: input.width,
+					height: input.height,
+					storageKey,
+					duration
+				})
+				.run();
 			if (input.albumId) {
-				db.prepare('INSERT INTO album_media (album_id, media_id) VALUES (?, ?)').run(
-					input.albumId,
-					id
-				);
+				tx.insert(albumMedia).values({ albumId: input.albumId, mediaId: id }).run();
 			}
 		});
-		tx();
 	} catch (err) {
 		try {
 			if (existsSync(tmp)) unlinkSync(tmp);
@@ -254,54 +282,190 @@ export async function insertMediaFromStream(
 		throw err;
 	}
 
-	return getMediaMeta(profileId, id)!;
+	if (input.mediaType === 'image' && (input.width == null || input.height == null)) {
+		void fillImageDimensions(profileId, id, dest);
+	}
+	if (input.mediaType === 'video' && duration == null) {
+		enqueueDurationBackfill(profileId);
+	}
+
+	return {
+		id,
+		original_name: input.originalName,
+		mime_type: input.mimeType,
+		media_type: input.mediaType,
+		album_ids: input.albumId ? [input.albumId] : [],
+		album_names: [],
+		size,
+		width: input.width,
+		height: input.height,
+		duration,
+		created_at: new Date().toISOString(),
+		has_thumbnail: false
+	};
+}
+
+/** Persist probed video duration (seconds) when finite and > 0. */
+export function updateMediaDuration(
+	profileId: string,
+	id: string,
+	durationSeconds: number
+): MediaItem {
+	const duration = normalizeDuration(durationSeconds);
+	if (duration == null) throw new Error('Duration must be a finite number greater than 0');
+
+	const result = db
+		.update(media)
+		.set({ duration })
+		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+		.run();
+	if (result.changes === 0) throw new Error('Media not found');
+
+	const meta = getMediaMeta(profileId, id);
+	if (!meta) throw new Error('Media not found');
+	return meta;
+}
+
+/** Fill missing video durations via ffmpeg (fast header probe). */
+export async function backfillMissingDurations(
+	profileId: string
+): Promise<{ updated: number; failed: number; remaining: number }> {
+	const rows = db
+		.select({ id: media.id, storageKey: media.storageKey })
+		.from(media)
+		.where(
+			and(
+				eq(media.profileId, profileId),
+				eq(media.mediaType, 'video'),
+				sql`(${media.duration} IS NULL OR ${media.duration} <= 0)`
+			)
+		)
+		.orderBy(sql`${media.createdAt} ASC`)
+		.all();
+
+	if (!rows.length) return { updated: 0, failed: 0, remaining: 0 };
+
+	const { probeVideoDuration } = await import('./compress');
+	let updated = 0;
+	let failed = 0;
+
+	for (const row of rows) {
+		const path = filePathForKey(row.storageKey);
+		if (!existsSync(path)) {
+			failed += 1;
+			continue;
+		}
+		try {
+			const duration = await probeVideoDuration(path);
+			if (duration == null) {
+				failed += 1;
+				continue;
+			}
+			db.update(media)
+				.set({ duration })
+				.where(and(eq(media.id, row.id), eq(media.profileId, profileId)))
+				.run();
+			updated += 1;
+		} catch {
+			failed += 1;
+		}
+	}
+
+	const remaining =
+		db
+			.select({ c: count() })
+			.from(media)
+			.where(
+				and(
+					eq(media.profileId, profileId),
+					eq(media.mediaType, 'video'),
+					sql`(${media.duration} IS NULL OR ${media.duration} <= 0)`
+				)
+			)
+			.get()?.c ?? 0;
+
+	return { updated, failed, remaining };
+}
+
+let durationBackfillRunning = false;
+const durationBackfillQueue = new Set<string>();
+
+/** Fire-and-forget duration probe for a profile. */
+export function enqueueDurationBackfill(profileId: string): void {
+	durationBackfillQueue.add(profileId);
+	void pumpDurationBackfill();
+}
+
+async function pumpDurationBackfill() {
+	if (durationBackfillRunning) return;
+	durationBackfillRunning = true;
+	try {
+		while (durationBackfillQueue.size > 0) {
+			const profileId = durationBackfillQueue.values().next().value as string;
+			durationBackfillQueue.delete(profileId);
+			try {
+				const summary = await backfillMissingDurations(profileId);
+				console.info(
+					'[media-organizer] duration backfill done:',
+					profileId,
+					`updated=${summary.updated}`,
+					`failed=${summary.failed}`,
+					`remaining=${summary.remaining}`
+				);
+			} catch (err) {
+				console.warn(
+					'[media-organizer] duration backfill failed:',
+					profileId,
+					err instanceof Error ? err.message : err
+				);
+			}
+		}
+	} finally {
+		durationBackfillRunning = false;
+	}
 }
 
 /** Compress on-disk media to AV1 (video) or AVIF (image). Keeps original if not smaller. */
 export async function compressMedia(profileId: string, id: string): Promise<MediaItem> {
-	const row = db
-		.prepare('SELECT * FROM media WHERE id = ? AND profile_id = ?')
-		.get(id, profileId) as MediaRow | undefined;
+	const row = getMediaRow(profileId, id);
 	if (!row) throw new Error('Media not found');
 
-	const path = filePathForKey(row.storage_key);
+	const path = filePathForKey(row.storageKey);
 	if (!existsSync(path)) throw new Error('Media file missing on disk');
 
 	const { compressImageToAvif, compressVideoToAv1, renameWithExt } = await import('./compress');
 
 	const result =
-		row.media_type === 'video'
-			? await compressVideoToAv1(path)
-			: await compressImageToAvif(path);
+		row.mediaType === 'video' ? await compressVideoToAv1(path) : await compressImageToAvif(path);
 
 	if (result.skipped && result.newSize === row.size) {
 		if (
-			(row.media_type === 'video' && row.mime_type !== 'video/mp4') ||
-			(row.media_type === 'image' && result.reason === 'Already AVIF' && row.mime_type !== 'image/avif')
+			(row.mediaType === 'video' && row.mimeType !== 'video/mp4') ||
+			(row.mediaType === 'image' &&
+				result.reason === 'Already AVIF' &&
+				row.mimeType !== 'image/avif')
 		) {
-			db.prepare(
-				'UPDATE media SET mime_type = ?, original_name = ? WHERE id = ? AND profile_id = ?'
-			).run(result.mimeType, renameWithExt(row.original_name, result.ext), id, profileId);
+			db.update(media)
+				.set({
+					mimeType: result.mimeType,
+					originalName: renameWithExt(row.originalName, result.ext)
+				})
+				.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+				.run();
 		}
 		return getMediaMeta(profileId, id)!;
 	}
 
-	db.prepare(
-		`
-		UPDATE media
-		SET size = ?, mime_type = ?, original_name = ?,
-			width = COALESCE(?, width), height = COALESCE(?, height)
-		WHERE id = ? AND profile_id = ?
-	`
-	).run(
-		result.newSize,
-		result.mimeType,
-		renameWithExt(row.original_name, result.ext),
-		result.width,
-		result.height,
-		id,
-		profileId
-	);
+	db.update(media)
+		.set({
+			size: result.newSize,
+			mimeType: result.mimeType,
+			originalName: renameWithExt(row.originalName, result.ext),
+			width: result.width ?? row.width,
+			height: result.height ?? row.height
+		})
+		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+		.run();
 
 	return getMediaMeta(profileId, id)!;
 }
@@ -334,11 +498,20 @@ export type BulkCompressSummary = {
 
 /** Convert all non-AV1 videos in a profile to AV1 (keeps original when not smaller). */
 export async function compressAllVideos(profileId: string): Promise<BulkCompressSummary> {
+	const { isAv1Cancelled, resetAv1Cancel } = await import('./compress');
+	resetAv1Cancel();
+	cleanupOrphanAv1Temps();
+
 	const rows = db
-		.prepare(
-			`SELECT id, original_name, size FROM media WHERE profile_id = ? AND media_type = 'video' ORDER BY created_at ASC`
-		)
-		.all(profileId) as Array<{ id: string; original_name: string; size: number }>;
+		.select({
+			id: media.id,
+			originalName: media.originalName,
+			size: media.size
+		})
+		.from(media)
+		.where(and(eq(media.profileId, profileId), eq(media.mediaType, 'video')))
+		.orderBy(sql`${media.createdAt} ASC`)
+		.all();
 
 	const summary: BulkCompressSummary = {
 		total: rows.length,
@@ -350,6 +523,10 @@ export async function compressAllVideos(profileId: string): Promise<BulkCompress
 	};
 
 	for (const row of rows) {
+		if (isAv1Cancelled()) {
+			summary.errors.push('Cancelled');
+			break;
+		}
 		const before = row.size;
 		try {
 			const after = await compressMedia(profileId, row.id);
@@ -361,44 +538,112 @@ export async function compressAllVideos(profileId: string): Promise<BulkCompress
 				summary.skipped += 1;
 			}
 		} catch (err) {
+			if (isAv1Cancelled()) {
+				summary.errors.push('Cancelled');
+				break;
+			}
 			summary.failed += 1;
 			const message = err instanceof Error ? err.message : String(err);
-			summary.errors.push(`${row.original_name}: ${message}`);
+			summary.errors.push(`${row.originalName}: ${message}`);
 			console.warn('[media-organizer] bulk AV1 failed:', row.id, message);
 		}
 	}
 
+	cleanupOrphanAv1Temps();
 	return summary;
+}
+
+/** Remove interrupted ffmpeg leftovers so they don't fill the disk. */
+export function cleanupOrphanAv1Temps(): void {
+	try {
+		for (const name of readdirSync(FILES_DIR)) {
+			if (!name.endsWith('.av1.tmp.mp4')) continue;
+			try {
+				unlinkSync(filePathForKey(name));
+			} catch {
+				/* ignore */
+			}
+		}
+	} catch {
+		/* ignore */
+	}
+}
+
+let av1BackfillRunning = false;
+const av1BackfillQueue = new Set<string>();
+
+/** Fire-and-forget AV1 conversion for a profile (non-blocking API). */
+export function enqueueAv1Backfill(profileId: string): void {
+	av1BackfillQueue.add(profileId);
+	void pumpAv1Backfill();
+}
+
+/** Stop bulk AV1 work and kill the current ffmpeg encode. */
+export async function cancelAv1Backfill(): Promise<void> {
+	av1BackfillQueue.clear();
+	const { cancelAv1Work } = await import('./compress');
+	cancelAv1Work();
+}
+
+async function pumpAv1Backfill() {
+	if (av1BackfillRunning) return;
+	av1BackfillRunning = true;
+	try {
+		while (av1BackfillQueue.size > 0) {
+			const profileId = av1BackfillQueue.values().next().value as string;
+			av1BackfillQueue.delete(profileId);
+			try {
+				const summary = await compressAllVideos(profileId);
+				console.info(
+					'[media-organizer] AV1 backfill done:',
+					profileId,
+					`converted=${summary.converted}`,
+					`skipped=${summary.skipped}`,
+					`failed=${summary.failed}`
+				);
+			} catch (err) {
+				console.warn(
+					'[media-organizer] AV1 backfill failed:',
+					profileId,
+					err instanceof Error ? err.message : err
+				);
+			}
+		}
+	} finally {
+		av1BackfillRunning = false;
+	}
 }
 
 export function addMediaToAlbum(profileId: string, ids: string[], albumId: string): void {
 	assertAlbum(profileId, albumId);
-	const insert = db.prepare(
-		'INSERT OR IGNORE INTO album_media (album_id, media_id) VALUES (?, ?)'
-	);
-	const exists = db.prepare('SELECT id FROM media WHERE id = ? AND profile_id = ?');
-	const tx = db.transaction((mediaIds: string[]) => {
-		for (const id of mediaIds) {
-			if (!exists.get(id, profileId)) continue;
-			insert.run(albumId, id);
+	db.transaction((tx) => {
+		for (const id of ids) {
+			const row = tx
+				.select({ id: media.id })
+				.from(media)
+				.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+				.get();
+			if (!row) continue;
+			tx.insert(albumMedia).values({ albumId, mediaId: id }).onConflictDoNothing().run();
 		}
 	});
-	tx(ids);
 }
 
 export function removeMediaFromAlbum(profileId: string, ids: string[], albumId: string): void {
 	assertAlbum(profileId, albumId);
-	const del = db.prepare(
-		`
-		DELETE FROM album_media
-		WHERE album_id = ? AND media_id = ?
-			AND EXISTS (SELECT 1 FROM media m WHERE m.id = media_id AND m.profile_id = ?)
-	`
-	);
-	const tx = db.transaction((mediaIds: string[]) => {
-		for (const id of mediaIds) del.run(albumId, id, profileId);
+	db.transaction((tx) => {
+		for (const id of ids) {
+			const row = tx
+				.select({ id: media.id })
+				.from(media)
+				.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+				.get();
+			if (!row) continue;
+			tx.delete(albumMedia)
+				.where(and(eq(albumMedia.albumId, albumId), eq(albumMedia.mediaId, id)))
+				.run();
+		}
 	});
-	tx(ids);
 }
 
 export function renameMedia(profileId: string, id: string, name: string): MediaItem {
@@ -406,8 +651,10 @@ export function renameMedia(profileId: string, id: string, name: string): MediaI
 	if (!trimmed) throw new Error('Name is required');
 
 	const result = db
-		.prepare('UPDATE media SET original_name = ? WHERE id = ? AND profile_id = ?')
-		.run(trimmed, id, profileId);
+		.update(media)
+		.set({ originalName: trimmed })
+		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+		.run();
 	if (result.changes === 0) throw new Error('Media not found');
 
 	const meta = getMediaMeta(profileId, id);
@@ -429,26 +676,13 @@ export function duplicateMedia(
 	if (albumId) assertAlbum(profileId, albumId);
 
 	const created: MediaItem[] = [];
-	const select = db.prepare('SELECT * FROM media WHERE id = ? AND profile_id = ?');
-	const insert = db.prepare(
-		`
-		INSERT INTO media (
-			id, profile_id, original_name, mime_type, media_type,
-			size, width, height, storage_key, thumbnail_key
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`
-	);
-	const insertMembership = db.prepare(
-		'INSERT OR IGNORE INTO album_media (album_id, media_id) VALUES (?, ?)'
-	);
-	const selectMemberships = db.prepare('SELECT album_id FROM album_media WHERE media_id = ?');
 
 	for (const id of ids) {
-		const row = select.get(id, profileId) as MediaRow | undefined;
+		const row = getMediaRow(profileId, id);
 		if (!row) continue;
 
 		const newMediaId = newId();
-		const src = filePathForKey(row.storage_key);
+		const src = filePathForKey(row.storageKey);
 		const destKey = newMediaId;
 		const dest = filePathForKey(destKey);
 		if (!existsSync(src)) continue;
@@ -456,36 +690,47 @@ export function duplicateMedia(
 		copyFileSync(src, dest);
 
 		let thumbKey: string | null = null;
-		if (row.thumbnail_key) {
-			const thumbSrc = filePathForKey(row.thumbnail_key);
+		if (row.thumbnailKey) {
+			const thumbSrc = filePathForKey(row.thumbnailKey);
 			if (existsSync(thumbSrc)) {
 				thumbKey = `${newMediaId}-thumb`;
 				copyFileSync(thumbSrc, filePathForKey(thumbKey));
 			}
 		}
 
-		const copyName = copyFileName(row.original_name);
-		const tx = db.transaction(() => {
-			insert.run(
-				newMediaId,
-				profileId,
-				copyName,
-				row.mime_type,
-				row.media_type,
-				row.size,
-				row.width,
-				row.height,
-				destKey,
-				thumbKey
-			);
+		const copyName = copyFileName(row.originalName);
+		db.transaction((tx) => {
+			tx.insert(media)
+				.values({
+					id: newMediaId,
+					profileId,
+					originalName: copyName,
+					mimeType: row.mimeType,
+					mediaType: row.mediaType,
+					size: row.size,
+					width: row.width,
+					height: row.height,
+					storageKey: destKey,
+					thumbnailKey: thumbKey,
+					duration: normalizeDuration(row.duration)
+				})
+				.run();
 			if (albumId) {
-				insertMembership.run(albumId, newMediaId);
+				tx.insert(albumMedia).values({ albumId, mediaId: newMediaId }).onConflictDoNothing().run();
 			} else {
-				const memberships = selectMemberships.all(id) as Array<{ album_id: string }>;
-				for (const m of memberships) insertMembership.run(m.album_id, newMediaId);
+				const memberships = tx
+					.select({ albumId: albumMedia.albumId })
+					.from(albumMedia)
+					.where(eq(albumMedia.mediaId, id))
+					.all();
+				for (const m of memberships) {
+					tx.insert(albumMedia)
+						.values({ albumId: m.albumId, mediaId: newMediaId })
+						.onConflictDoNothing()
+						.run();
+				}
 			}
 		});
-		tx();
 
 		const meta = getMediaMeta(profileId, newMediaId);
 		if (meta) created.push(meta);
@@ -495,19 +740,21 @@ export function duplicateMedia(
 }
 
 export function deleteMedia(profileId: string, ids: string[]): void {
-	const select = db.prepare(
-		'SELECT storage_key, thumbnail_key FROM media WHERE id = ? AND profile_id = ?'
-	);
-	const del = db.prepare('DELETE FROM media WHERE id = ? AND profile_id = ?');
-
-	const tx = db.transaction((mediaIds: string[]) => {
-		for (const id of mediaIds) {
-			const row = select.get(id, profileId) as
-				| { storage_key: string; thumbnail_key: string | null }
-				| undefined;
-			del.run(id, profileId);
+	db.transaction((tx) => {
+		for (const id of ids) {
+			const row = tx
+				.select({
+					storageKey: media.storageKey,
+					thumbnailKey: media.thumbnailKey
+				})
+				.from(media)
+				.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+				.get();
+			tx.delete(media)
+				.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+				.run();
 			if (row) {
-				for (const key of [row.storage_key, row.thumbnail_key]) {
+				for (const key of [row.storageKey, row.thumbnailKey]) {
 					if (!key) continue;
 					const path = filePathForKey(key);
 					try {
@@ -519,7 +766,6 @@ export function deleteMedia(profileId: string, ids: string[]): void {
 			}
 		}
 	});
-	tx(ids);
 }
 
 export function getThumbnailPath(
@@ -527,11 +773,16 @@ export function getThumbnailPath(
 	id: string
 ): { path: string; mime: string } | null {
 	const row = db
-		.prepare('SELECT thumbnail_key FROM media WHERE id = ? AND profile_id = ?')
-		.get(id, profileId) as { thumbnail_key: string | null } | undefined;
-	if (!row?.thumbnail_key) return null;
-	const path = filePathForKey(row.thumbnail_key);
-	if (!existsSync(path)) return null;
+		.select({ thumbnailKey: media.thumbnailKey })
+		.from(media)
+		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+		.get();
+	if (!row?.thumbnailKey) return null;
+	if (!isValidThumbnail(row.thumbnailKey)) {
+		clearInvalidThumbnail(profileId, id, row.thumbnailKey);
+		return null;
+	}
+	const path = filePathForKey(row.thumbnailKey);
 	return { path, mime: 'image/jpeg' };
 }
 
@@ -541,12 +792,16 @@ export async function saveThumbnail(
 	body: ReadableStream<Uint8Array> | null
 ): Promise<void> {
 	const row = db
-		.prepare('SELECT id, thumbnail_key, media_type FROM media WHERE id = ? AND profile_id = ?')
-		.get(id, profileId) as
-		| { id: string; thumbnail_key: string | null; media_type: MediaType }
-		| undefined;
+		.select({
+			id: media.id,
+			thumbnailKey: media.thumbnailKey,
+			mediaType: media.mediaType
+		})
+		.from(media)
+		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+		.get();
 	if (!row) throw new Error('Media not found');
-	if (row.media_type !== 'video') throw new Error('Thumbnails are only for videos');
+	if (row.mediaType !== 'video') throw new Error('Thumbnails are only for videos');
 	if (!body) throw new Error('Empty body');
 
 	const thumbKey = `${id}-thumb`;
@@ -569,8 +824,8 @@ export async function saveThumbnail(
 	if (existsSync(dest)) unlinkSync(dest);
 	renameSync(tmp, dest);
 
-	if (row.thumbnail_key && row.thumbnail_key !== thumbKey) {
-		const old = filePathForKey(row.thumbnail_key);
+	if (row.thumbnailKey && row.thumbnailKey !== thumbKey) {
+		const old = filePathForKey(row.thumbnailKey);
 		try {
 			if (existsSync(old)) unlinkSync(old);
 		} catch {
@@ -578,33 +833,29 @@ export async function saveThumbnail(
 		}
 	}
 
-	db.prepare('UPDATE media SET thumbnail_key = ? WHERE id = ? AND profile_id = ?').run(
-		thumbKey,
-		id,
-		profileId
-	);
+	db.update(media)
+		.set({ thumbnailKey: thumbKey })
+		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+		.run();
 }
 
 export function countAllMedia(profileId: string): number {
-	return (
-		db.prepare('SELECT COUNT(*) AS c FROM media WHERE profile_id = ?').get(profileId) as {
-			c: number;
-		}
-	).c;
+	return db.select({ c: count() }).from(media).where(eq(media.profileId, profileId)).get()?.c ?? 0;
 }
 
 export function countUnassignedMedia(profileId: string): number {
 	return (
 		db
-			.prepare(
-				`
-			SELECT COUNT(*) AS c FROM media m
-			WHERE m.profile_id = ?
-				AND NOT EXISTS (SELECT 1 FROM album_media am WHERE am.media_id = m.id)
-		`
+			.select({ c: count() })
+			.from(media)
+			.where(
+				and(
+					eq(media.profileId, profileId),
+					notExists(db.select().from(albumMedia).where(eq(albumMedia.mediaId, media.id)))
+				)
 			)
-			.get(profileId) as { c: number }
-	).c;
+			.get()?.c ?? 0
+	);
 }
 
 export function openFileReadStream(path: string, options?: { start?: number; end?: number }) {

@@ -1,36 +1,35 @@
+import { and, count, eq, sql } from 'drizzle-orm';
 import type { Album } from '$lib/types';
-import db, { newId } from './db';
-
-type AlbumRow = {
-	id: string;
-	profile_id: string;
-	name: string;
-	created_at: string;
-	media_count: number;
-};
+import db, { isUniqueConstraintError, newId } from './db';
+import { albumMedia, albums } from './schema';
 
 function normalizeCreated(iso: string): string {
 	return iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`;
 }
 
 export function listAlbums(profileId: string): Album[] {
+	const mediaCount = db
+		.select({ c: count() })
+		.from(albumMedia)
+		.where(eq(albumMedia.albumId, albums.id));
+
 	const rows = db
-		.prepare(
-			`
-			SELECT a.id, a.profile_id, a.name, a.created_at,
-				(SELECT COUNT(*) FROM album_media am WHERE am.album_id = a.id) AS media_count
-			FROM albums a
-			WHERE a.profile_id = ?
-			ORDER BY a.name COLLATE NOCASE
-		`
-		)
-		.all(profileId) as AlbumRow[];
+		.select({
+			id: albums.id,
+			name: albums.name,
+			createdAt: albums.createdAt,
+			mediaCount: sql<number>`(${mediaCount})`.mapWith(Number)
+		})
+		.from(albums)
+		.where(eq(albums.profileId, profileId))
+		.orderBy(sql`${albums.name} COLLATE NOCASE`)
+		.all();
 
 	return rows.map((row) => ({
 		id: row.id,
 		name: row.name,
-		created_at: normalizeCreated(row.created_at),
-		media_count: row.media_count
+		created_at: normalizeCreated(row.createdAt),
+		media_count: row.mediaCount
 	}));
 }
 
@@ -40,14 +39,9 @@ export function createAlbum(profileId: string, name: string): Album {
 
 	const id = newId();
 	try {
-		db.prepare('INSERT INTO albums (id, profile_id, name) VALUES (?, ?, ?)').run(
-			id,
-			profileId,
-			trimmed
-		);
+		db.insert(albums).values({ id, profileId, name: trimmed }).run();
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		if (message.includes('UNIQUE')) {
+		if (isUniqueConstraintError(err)) {
 			throw new Error('An album with that name already exists');
 		}
 		throw err;
@@ -57,7 +51,9 @@ export function createAlbum(profileId: string, name: string): Album {
 }
 
 export function deleteAlbum(profileId: string, id: string): void {
-	db.prepare('DELETE FROM albums WHERE id = ? AND profile_id = ?').run(id, profileId);
+	db.delete(albums)
+		.where(and(eq(albums.id, id), eq(albums.profileId, profileId)))
+		.run();
 }
 
 export function renameAlbum(profileId: string, id: string, name: string): Album {
@@ -65,19 +61,19 @@ export function renameAlbum(profileId: string, id: string, name: string): Album 
 	if (!trimmed) throw new Error('Album name is required');
 
 	const album = db
-		.prepare('SELECT id FROM albums WHERE id = ? AND profile_id = ?')
-		.get(id, profileId);
+		.select({ id: albums.id })
+		.from(albums)
+		.where(and(eq(albums.id, id), eq(albums.profileId, profileId)))
+		.get();
 	if (!album) throw new Error('Album not found');
 
 	try {
-		db.prepare('UPDATE albums SET name = ? WHERE id = ? AND profile_id = ?').run(
-			trimmed,
-			id,
-			profileId
-		);
+		db.update(albums)
+			.set({ name: trimmed })
+			.where(and(eq(albums.id, id), eq(albums.profileId, profileId)))
+			.run();
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		if (message.includes('UNIQUE')) {
+		if (isUniqueConstraintError(err)) {
 			throw new Error('An album with that name already exists');
 		}
 		throw err;
@@ -107,35 +103,32 @@ export function nextDuplicateAlbumName(sourceName: string, existingNames: string
  * (no file copies).
  */
 export function duplicateAlbum(profileId: string, id: string): Album {
-	const albums = listAlbums(profileId);
-	const source = albums.find((a) => a.id === id);
+	const existing = listAlbums(profileId);
+	const source = existing.find((a) => a.id === id);
 	if (!source) throw new Error('Album not found');
 
 	const newName = nextDuplicateAlbumName(
 		source.name,
-		albums.map((a) => a.name)
+		existing.map((a) => a.name)
 	);
 	const newIdValue = newId();
 
-	const tx = db.transaction(() => {
-		db.prepare('INSERT INTO albums (id, profile_id, name) VALUES (?, ?, ?)').run(
-			newIdValue,
-			profileId,
-			newName
-		);
-		db.prepare(
-			`
-			INSERT INTO album_media (album_id, media_id)
-			SELECT ?, media_id FROM album_media WHERE album_id = ?
-		`
-		).run(newIdValue, id);
-	});
-
 	try {
-		tx();
+		db.transaction((tx) => {
+			tx.insert(albums).values({ id: newIdValue, profileId, name: newName }).run();
+			const memberships = tx
+				.select({ mediaId: albumMedia.mediaId })
+				.from(albumMedia)
+				.where(eq(albumMedia.albumId, id))
+				.all();
+			if (memberships.length) {
+				tx.insert(albumMedia)
+					.values(memberships.map((m) => ({ albumId: newIdValue, mediaId: m.mediaId })))
+					.run();
+			}
+		});
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		if (message.includes('UNIQUE')) {
+		if (isUniqueConstraintError(err)) {
 			throw new Error('An album with that name already exists');
 		}
 		throw err;

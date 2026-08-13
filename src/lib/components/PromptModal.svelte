@@ -75,7 +75,7 @@
 		}}
 	>
 		<form
-			class="w-full max-w-md rounded-2xl border border-base-300 bg-base-100 p-5 shadow-2xl"
+			class="border-base-300 bg-base-100 w-full max-w-md rounded-2xl border p-5 shadow-2xl"
 			transition:scale={{ duration: 140, start: 0.96 }}
 			onsubmit={submit}
 		>
@@ -90,7 +90,7 @@
 			{/if}
 
 			<label class="form-control mb-3 w-full">
-				<span class="mb-1 text-xs font-medium text-base-content/60">{label}</span>
+				<span class="text-base-content/60 mb-1 text-xs font-medium">{label}</span>
 				<input
 					{@attach setupInput}
 					class="input input-bordered input-sm w-full"
