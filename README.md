@@ -108,7 +108,7 @@ Create a **profile** on the welcome screen, then upload and organize media.
 
 ### Optional: UI defaults via `.env`
 
-Copy [`.env.example`](.env.example) to `.env` (or `.env.local`) to customize install-time defaults such as default view, columns, filters, album view, compress-on-upload, warn-duplicates, theme, and upload concurrency. Restart the dev server after changes. Theme and Upload settings toggles still persist in `localStorage` after the user changes them in the UI.
+Copy [`.env.example`](.env.example) to `.env` (or `.env.local`) to customize install-time defaults such as default view, columns, filters, album view, warn-duplicates, theme, and upload concurrency. Restart the dev server after changes. Theme and Upload settings toggles still persist in `localStorage` after the user changes them in the UI.
 
 ### 4. Stop the app
 
@@ -217,26 +217,15 @@ Empty area: **Paste**, **Upload…**
 
 The toolbar **Upload settings** group (separate from filters) has:
 
-| Setting             | Default | Effect                                                                                                                                                   |
-| ------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Compress**        | on      | After each **new upload** is saved, recompress that file in the **background** (videos → AV1 MP4, images → AVIF). Does not convert the existing library. |
-| **Warn duplicates** | on      | If a file name already exists in the library (or twice in the same batch), ask before saving a duplicate. Turn off to always upload without prompting.   |
+| Setting             | Default | Effect                                                                                                                                                 |
+| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Warn duplicates** | on      | If a file name already exists in the library (or twice in the same batch), ask before saving a duplicate. Turn off to always upload without prompting. |
 
 ### Compression
 
-Compression has **three** paths. None of them block the upload progress bar.
+Uploads are stored as-is. There is **no** background or on-upload recompress.
 
-| When                                               | What happens                                                                                                                |
-| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| **Compress** in Upload settings **on**             | After each upload finishes and is saved, the server recompresses that file **in the background**.                           |
-| **Manual Compress**                                | Re‑encode selected media on demand.                                                                                         |
-| **Manual Compress** (selection bar or right‑click) | Re‑encodes the selected items **now**. Use when Upload settings Compress was **off**, for a retry, or for items you choose. |
-
-Details:
-
-- Smaller result wins; if compression does not shrink the file, the original is kept.
-- AV1 encoding is CPU‑heavy (libaom). It runs only for **new uploads** when Compress is on, or for **selected** items via Compress — never the whole library automatically.
-- Manual Compress still matters: Upload settings Compress only applies to **new** uploads.
+**Manual Compress** (selection bar or right‑click) re‑encodes selected items on demand (videos → AV1 MP4, images → AVIF). Smaller result wins; if compression does not shrink the file, the original is kept. AV1 encoding is CPU‑heavy (libaom).
 
 ### Keyboard shortcuts
 
@@ -271,4 +260,4 @@ Details:
 - **Prettier** for formatting
 - **pnpm** for packages
 - **Local filesystem** under `data/files/` for media bytes
-- **ffmpeg-static** + **sharp** for optional AV1 / AVIF compression
+- **ffmpeg-static** + **sharp** for duration/size probes and optional manual AV1 / AVIF compression

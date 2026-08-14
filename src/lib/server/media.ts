@@ -5,14 +5,13 @@ import {
 	unlinkSync,
 	copyFileSync,
 	statSync,
-	renameSync,
-	readdirSync
+	renameSync
 } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 import { and, count, eq, exists, inArray, notExists, sql } from 'drizzle-orm';
 import type { MediaItem, MediaType } from '$lib/types';
-import db, { FILES_DIR, filePathForKey, newId } from './db';
+import db, { filePathForKey, newId } from './db';
 import { albumMedia, albums, media } from './schema';
 import type { MediaRow } from './schema';
 import { listAlbums } from './albums';
@@ -221,6 +220,59 @@ async function fillImageDimensions(profileId: string, id: string, path: string):
 	}
 }
 
+function formatBytes(n: number): string {
+	if (n < 1024) return `${n} B`;
+	if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+	if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+	return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function parseContentLength(value: number | null | undefined): number | null {
+	if (value == null) return null;
+	return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/** Throttled per-file lines for the Vite / Node terminal. */
+function createVideoUploadProgress(name: string, totalBytes: number | null) {
+	let loaded = 0;
+	let lastPctLogged = -1;
+	let lastAt = 0;
+	const total = parseContentLength(totalBytes);
+
+	const emit = (done = false) => {
+		const now = Date.now();
+		const pct = total != null ? Math.min(100, Math.round((loaded / total) * 100)) : null;
+		if (!done) {
+			const elapsed = now - lastAt;
+			if (elapsed < 250) return;
+			if (pct != null) {
+				if (pct < lastPctLogged + 5 && elapsed < 2000) return;
+			} else if (elapsed < 2000) {
+				return;
+			}
+		}
+		lastAt = now;
+		if (pct != null) lastPctLogged = pct;
+		const sizePart =
+			total != null ? `${formatBytes(loaded)} / ${formatBytes(total)}` : formatBytes(loaded);
+		const pctPart = pct != null ? `${String(pct).padStart(3, ' ')}%` : '  ?%';
+		console.info(
+			`[media-organizer] video upload "${name}" ${pctPart}  ${sizePart}${done ? '  done' : ''}`
+		);
+	};
+
+	emit();
+	return {
+		onChunk(bytes: number) {
+			loaded += bytes;
+			emit();
+		},
+		finish() {
+			emit(true);
+		}
+	};
+}
+
 export async function insertMediaFromStream(
 	profileId: string,
 	input: {
@@ -231,6 +283,7 @@ export async function insertMediaFromStream(
 		width: number | null;
 		height: number | null;
 		duration?: number | null;
+		contentLength?: number | null;
 		body: ReadableStream<Uint8Array> | Readable;
 	}
 ): Promise<MediaItem> {
@@ -248,8 +301,25 @@ export async function insertMediaFromStream(
 			? input.body
 			: Readable.fromWeb(input.body as import('node:stream/web').ReadableStream);
 
+	const progress =
+		input.mediaType === 'video'
+			? createVideoUploadProgress(input.originalName, input.contentLength ?? null)
+			: null;
+	const counter = progress
+		? new Transform({
+				highWaterMark: 4 * 1024 * 1024,
+				transform(chunk, _enc, cb) {
+					progress.onChunk(chunk.length);
+					cb(null, chunk);
+				}
+			})
+		: null;
+
 	try {
-		await pipeline(nodeReadable, createWriteStream(tmp, { highWaterMark: 4 * 1024 * 1024 }));
+		const destStream = createWriteStream(tmp, { highWaterMark: 4 * 1024 * 1024 });
+		if (counter) await pipeline(nodeReadable, counter, destStream);
+		else await pipeline(nodeReadable, destStream);
+		progress?.finish();
 		size = statSync(tmp).size;
 		renameSync(tmp, dest);
 
@@ -468,150 +538,6 @@ export async function compressMedia(profileId: string, id: string): Promise<Medi
 		.run();
 
 	return getMediaMeta(profileId, id)!;
-}
-
-/** After upload: optionally recompress; failures leave the original upload intact. */
-export async function maybeCompressUploaded(
-	profileId: string,
-	id: string,
-	enabled: boolean
-): Promise<MediaItem> {
-	const meta = getMediaMeta(profileId, id);
-	if (!meta) throw new Error('Media not found');
-	if (!enabled) return meta;
-	try {
-		return await compressMedia(profileId, id);
-	} catch (err) {
-		console.warn('[media-organizer] compress skipped:', err instanceof Error ? err.message : err);
-		return meta;
-	}
-}
-
-export type BulkCompressSummary = {
-	total: number;
-	converted: number;
-	skipped: number;
-	failed: number;
-	bytesSaved: number;
-	errors: string[];
-};
-
-/** Convert all non-AV1 videos in a profile to AV1 (keeps original when not smaller). */
-export async function compressAllVideos(profileId: string): Promise<BulkCompressSummary> {
-	const { isAv1Cancelled, resetAv1Cancel } = await import('./compress');
-	resetAv1Cancel();
-	cleanupOrphanAv1Temps();
-
-	const rows = db
-		.select({
-			id: media.id,
-			originalName: media.originalName,
-			size: media.size
-		})
-		.from(media)
-		.where(and(eq(media.profileId, profileId), eq(media.mediaType, 'video')))
-		.orderBy(sql`${media.createdAt} ASC`)
-		.all();
-
-	const summary: BulkCompressSummary = {
-		total: rows.length,
-		converted: 0,
-		skipped: 0,
-		failed: 0,
-		bytesSaved: 0,
-		errors: []
-	};
-
-	for (const row of rows) {
-		if (isAv1Cancelled()) {
-			summary.errors.push('Cancelled');
-			break;
-		}
-		const before = row.size;
-		try {
-			const after = await compressMedia(profileId, row.id);
-			const saved = before - after.size;
-			if (saved > 0) {
-				summary.converted += 1;
-				summary.bytesSaved += saved;
-			} else {
-				summary.skipped += 1;
-			}
-		} catch (err) {
-			if (isAv1Cancelled()) {
-				summary.errors.push('Cancelled');
-				break;
-			}
-			summary.failed += 1;
-			const message = err instanceof Error ? err.message : String(err);
-			summary.errors.push(`${row.originalName}: ${message}`);
-			console.warn('[media-organizer] bulk AV1 failed:', row.id, message);
-		}
-	}
-
-	cleanupOrphanAv1Temps();
-	return summary;
-}
-
-/** Remove interrupted ffmpeg leftovers so they don't fill the disk. */
-export function cleanupOrphanAv1Temps(): void {
-	try {
-		for (const name of readdirSync(FILES_DIR)) {
-			if (!name.endsWith('.av1.tmp.mp4')) continue;
-			try {
-				unlinkSync(filePathForKey(name));
-			} catch {
-				/* ignore */
-			}
-		}
-	} catch {
-		/* ignore */
-	}
-}
-
-let av1BackfillRunning = false;
-const av1BackfillQueue = new Set<string>();
-
-/** Fire-and-forget AV1 conversion for a profile (non-blocking API). */
-export function enqueueAv1Backfill(profileId: string): void {
-	av1BackfillQueue.add(profileId);
-	void pumpAv1Backfill();
-}
-
-/** Stop bulk AV1 work and kill the current ffmpeg encode. */
-export async function cancelAv1Backfill(): Promise<void> {
-	av1BackfillQueue.clear();
-	const { cancelAv1Work } = await import('./compress');
-	cancelAv1Work();
-}
-
-async function pumpAv1Backfill() {
-	if (av1BackfillRunning) return;
-	av1BackfillRunning = true;
-	try {
-		while (av1BackfillQueue.size > 0) {
-			const profileId = av1BackfillQueue.values().next().value as string;
-			av1BackfillQueue.delete(profileId);
-			try {
-				const summary = await compressAllVideos(profileId);
-				console.info(
-					'[media-organizer] AV1 backfill done:',
-					profileId,
-					`converted=${summary.converted}`,
-					`skipped=${summary.skipped}`,
-					`failed=${summary.failed}`
-				);
-			} catch (err) {
-				console.warn(
-					'[media-organizer] AV1 backfill failed:',
-					profileId,
-					err instanceof Error ? err.message : err
-				);
-			}
-		}
-	} finally {
-		av1BackfillRunning = false;
-	}
 }
 
 export function addMediaToAlbum(profileId: string, ids: string[], albumId: string): void {

@@ -3,7 +3,6 @@ import { appDefaults } from '$lib/config/defaults';
 import type { ThemeMode, ViewMode } from '$lib/types';
 
 const THEME_KEY = 'theme';
-const COMPRESS_KEY = 'mo_compress';
 const WARN_DUPES_KEY = 'mo_warn_dupes';
 
 function readStoredTheme(fallback: ThemeMode | 'system'): ThemeMode {
@@ -44,7 +43,6 @@ export class PreferencesState {
 	dateFrom = $state('');
 	dateTo = $state('');
 	searchQuery = $state('');
-	compressOnUpload = $state(readStoredFlag(COMPRESS_KEY, appDefaults.compressOnUpload));
 	warnDuplicateUploads = $state(readStoredFlag(WARN_DUPES_KEY, appDefaults.warnDuplicateUploads));
 	theme = $state<ThemeMode>(readStoredTheme(appDefaults.theme));
 
@@ -74,16 +72,6 @@ export class PreferencesState {
 
 	setSearchQuery(value: string) {
 		this.searchQuery = value;
-	}
-
-	setCompressOnUpload(value: boolean) {
-		this.compressOnUpload = value;
-		if (!browser) return;
-		try {
-			localStorage.setItem(COMPRESS_KEY, value ? '1' : '0');
-		} catch {
-			/* ignore */
-		}
 	}
 
 	setWarnDuplicateUploads(value: boolean) {

@@ -7,10 +7,8 @@ import {
 	compressMedia,
 	deleteMedia,
 	duplicateMedia,
-	enqueueAv1Backfill,
 	insertMediaFromStream,
 	listMedia,
-	maybeCompressUploaded,
 	removeMediaFromAlbum,
 	renameMedia,
 	updateMediaDuration
@@ -65,6 +63,12 @@ function parseAlbumId(raw: unknown): string | null {
 function parseDuration(raw: unknown): number | null {
 	if (raw === null || raw === undefined || raw === '') return null;
 	const n = typeof raw === 'number' ? raw : Number(raw);
+	return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function parseContentLength(raw: string | null): number | null {
+	if (!raw) return null;
+	const n = Number(raw);
 	return Number.isFinite(n) && n > 0 ? n : null;
 }
 
@@ -134,8 +138,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		const widthRaw = request.headers.get('x-width');
 		const heightRaw = request.headers.get('x-height');
 		const duration = parseDuration(request.headers.get('x-duration'));
-		const compress =
-			request.headers.get('x-compress') !== '0' && request.headers.get('x-compress') !== 'false';
+		const contentLength = parseContentLength(request.headers.get('content-length'));
 
 		try {
 			const item = await insertMediaFromStream(profile.id, {
@@ -146,15 +149,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				width: widthRaw ? Number(widthRaw) : null,
 				height: heightRaw ? Number(heightRaw) : null,
 				duration,
+				contentLength,
 				body: request.body
-			});
-			// Compress after responding — AV1 can take minutes and was freezing the
-			// client at ~99–100% while XHR waited for the response.
-			void maybeCompressUploaded(profile.id, item.id, compress).catch((err) => {
-				console.warn(
-					'[media-organizer] background compress failed:',
-					err instanceof Error ? err.message : err
-				);
 			});
 			return json(item, { status: 201 });
 		} catch (err) {
@@ -191,15 +187,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			width: widthRaw ? Number(widthRaw) : null,
 			height: heightRaw ? Number(heightRaw) : null,
 			duration,
+			contentLength: file.size,
 			body: Readable.fromWeb(file.stream() as import('node:stream/web').ReadableStream)
-		});
-		const compressFlag = String(form.get('compress') ?? '1');
-		const shouldCompress = compressFlag !== '0' && compressFlag !== 'false';
-		void maybeCompressUploaded(profile.id, item.id, shouldCompress).catch((err) => {
-			console.warn(
-				'[media-organizer] background compress failed:',
-				err instanceof Error ? err.message : err
-			);
 		});
 		return json(item, { status: 201 });
 	} catch (err) {
@@ -256,11 +245,6 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 			}
 		}
 		return json(results);
-	}
-
-	if (body?.action === 'compress-all-videos') {
-		enqueueAv1Backfill(profile.id);
-		return json({ started: true });
 	}
 
 	if (body?.action === 'backfill-durations') {

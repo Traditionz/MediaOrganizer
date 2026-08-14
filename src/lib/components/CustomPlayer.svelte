@@ -3,6 +3,7 @@
 	import Maximize from '@lucide/svelte/icons/maximize';
 	import Pause from '@lucide/svelte/icons/pause';
 	import Play from '@lucide/svelte/icons/play';
+	import Volume1 from '@lucide/svelte/icons/volume-1';
 	import Volume2 from '@lucide/svelte/icons/volume-2';
 	import VolumeX from '@lucide/svelte/icons/volume-x';
 
@@ -12,6 +13,8 @@
 	}
 
 	const SPEED_OPTIONS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
+	const PREVIEW_H_REM = 9.34375;
+	const PREVIEW_MAX_W_REM = 17.875;
 
 	let { src, onmetadata }: Props = $props();
 
@@ -19,20 +22,41 @@
 	let playerEl: HTMLDivElement | undefined = $state();
 	let playing = $state(false);
 	let muted = $state(false);
-	let volume = $state(1);
+	let volume = $state(0.175);
+	let lastVolume = $state(0.3);
 	let current = $state(0);
 	let duration = $state(0);
 	let buffered = $state(0);
 	let scrubbing = $state(false);
+	let volumeDragging = $state(false);
 	let showControls = $state(true);
 	let hovered = $state(false);
 	let playbackRate = $state(1);
 	let speedMenuOpen = $state(false);
 	let hideTimer: ReturnType<typeof setTimeout> | null = null;
+	let rafId = 0;
+	let pendingSeek: number | null = null;
+	let previewEl: HTMLVideoElement | undefined = $state();
+	let timelineHover = $state(false);
+	let hoverRatio = $state(0);
+	let hoverTime = $state(0);
+	let previewBusy = false;
+	let queuedPreview = -1;
 
-	const progress = $derived(duration > 0 ? (current / duration) * 100 : 0);
-	const bufferPct = $derived(duration > 0 ? (buffered / duration) * 100 : 0);
+	const progress = $derived(duration > 0 ? current / duration : 0);
+	const bufferPct = $derived(duration > 0 ? Math.min(1, buffered / duration) : 0);
+	const volumePct = $derived(muted ? 0 : volume);
 	const speedLabel = $derived(playbackRate === 1 ? '1x' : `${playbackRate}x`);
+	const chromeOpen = $derived(
+		showControls || !playing || scrubbing || volumeDragging || speedMenuOpen || timelineHover
+	);
+	const previewAr = $derived.by(() => {
+		const w = videoEl?.videoWidth ?? 0;
+		const h = videoEl?.videoHeight ?? 0;
+		return w > 0 && h > 0 ? w / h : 16 / 9;
+	});
+	const previewWRem = $derived(Math.min(PREVIEW_MAX_W_REM, PREVIEW_H_REM * previewAr));
+	const previewHalfRem = $derived(previewWRem / 2);
 
 	function clearHideTimer() {
 		if (hideTimer) {
@@ -43,7 +67,7 @@
 
 	function scheduleHide() {
 		clearHideTimer();
-		if (!playing || scrubbing || speedMenuOpen) return;
+		if (!playing || scrubbing || volumeDragging || speedMenuOpen || timelineHover) return;
 		hideTimer = setTimeout(() => {
 			showControls = false;
 			speedMenuOpen = false;
@@ -86,10 +110,43 @@
 		else scheduleHide();
 	}
 
+	function readBuffer() {
+		if (!videoEl || videoEl.buffered.length === 0) return;
+		buffered = videoEl.buffered.end(videoEl.buffered.length - 1);
+	}
+
+	function syncTime() {
+		if (!videoEl || scrubbing) return;
+		if (pendingSeek != null) {
+			current = pendingSeek;
+			return;
+		}
+		current = videoEl.currentTime;
+	}
+
+	function tick() {
+		syncTime();
+		rafId = playing && !scrubbing ? requestAnimationFrame(tick) : 0;
+	}
+
+	function startTick() {
+		if (rafId) return;
+		rafId = requestAnimationFrame(tick);
+	}
+
+	function stopTick() {
+		if (!rafId) return;
+		cancelAnimationFrame(rafId);
+		rafId = 0;
+	}
+
 	function attachVideo(node: HTMLVideoElement) {
 		videoEl = node;
 		node.playbackRate = playbackRate;
+		node.volume = volume;
+		node.muted = muted;
 		return () => {
+			stopTick();
 			if (videoEl === node) videoEl = undefined;
 		};
 	}
@@ -99,6 +156,54 @@
 		return () => {
 			if (playerEl === node) playerEl = undefined;
 		};
+	}
+
+	function attachPreview(node: HTMLVideoElement) {
+		previewEl = node;
+		node.muted = true;
+		node.defaultMuted = true;
+		node.volume = 0;
+		previewBusy = false;
+		queuedPreview = -1;
+		return () => {
+			if (previewEl === node) previewEl = undefined;
+		};
+	}
+
+	function commitPreviewSeek(t: number) {
+		if (!previewEl || duration <= 0) return;
+		const next = Math.min(Math.max(0, t), Math.max(0, duration - 0.05));
+		if (previewBusy) {
+			queuedPreview = next;
+			return;
+		}
+		if (Math.abs((previewEl.currentTime || 0) - next) < 0.05) return;
+		previewBusy = true;
+		previewEl.currentTime = next;
+	}
+
+	function onPreviewSeeked() {
+		previewBusy = false;
+		if (queuedPreview < 0) return;
+		const t = queuedPreview;
+		queuedPreview = -1;
+		commitPreviewSeek(t);
+	}
+
+	function updateTimelineHover(e: PointerEvent) {
+		if (duration <= 0) return;
+		const hit = e.currentTarget as HTMLElement;
+		const ratio = ratioFromClientX(e.clientX, hit, '.custom-progress');
+		hoverRatio = ratio;
+		hoverTime = ratio * duration;
+		timelineHover = true;
+		commitPreviewSeek(hoverTime);
+	}
+
+	function hideTimelineHover() {
+		if (scrubbing) return;
+		timelineHover = false;
+		scheduleHide();
 	}
 
 	function onMeta() {
@@ -113,14 +218,6 @@
 		}
 	}
 
-	function onTime() {
-		if (!videoEl || scrubbing) return;
-		current = videoEl.currentTime;
-		if (videoEl.buffered.length > 0) {
-			buffered = videoEl.buffered.end(videoEl.buffered.length - 1);
-		}
-	}
-
 	function togglePlay() {
 		if (!videoEl) return;
 		if (videoEl.paused) {
@@ -131,50 +228,110 @@
 		revealControls();
 	}
 
+	function applyVolume(value: number) {
+		if (!videoEl) return;
+		const next = Math.min(1, Math.max(0, value));
+		volume = next;
+		videoEl.volume = next;
+		videoEl.muted = next === 0;
+		muted = videoEl.muted;
+		if (next > 0) lastVolume = next;
+	}
+
 	function toggleMute() {
 		if (!videoEl) return;
-		videoEl.muted = !videoEl.muted;
-		muted = videoEl.muted;
+		if (videoEl.muted || volume === 0) {
+			videoEl.muted = false;
+			applyVolume(lastVolume > 0 ? lastVolume : 1);
+		} else {
+			lastVolume = volume > 0 ? volume : lastVolume;
+			videoEl.muted = true;
+			muted = true;
+		}
 		revealControls();
 	}
 
-	function onVolumeInput(e: Event) {
-		if (!videoEl) return;
-		const value = Number((e.currentTarget as HTMLInputElement).value);
-		volume = value;
-		videoEl.volume = value;
-		videoEl.muted = value === 0;
-		muted = videoEl.muted;
-		revealControls();
-	}
-
-	function seekFromClientX(clientX: number, hit: HTMLElement) {
-		if (!videoEl || duration <= 0) return;
-		const track = hit.querySelector<HTMLElement>('.custom-progress') ?? hit;
+	function ratioFromClientX(clientX: number, hit: HTMLElement, trackSelector: string): number {
+		const track = hit.querySelector<HTMLElement>(trackSelector) ?? hit;
 		const rect = track.getBoundingClientRect();
-		if (rect.width <= 0) return;
-		const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-		const t = ratio * duration;
+		if (rect.width <= 0) return 0;
+		return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+	}
+
+	function previewSeek(clientX: number, hit: HTMLElement) {
+		if (duration <= 0) return;
+		current = ratioFromClientX(clientX, hit, '.custom-progress') * duration;
+	}
+
+	function commitSeek() {
+		if (!videoEl || duration <= 0) return;
+		const t = Math.min(duration, Math.max(0, current));
+		pendingSeek = t;
 		videoEl.currentTime = t;
-		current = t;
 	}
 
 	function onScrubPointerDown(e: PointerEvent) {
 		const track = e.currentTarget as HTMLElement;
 		scrubbing = true;
+		pendingSeek = null;
 		showControls = true;
+		stopTick();
 		track.setPointerCapture(e.pointerId);
-		seekFromClientX(e.clientX, track);
+		updateTimelineHover(e);
+		previewSeek(e.clientX, track);
 	}
 
 	function onScrubPointerMove(e: PointerEvent) {
+		updateTimelineHover(e);
 		if (!scrubbing) return;
-		seekFromClientX(e.clientX, e.currentTarget as HTMLElement);
+		previewSeek(e.clientX, e.currentTarget as HTMLElement);
 	}
 
 	function onScrubPointerUp(e: PointerEvent) {
-		if (!scrubbing) return;
-		scrubbing = false;
+		if (scrubbing) {
+			previewSeek(e.clientX, e.currentTarget as HTMLElement);
+			commitSeek();
+			scrubbing = false;
+			try {
+				(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+			} catch {
+				/* ignore */
+			}
+			if (playing) startTick();
+			scheduleHide();
+		}
+		const node = e.currentTarget as HTMLElement;
+		const rect = node.getBoundingClientRect();
+		const inside =
+			e.clientX >= rect.left &&
+			e.clientX <= rect.right &&
+			e.clientY >= rect.top &&
+			e.clientY <= rect.bottom;
+		if (inside) updateTimelineHover(e);
+		else hideTimelineHover();
+	}
+
+	function onVolumePointerDown(e: PointerEvent) {
+		const hit = e.currentTarget as HTMLElement;
+		volumeDragging = true;
+		showControls = true;
+		hit.setPointerCapture(e.pointerId);
+		applyVolume(ratioFromClientX(e.clientX, hit, '.custom-volume-track'));
+	}
+
+	function onVolumePointerMove(e: PointerEvent) {
+		if (!volumeDragging) return;
+		applyVolume(
+			ratioFromClientX(e.clientX, e.currentTarget as HTMLElement, '.custom-volume-track')
+		);
+	}
+
+	function onVolumePointerUp(e: PointerEvent) {
+		if (!volumeDragging) return;
+		applyVolume(
+			ratioFromClientX(e.clientX, e.currentTarget as HTMLElement, '.custom-volume-track')
+		);
+		volumeDragging = false;
 		try {
 			(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
 		} catch {
@@ -193,6 +350,11 @@
 		revealControls();
 	}
 
+	function nudgeVolume(delta: number) {
+		applyVolume((muted ? 0 : volume) + delta);
+		revealControls();
+	}
+
 	function onPlayerKeydown(e: KeyboardEvent) {
 		if (e.key === ' ' || e.key === 'k' || e.key === 'K') {
 			e.preventDefault();
@@ -203,13 +365,21 @@
 		} else if (e.key === 'f' || e.key === 'F') {
 			e.preventDefault();
 			toggleFullscreen();
+		} else if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			nudgeVolume(0.05);
+		} else if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			nudgeVolume(-0.05);
 		} else if (e.key === 'ArrowLeft' && videoEl) {
 			e.preventDefault();
-			videoEl.currentTime = Math.max(0, videoEl.currentTime - 5);
+			current = Math.max(0, (pendingSeek ?? videoEl.currentTime) - 5);
+			commitSeek();
 			revealControls();
 		} else if (e.key === 'ArrowRight' && videoEl) {
 			e.preventDefault();
-			videoEl.currentTime = Math.min(duration, videoEl.currentTime + 5);
+			current = Math.min(duration, (pendingSeek ?? videoEl.currentTime) + 5);
+			commitSeek();
 			revealControls();
 		} else if (e.key === '<' || e.key === ',') {
 			e.preventDefault();
@@ -234,8 +404,10 @@
 
 <div
 	{@attach attachPlayer}
-	class="custom-player group/player relative h-full w-full overflow-hidden bg-black outline-none"
-	class:controls-visible={showControls || !playing || scrubbing || speedMenuOpen}
+	class={[
+		'custom-player group/player relative h-full w-full overflow-hidden bg-black outline-none',
+		chromeOpen && 'controls-visible'
+	]}
 	role="group"
 	aria-label="Video player"
 	onmousemove={() => {
@@ -247,26 +419,38 @@
 	}}
 	onmouseleave={() => {
 		hovered = false;
-		if (playing && !scrubbing && !speedMenuOpen) showControls = false;
+		hideTimelineHover();
+		if (playing && !scrubbing && !volumeDragging && !speedMenuOpen && !timelineHover) {
+			showControls = false;
+		}
 	}}
 >
 	<video
 		{@attach attachVideo}
 		{src}
-		class="h-full w-full object-contain"
+		class="custom-video h-full w-full object-contain"
 		autoplay
 		playsinline
+		preload="auto"
 		onloadedmetadata={onMeta}
-		ontimeupdate={onTime}
 		ondurationchange={onMeta}
+		onprogress={readBuffer}
 		onplay={() => {
 			playing = true;
+			startTick();
 			scheduleHide();
 		}}
 		onpause={() => {
 			playing = false;
+			stopTick();
+			syncTime();
 			showControls = true;
 			clearHideTimer();
+		}}
+		onseeked={() => {
+			pendingSeek = null;
+			syncTime();
+			readBuffer();
 		}}
 		onvolumechange={() => {
 			if (!videoEl) return;
@@ -275,11 +459,12 @@
 		}}
 		onended={() => {
 			playing = false;
+			stopTick();
+			syncTime();
 			showControls = true;
 		}}
 		onratechange={() => {
-			if (!videoEl) return;
-			playbackRate = videoEl.playbackRate;
+			if (videoEl) playbackRate = videoEl.playbackRate;
 		}}
 		onclick={() => {
 			if (speedMenuOpen) {
@@ -292,9 +477,32 @@
 		<track kind="captions" />
 	</video>
 
-	<!-- Floating chrome: transparent over video, contrast via shadows -->
 	<div class="custom-chrome absolute inset-x-0 bottom-0 z-20">
-		<div class="px-3">
+		<div class="relative px-3">
+			<div
+				class={['custom-hover-preview', timelineHover && 'is-visible']}
+				style:--x={hoverRatio}
+				style:--preview-w="{previewWRem}rem"
+				style:--preview-h="{PREVIEW_H_REM}rem"
+				style:--preview-half="{previewHalfRem}rem"
+				aria-hidden="true"
+			>
+				<div class="custom-hover-frame">
+					<video
+						{@attach attachPreview}
+						{src}
+						class="custom-hover-video"
+						muted
+						playsinline
+						preload="metadata"
+						onseeked={onPreviewSeeked}
+						onloadeddata={() => {
+							if (timelineHover) commitPreviewSeek(hoverTime);
+						}}
+					></video>
+				</div>
+				<span class="custom-hover-time">{formatDuration(hoverTime)}</span>
+			</div>
 			<div
 				class="custom-progress-hit flex h-4 cursor-pointer items-end"
 				role="slider"
@@ -307,30 +515,30 @@
 				onpointermove={onScrubPointerMove}
 				onpointerup={onScrubPointerUp}
 				onpointercancel={onScrubPointerUp}
+				onpointerleave={hideTimelineHover}
 				onkeydown={(e) => {
 					if (!videoEl) return;
 					if (e.key === 'ArrowLeft') {
 						e.preventDefault();
-						videoEl.currentTime = Math.max(0, videoEl.currentTime - 5);
+						current = Math.max(0, (pendingSeek ?? videoEl.currentTime) - 5);
+						commitSeek();
 					} else if (e.key === 'ArrowRight') {
 						e.preventDefault();
-						videoEl.currentTime = Math.min(duration, videoEl.currentTime + 5);
+						current = Math.min(duration, (pendingSeek ?? videoEl.currentTime) + 5);
+						commitSeek();
 					}
 				}}
 			>
 				<div
 					class="custom-progress relative mb-1 h-[3px] w-full overflow-visible rounded-full bg-white/35 transition-[height] group-hover/player:h-1"
+					style:--progress={progress}
+					style:--buffer={bufferPct}
+					style:--hover={hoverRatio}
 				>
-					<div
-						class="absolute inset-y-0 left-0 rounded-full bg-white/55"
-						style:width="{bufferPct}%"
-					></div>
-					<div class="absolute inset-y-0 left-0 rounded-full bg-[#f00]" style:width="{progress}%">
-						<span
-							class="custom-knob absolute top-1/2 right-0 h-3 w-3 translate-x-1/2 -translate-y-1/2 rounded-full bg-[#f00] opacity-0 shadow transition-opacity group-hover/player:opacity-100"
-							class:opacity-100={scrubbing}
-						></span>
-					</div>
+					<div class="custom-progress-buffer"></div>
+					<div class="custom-progress-played"></div>
+					<span class={['custom-hover-tick', timelineHover && 'is-active']}></span>
+					<span class={['custom-knob', scrubbing && 'is-active']}></span>
 				</div>
 			</div>
 		</div>
@@ -352,33 +560,55 @@
 				{/if}
 			</button>
 
-			<button
-				type="button"
-				class="custom-btn"
-				aria-label={muted || volume === 0 ? 'Unmute' : 'Mute'}
-				onclick={(e) => {
-					e.stopPropagation();
-					toggleMute();
-				}}
-			>
-				{#if muted || volume === 0}
-					<VolumeX class="h-6 w-6" fill="currentColor" />
-				{:else}
-					<Volume2 class="h-6 w-6" fill="currentColor" />
-				{/if}
-			</button>
+			<div class="custom-volume-cluster flex items-center">
+				<button
+					type="button"
+					class="custom-btn"
+					aria-label={muted || volume === 0 ? 'Unmute' : 'Mute'}
+					onclick={(e) => {
+						e.stopPropagation();
+						toggleMute();
+					}}
+				>
+					{#if muted || volume === 0}
+						<VolumeX class="h-6 w-6" fill="currentColor" />
+					{:else if volume < 0.5}
+						<Volume1 class="h-6 w-6" fill="currentColor" />
+					{:else}
+						<Volume2 class="h-6 w-6" fill="currentColor" />
+					{/if}
+				</button>
 
-			<input
-				type="range"
-				class="custom-volume"
-				min="0"
-				max="1"
-				step="0.05"
-				value={muted ? 0 : volume}
-				aria-label="Volume"
-				oninput={onVolumeInput}
-				onclick={(e) => e.stopPropagation()}
-			/>
+				<div
+					class="custom-volume-hit"
+					style:--volume={volumePct}
+					role="slider"
+					aria-label="Volume"
+					aria-valuemin={0}
+					aria-valuemax={100}
+					aria-valuenow={Math.round(volumePct * 100)}
+					tabindex="0"
+					onpointerdown={onVolumePointerDown}
+					onpointermove={onVolumePointerMove}
+					onpointerup={onVolumePointerUp}
+					onpointercancel={onVolumePointerUp}
+					onclick={(e) => e.stopPropagation()}
+					onkeydown={(e) => {
+						if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+							e.preventDefault();
+							nudgeVolume(-0.05);
+						} else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+							e.preventDefault();
+							nudgeVolume(0.05);
+						}
+					}}
+				>
+					<div class="custom-volume-track">
+						<div class="custom-volume-fill"></div>
+						<span class="custom-volume-knob"></span>
+					</div>
+				</div>
+			</div>
 
 			<span class="custom-time ml-2 text-xs font-medium tracking-wide select-none">
 				{formatDuration(current)} / {formatDuration(duration)}
@@ -396,8 +626,7 @@
 						{#each SPEED_OPTIONS as rate (rate)}
 							<button
 								type="button"
-								class="custom-speed-option"
-								class:active={playbackRate === rate}
+								class={['custom-speed-option', playbackRate === rate && 'active']}
 								role="menuitemradio"
 								aria-checked={playbackRate === rate}
 								onclick={(e) => {
@@ -454,6 +683,10 @@
 		pointer-events: auto;
 	}
 
+	.custom-video {
+		transform: translateZ(0);
+	}
+
 	.custom-controls {
 		background: transparent;
 	}
@@ -483,17 +716,176 @@
 			0 0 6px rgb(0 0 0 / 0.55);
 	}
 
-	.custom-volume {
-		width: 4.5rem;
-		height: 0.25rem;
-		accent-color: #fff;
-		cursor: pointer;
-		filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.7));
+	.custom-progress-buffer,
+	.custom-progress-played {
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		pointer-events: none;
+		transform-origin: left center;
+		will-change: transform;
+	}
+
+	.custom-progress-buffer {
+		background: rgb(255 255 255 / 0.55);
+		transform: scaleX(var(--buffer, 0));
+	}
+
+	.custom-progress-played {
+		background: #f00;
+		transform: scaleX(var(--progress, 0));
+	}
+
+	.custom-knob {
+		position: absolute;
+		top: 50%;
+		left: calc(var(--progress, 0) * 100%);
+		height: 0.75rem;
+		width: 0.75rem;
+		border-radius: 9999px;
+		background: #f00;
+		box-shadow: 0 1px 3px rgb(0 0 0 / 0.45);
+		opacity: 0;
+		pointer-events: none;
+		transform: translate(-50%, -50%);
+		transition: opacity 120ms ease;
+	}
+
+	.custom-player:hover .custom-knob,
+	.custom-knob.is-active {
+		opacity: 1;
+	}
+
+	.custom-hover-tick {
+		position: absolute;
+		top: 50%;
+		left: calc(var(--hover, 0) * 100%);
+		width: 2px;
+		height: 0.7rem;
+		border-radius: 1px;
+		background: #fff;
+		opacity: 0;
+		pointer-events: none;
+		transform: translate(-50%, -50%);
+		box-shadow: 0 0 4px rgb(0 0 0 / 0.6);
+	}
+
+	.custom-hover-tick.is-active {
+		opacity: 0.95;
+	}
+
+	.custom-hover-preview {
+		position: absolute;
+		bottom: 1.15rem;
+		left: clamp(
+			var(--preview-half, 8.94rem),
+			calc(var(--x, 0) * 100%),
+			calc(100% - var(--preview-half, 8.94rem))
+		);
+		z-index: 6;
+		display: flex;
+		width: var(--preview-w, 17.875rem);
+		flex-direction: column;
+		align-items: center;
+		gap: 0.3rem;
+		transform: translate3d(-50%, 0, 0);
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 90ms ease;
+	}
+
+	.custom-hover-preview.is-visible {
+		opacity: 1;
+	}
+
+	.custom-hover-frame {
+		box-sizing: border-box;
+		width: 100%;
+		height: var(--preview-h, 9.34375rem);
+		overflow: hidden;
+		border: 0;
+		border-radius: 0.4rem;
+		background: #000;
+		box-shadow:
+			0 0 0 1px rgb(255 255 255 / 0.22),
+			0 6px 22px rgb(0 0 0 / 0.55);
+	}
+
+	.custom-hover-video {
+		display: block;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		background: #000;
+	}
+
+	.custom-hover-time {
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.02em;
+		color: #fff;
+		padding: 0.12rem 0.45rem;
+		border-radius: 0.25rem;
+		background: rgb(0 0 0 / 0.72);
+		text-shadow: 0 1px 2px rgb(0 0 0 / 0.85);
 	}
 
 	.custom-progress-hit:hover .custom-progress,
 	.custom-progress-hit:active .custom-progress {
 		height: 0.35rem;
+	}
+
+	.custom-volume-hit {
+		display: flex;
+		align-items: center;
+		height: 2.25rem;
+		padding: 0 0.4rem 0 0.15rem;
+		cursor: pointer;
+	}
+
+	.custom-volume-track {
+		position: relative;
+		width: 5.5rem;
+		height: 4px;
+		border-radius: 9999px;
+		background: rgb(255 255 255 / 0.35);
+		overflow: visible;
+		transition: height 120ms ease;
+		filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.7));
+	}
+
+	.custom-volume-hit:hover .custom-volume-track,
+	.custom-volume-hit:active .custom-volume-track {
+		height: 6px;
+	}
+
+	.custom-volume-fill {
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		background: #fff;
+		pointer-events: none;
+		transform-origin: left center;
+		transform: scaleX(var(--volume, 0));
+	}
+
+	.custom-volume-knob {
+		position: absolute;
+		top: 50%;
+		left: calc(var(--volume, 0) * 100%);
+		height: 0.75rem;
+		width: 0.75rem;
+		border-radius: 9999px;
+		background: #fff;
+		box-shadow: 0 1px 3px rgb(0 0 0 / 0.5);
+		pointer-events: none;
+		transform: translate(-50%, -50%) scale(0.85);
+		transition: transform 120ms ease;
+	}
+
+	.custom-volume-hit:hover .custom-volume-knob,
+	.custom-volume-hit:active .custom-volume-knob {
+		transform: translate(-50%, -50%) scale(1);
 	}
 
 	.custom-speed-btn {
