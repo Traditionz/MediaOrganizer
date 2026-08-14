@@ -13,6 +13,8 @@
 	}
 
 	const SPEED_OPTIONS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
+	const PREVIEW_H_REM = 9.34375;
+	const PREVIEW_MAX_W_REM = 17.875;
 
 	let { src, onmetadata }: Props = $props();
 
@@ -53,6 +55,8 @@
 		const h = videoEl?.videoHeight ?? 0;
 		return w > 0 && h > 0 ? w / h : 16 / 9;
 	});
+	const previewWRem = $derived(Math.min(PREVIEW_MAX_W_REM, PREVIEW_H_REM * previewAr));
+	const previewHalfRem = $derived(previewWRem / 2);
 
 	function clearHideTimer() {
 		if (hideTimer) {
@@ -478,7 +482,9 @@
 			<div
 				class={['custom-hover-preview', timelineHover && 'is-visible']}
 				style:--x={hoverRatio}
-				style:--preview-ar={previewAr}
+				style:--preview-w="{previewWRem}rem"
+				style:--preview-h="{PREVIEW_H_REM}rem"
+				style:--preview-half="{previewHalfRem}rem"
 				aria-hidden="true"
 			>
 				<div class="custom-hover-frame">
@@ -771,14 +777,18 @@
 	.custom-hover-preview {
 		position: absolute;
 		bottom: 1.15rem;
-		left: clamp(5.6rem, calc(var(--x, 0) * 100%), calc(100% - 5.6rem));
+		left: clamp(
+			var(--preview-half, 8.94rem),
+			calc(var(--x, 0) * 100%),
+			calc(100% - var(--preview-half, 8.94rem))
+		);
 		z-index: 6;
 		display: flex;
-		width: max-content;
+		width: var(--preview-w, 17.875rem);
 		flex-direction: column;
 		align-items: center;
 		gap: 0.3rem;
-		transform: translateX(-50%);
+		transform: translate3d(-50%, 0, 0);
 		opacity: 0;
 		pointer-events: none;
 		transition: opacity 90ms ease;
@@ -789,19 +799,23 @@
 	}
 
 	.custom-hover-frame {
-		height: 5.75rem;
-		width: min(11rem, calc(5.75rem * var(--preview-ar, 1.777)));
+		box-sizing: border-box;
+		width: 100%;
+		height: var(--preview-h, 9.34375rem);
 		overflow: hidden;
+		border: 0;
 		border-radius: 0.4rem;
 		background: #000;
-		border: 1px solid rgb(255 255 255 / 0.22);
-		box-shadow: 0 6px 22px rgb(0 0 0 / 0.55);
+		box-shadow:
+			0 0 0 1px rgb(255 255 255 / 0.22),
+			0 6px 22px rgb(0 0 0 / 0.55);
 	}
 
 	.custom-hover-video {
+		display: block;
 		width: 100%;
 		height: 100%;
-		object-fit: contain;
+		object-fit: cover;
 		background: #000;
 	}
 
