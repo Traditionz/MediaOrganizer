@@ -78,7 +78,7 @@ export function createProfile(name: string, passcode?: string | null): Profile {
 			})
 			.run();
 	} catch (err) {
-		if (isUniqueConstraintError(err)) {
+		if (err instanceof Error && isUniqueConstraintError(err)) {
 			throw new Error('A profile with that name already exists');
 		}
 		throw err;

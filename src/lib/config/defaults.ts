@@ -7,18 +7,21 @@ import type { ThemeMode, ViewMode } from '$lib/types';
 
 export type DefaultAlbumView = 'unassigned' | 'all';
 
-function raw(key: string): string | undefined {
-	const value = (env as Record<string, string | undefined>)[key];
-	return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
+function raw(key: `PUBLIC_${string}`): string | undefined {
+	if (!Object.hasOwn(env, key)) return undefined;
+	const value = env[key];
+	if (value == null) return undefined;
+	const trimmed = value.trim();
+	return trimmed === '' ? undefined : trimmed;
 }
 
-function bool(key: string, fallback: boolean): boolean {
+function bool(key: `PUBLIC_${string}`, fallback: boolean): boolean {
 	const value = raw(key);
 	if (value == null) return fallback;
 	return !['0', 'false', 'no', 'off'].includes(value.toLowerCase());
 }
 
-function int(key: string, fallback: number, min: number, max: number): number {
+function int(key: `PUBLIC_${string}`, fallback: number, min: number, max: number): number {
 	const value = raw(key);
 	if (value == null) return fallback;
 	const n = Number(value);

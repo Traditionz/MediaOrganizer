@@ -4,3 +4,4 @@ build
 data
 pnpm-lock.yaml
 package-lock.json
+tools/oxlint/anti-slop

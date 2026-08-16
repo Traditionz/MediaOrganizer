@@ -13,6 +13,7 @@ import {
 	setProfileCookie
 } from '$lib/server/profileContext';
 import { PROFILE_COOKIE } from '$lib/server/db';
+import { asFiniteNumber, asString, own, ownString, readJsonObject } from '$lib/parse';
 
 export const GET: RequestHandler = async ({ cookies }) => {
 	const profiles = listProfiles();
@@ -21,10 +22,10 @@ export const GET: RequestHandler = async ({ cookies }) => {
 };
 
 export const POST: RequestHandler = async ({ request, cookies }) => {
-	const body = await request.json();
-	const name = typeof body?.name === 'string' ? body.name.trim() : '';
-	const passcode =
-		typeof body?.passcode === 'string' && body.passcode.trim() ? body.passcode : null;
+	const body = await readJsonObject(request);
+	const name = (body ? ownString(body, 'name') : null)?.trim() ?? '';
+	const passcodeRaw = body ? ownString(body, 'passcode') : null;
+	const passcode = passcodeRaw?.trim() ? passcodeRaw : null;
 	if (!name) throw error(400, 'Profile name is required');
 
 	try {
@@ -40,20 +41,18 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 };
 
 export const PATCH: RequestHandler = async ({ request, cookies }) => {
-	const body = await request.json();
-	const id = typeof body?.id === 'string' ? body.id : '';
+	const body = await readJsonObject(request);
+	const id = body ? (ownString(body, 'id') ?? '') : '';
 	if (!id) throw error(400, 'Profile id is required');
 
 	const active = resolveProfileFromCookies(cookies);
 	if (!active || active.id !== id) throw error(403, 'Unlock this profile first');
 
-	const newPasscode =
-		typeof body?.newPasscode === 'string'
-			? body.newPasscode
-			: body?.newPasscode === null
-				? null
-				: '';
-	const currentPasscode = typeof body?.currentPasscode === 'string' ? body.currentPasscode : null;
+	const newPasscodeField = body ? own(body, 'newPasscode') : undefined;
+	let newPasscode: string | null = '';
+	if (newPasscodeField === null) newPasscode = null;
+	else newPasscode = asString(newPasscodeField) ?? '';
+	const currentPasscode = body ? ownString(body, 'currentPasscode') : null;
 
 	try {
 		const profile = setProfilePasscode(id, currentPasscode, newPasscode);
@@ -67,19 +66,13 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 };
 
 export const DELETE: RequestHandler = async ({ request, cookies }) => {
-	const body = await request.json();
-	const id = typeof body?.id === 'string' ? body.id : '';
-	const confirmName = typeof body?.confirmName === 'string' ? body.confirmName : '';
-	const mediaCountRaw = body?.confirmMediaCount;
-	const confirmMediaCount =
-		typeof mediaCountRaw === 'number'
-			? mediaCountRaw
-			: typeof mediaCountRaw === 'string' && mediaCountRaw.trim() !== ''
-				? Number(mediaCountRaw)
-				: NaN;
+	const body = await readJsonObject(request);
+	const id = body ? (ownString(body, 'id') ?? '') : '';
+	const confirmName = body ? (ownString(body, 'confirmName') ?? '') : '';
+	const confirmMediaCount = body ? asFiniteNumber(own(body, 'confirmMediaCount')) : null;
 	if (!id) throw error(400, 'Profile id is required');
 	if (!confirmName.trim()) throw error(400, 'Profile name confirmation is required');
-	if (!Number.isInteger(confirmMediaCount)) {
+	if (confirmMediaCount == null || !Number.isInteger(confirmMediaCount)) {
 		throw error(400, 'Media count confirmation is required');
 	}
 

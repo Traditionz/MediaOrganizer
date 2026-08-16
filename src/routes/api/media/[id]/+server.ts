@@ -44,6 +44,7 @@ export const GET: RequestHandler = async ({ params, url, request, cookies }) => 
 	if (range && !asDownload) {
 		const { start, end } = range;
 		const nodeStream = openFileReadStream(row.path, { start, end });
+		// SAFETY: Node Readable.toWeb() is a WHATWG ReadableStream accepted by Response.
 		const webStream = Readable.toWeb(nodeStream) as ReadableStream;
 
 		return new Response(webStream, {
@@ -60,6 +61,7 @@ export const GET: RequestHandler = async ({ params, url, request, cookies }) => 
 	}
 
 	const nodeStream = openFileReadStream(row.path);
+	// SAFETY: Node Readable.toWeb() is a WHATWG ReadableStream accepted by Response.
 	const webStream = Readable.toWeb(nodeStream) as ReadableStream;
 
 	return new Response(webStream, {

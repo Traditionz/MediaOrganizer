@@ -15,6 +15,7 @@ import {
 } from '$lib/server/media';
 import { resolveProfileFromCookies } from '$lib/server/profileContext';
 import type { MediaType } from '$lib/types';
+import { asFiniteNumber, own, ownNumber, ownString, readJsonObject, stringList } from '$lib/parse';
 
 const VIDEO_EXT = new Set(['mp4', 'm4v', 'mov', 'webm', 'mkv', 'avi']);
 const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'heic']);
@@ -53,17 +54,17 @@ function guessMime(mime: string, filename: string, mediaType: MediaType): string
 	return 'image/jpeg';
 }
 
-function parseAlbumId(raw: unknown): string | null {
+function parseAlbumId(raw: string | null | undefined): string | null {
 	if (raw === null || raw === undefined || raw === '' || raw === 'all' || raw === 'null') {
 		return null;
 	}
-	return String(raw);
+	return raw;
 }
 
-function parseDuration(raw: unknown): number | null {
+function parseDuration(raw: string | number | null | undefined): number | null {
 	if (raw === null || raw === undefined || raw === '') return null;
-	const n = typeof raw === 'number' ? raw : Number(raw);
-	return Number.isFinite(n) && n > 0 ? n : null;
+	const n = asFiniteNumber(raw);
+	return n != null && n > 0 ? n : null;
 }
 
 function parseContentLength(raw: string | null): number | null {
@@ -75,7 +76,8 @@ function parseContentLength(raw: string | null): number | null {
 export const GET: RequestHandler = async ({ url, cookies }) => {
 	const profile = requireProfile(cookies);
 	const albumParam = url.searchParams.get('album') ?? url.searchParams.get('folder');
-	const mediaType = (url.searchParams.get('type') ?? 'all') as 'all' | MediaType;
+	const typeParam = url.searchParams.get('type') ?? 'all';
+	const mediaType = typeParam === 'image' || typeParam === 'video' ? typeParam : 'all';
 	const dateFrom = url.searchParams.get('from') ?? undefined;
 	const dateTo = url.searchParams.get('to') ?? undefined;
 
@@ -101,11 +103,13 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 	const contentType = request.headers.get('content-type') ?? '';
 
 	if (contentType.includes('application/json')) {
-		const body = await request.json();
-		if (body?.action === 'duplicate') {
-			const ids = Array.isArray(body?.ids) ? body.ids.map(String).filter(Boolean) : [];
+		const body = await readJsonObject(request);
+		if (ownString(body ?? {}, 'action') === 'duplicate') {
+			const ids = stringList(body ? own(body, 'ids') : undefined);
 			if (!ids.length) throw error(400, 'At least one media id is required');
-			const albumId = parseAlbumId(body?.albumId ?? body?.folderId);
+			const albumId = parseAlbumId(
+				ownString(body ?? {}, 'albumId') ?? ownString(body ?? {}, 'folderId')
+			);
 			try {
 				const created = duplicateMedia(profile.id, ids, albumId);
 				return json(created, { status: 201 });
@@ -165,7 +169,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 	const albumRaw = form.get('albumId') ?? form.get('folderId');
 	const widthRaw = form.get('width');
 	const heightRaw = form.get('height');
-	const duration = parseDuration(form.get('duration'));
+	const durationField = form.get('duration');
+	const duration = parseDuration(durationField instanceof File ? null : durationField);
 
 	if (!(file instanceof File)) {
 		throw error(400, 'File is required');
@@ -176,7 +181,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		throw error(400, 'Only image and video files are supported');
 	}
 
-	const albumId = parseAlbumId(albumRaw);
+	const albumId = parseAlbumId(albumRaw instanceof File ? null : albumRaw);
 
 	try {
 		const item = await insertMediaFromStream(profile.id, {
@@ -188,6 +193,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			height: heightRaw ? Number(heightRaw) : null,
 			duration,
 			contentLength: file.size,
+			// SAFETY: File.stream() is a WHATWG ReadableStream; Node fromWeb accepts that contract.
 			body: Readable.fromWeb(file.stream() as import('node:stream/web').ReadableStream)
 		});
 		return json(item, { status: 201 });
@@ -200,11 +206,12 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
 export const PATCH: RequestHandler = async ({ request, cookies }) => {
 	const profile = requireProfile(cookies);
-	const body = await request.json();
+	const body = await readJsonObject(request);
+	const action = body ? ownString(body, 'action') : null;
 
-	if (body?.action === 'rename') {
-		const id = typeof body?.id === 'string' ? body.id : '';
-		const name = typeof body?.name === 'string' ? body.name : '';
+	if (action === 'rename') {
+		const id = body ? (ownString(body, 'id') ?? '') : '';
+		const name = body ? (ownString(body, 'name') ?? '') : '';
 		if (!id) throw error(400, 'Media id is required');
 		try {
 			return json(renameMedia(profile.id, id, name));
@@ -216,9 +223,9 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 		}
 	}
 
-	if (body?.action === 'set-duration') {
-		const id = typeof body?.id === 'string' ? body.id : '';
-		const duration = parseDuration(body?.duration);
+	if (action === 'set-duration') {
+		const id = body ? (ownString(body, 'id') ?? '') : '';
+		const duration = parseDuration(body ? ownNumber(body, 'duration') : null);
 		if (!id) throw error(400, 'Media id is required');
 		if (duration == null) throw error(400, 'Duration must be a finite number greater than 0');
 		try {
@@ -231,8 +238,8 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 		}
 	}
 
-	if (body?.action === 'compress') {
-		const ids = Array.isArray(body?.ids) ? body.ids.map(String).filter(Boolean) : [];
+	if (action === 'compress') {
+		const ids = stringList(body ? own(body, 'ids') : undefined);
 		if (!ids.length) throw error(400, 'At least one media id is required');
 		const results = [];
 		for (const id of ids) {
@@ -247,21 +254,19 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 		return json(results);
 	}
 
-	if (body?.action === 'backfill-durations') {
+	if (action === 'backfill-durations') {
 		const summary = await backfillMissingDurations(profile.id);
 		return json(summary);
 	}
 
-	const ids = Array.isArray(body?.ids) ? body.ids.map(String).filter(Boolean) : [];
+	const ids = stringList(body ? own(body, 'ids') : undefined);
 	if (!ids.length) throw error(400, 'At least one media id is required');
 
-	const albumIdRaw = body?.albumId ?? body?.folderId;
-	const albumId =
-		albumIdRaw === null || albumIdRaw === 'null' || albumIdRaw === undefined
-			? null
-			: String(albumIdRaw);
+	const albumId = parseAlbumId(
+		ownString(body ?? {}, 'albumId') ?? ownString(body ?? {}, 'folderId')
+	);
 
-	if (body?.action === 'remove-from-album') {
+	if (action === 'remove-from-album') {
 		if (!albumId) throw error(400, 'Album id is required');
 		try {
 			removeMediaFromAlbum(profile.id, ids, albumId);
@@ -274,7 +279,7 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 	}
 
 	// Default / add-to-album: additive membership
-	if (body?.action === 'add-to-album' || body?.action === undefined || body?.action === 'move') {
+	if (action === 'add-to-album' || action === null || action === 'move') {
 		if (!albumId) throw error(400, 'Album id is required');
 		try {
 			addMediaToAlbum(profile.id, ids, albumId);

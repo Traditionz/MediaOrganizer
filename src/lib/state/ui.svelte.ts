@@ -1,4 +1,7 @@
 import type { MediaItem, PasscodeModalMode } from '$lib/types';
+import { browser } from '$app/environment';
+import { asFiniteNumber, asPlainObject, own, ownString, parseJsonText } from '$lib/parse';
+import type { JsonValue } from '$lib/parse';
 
 const UPLOAD_PROGRESS_KEY = 'mo_upload_jobs';
 
@@ -30,43 +33,60 @@ export type TransferJob = {
 
 export type ConfirmKind = 'delete-album' | 'delete-media' | 'upload-duplicates';
 
-const FILE_STATUSES: readonly TransferFileStatus[] = [
-	'queued',
-	'uploading',
-	'saving',
-	'done',
-	'error',
-	'cancelled'
-];
-const FILE_KINDS: readonly TransferFileKind[] = ['video', 'image', 'other'];
+function parseFileStatus(value: string | null): TransferFileStatus {
+	switch (value) {
+		case 'queued':
+		case 'uploading':
+		case 'saving':
+		case 'done':
+		case 'error':
+		case 'cancelled':
+			return value;
+		default:
+			return 'queued';
+	}
+}
 
-function parseTransferFiles(raw: unknown): TransferFile[] {
+function parseFileKind(value: string | null): TransferFileKind {
+	switch (value) {
+		case 'video':
+		case 'image':
+		case 'other':
+			return value;
+		default:
+			return 'other';
+	}
+}
+
+function parseTransferKind(value: string | null): TransferKind | null {
+	if (value === 'upload' || value === 'compress') return value;
+	return null;
+}
+
+function parseTransferFiles(raw: JsonValue[] | undefined): TransferFile[] {
 	if (!Array.isArray(raw)) return [];
 	const files: TransferFile[] = [];
 	for (const item of raw) {
-		if (!item || typeof item !== 'object') continue;
-		const row = item as Partial<TransferFile>;
-		if (typeof row.id !== 'string' || typeof row.name !== 'string') continue;
-		const status = FILE_STATUSES.includes(row.status as TransferFileStatus)
-			? (row.status as TransferFileStatus)
-			: 'queued';
-		const kind = FILE_KINDS.includes(row.kind as TransferFileKind)
-			? (row.kind as TransferFileKind)
-			: 'other';
+		const row = asPlainObject(item);
+		if (!row) continue;
+		const id = ownString(row, 'id');
+		const name = ownString(row, 'name');
+		if (!id || !name) continue;
+		const progress = asFiniteNumber(own(row, 'progress'));
+		const loaded = asFiniteNumber(own(row, 'loaded'));
+		const total = asFiniteNumber(own(row, 'total'));
 		files.push({
-			id: row.id,
-			name: row.name,
-			kind,
+			id,
+			name,
+			kind: parseFileKind(ownString(row, 'kind')),
 			progress:
-				typeof row.progress === 'number' && Number.isFinite(row.progress)
-					? Math.min(100, Math.max(0, Math.round(row.progress)))
+				progress != null && Number.isFinite(progress)
+					? Math.min(100, Math.max(0, Math.round(progress)))
 					: 0,
-			loaded:
-				typeof row.loaded === 'number' && Number.isFinite(row.loaded) ? Math.max(0, row.loaded) : 0,
-			total:
-				typeof row.total === 'number' && Number.isFinite(row.total) ? Math.max(0, row.total) : 0,
-			status,
-			error: typeof row.error === 'string' ? row.error : undefined
+			loaded: loaded != null && Number.isFinite(loaded) ? Math.max(0, loaded) : 0,
+			total: total != null && Number.isFinite(total) ? Math.max(0, total) : 0,
+			status: parseFileStatus(ownString(row, 'status')),
+			error: ownString(row, 'error') ?? undefined
 		});
 	}
 	return files;
@@ -176,7 +196,7 @@ export class UiState {
 
 	constructor() {
 		this.restoreUploadProgress();
-		if (typeof window === 'undefined') return;
+		if (!browser) return;
 		window.addEventListener('pagehide', this.onPageHide);
 		window.addEventListener('beforeunload', this.onPageHide);
 	}
@@ -197,7 +217,7 @@ export class UiState {
 	private persistTimer: ReturnType<typeof setTimeout> | null = null;
 
 	private persistUploadProgress(immediate = false) {
-		if (typeof sessionStorage === 'undefined') return;
+		if (!browser) return;
 		if (!immediate) {
 			if (this.persistTimer) return;
 			this.persistTimer = setTimeout(() => {
@@ -226,42 +246,47 @@ export class UiState {
 	}
 
 	private restoreUploadProgress() {
-		if (typeof sessionStorage === 'undefined') return;
+		if (!browser) return;
 		try {
 			const raw = sessionStorage.getItem(UPLOAD_PROGRESS_KEY);
 			if (!raw) return;
-			const parsed = JSON.parse(raw) as unknown;
+			const parsed = parseJsonText(raw);
 			if (!Array.isArray(parsed)) return;
 			const jobs: TransferJob[] = [];
 			for (const item of parsed) {
-				if (!item || typeof item !== 'object') continue;
-				const row = item as Partial<TransferJob>;
-				if (typeof row.id !== 'string' || (row.kind !== 'upload' && row.kind !== 'compress')) {
+				const row = asPlainObject(item);
+				if (!row) continue;
+				const id = ownString(row, 'id');
+				const kind = parseTransferKind(ownString(row, 'kind'));
+				if (!id || !kind) {
 					continue;
 				}
+				const progressRaw = asFiniteNumber(own(row, 'progress'));
 				const progress =
-					typeof row.progress === 'number' && Number.isFinite(row.progress)
-						? Math.min(100, Math.max(0, Math.round(row.progress)))
+					progressRaw != null && Number.isFinite(progressRaw)
+						? Math.min(100, Math.max(0, Math.round(progressRaw)))
 						: 0;
-				const files = parseTransferFiles(row.files);
+				const filesField = own(row, 'files');
+				const files = parseTransferFiles(Array.isArray(filesField) ? filesField : undefined);
 				const inFlight =
 					files.some(
 						(file) =>
 							file.status === 'queued' || file.status === 'uploading' || file.status === 'saving'
 					) ||
-					(row.kind === 'compress' && progress < 100) ||
-					(row.kind === 'upload' && !files.length && progress < 100);
+					(kind === 'compress' && progress < 100) ||
+					(kind === 'upload' && !files.length && progress < 100);
 				// Hard refresh kills XHR — never revive a live series.
 				if (inFlight) continue;
 				if (files.length && files.every((file) => file.status === 'cancelled')) continue;
+				const fileCountRaw = asFiniteNumber(own(row, 'fileCount'));
 				jobs.push({
-					id: row.id,
-					kind: row.kind,
-					label: typeof row.label === 'string' ? row.label : 'Transfer',
+					id,
+					kind,
+					label: ownString(row, 'label') ?? 'Transfer',
 					progress,
 					fileCount:
-						typeof row.fileCount === 'number' && Number.isFinite(row.fileCount)
-							? Math.max(1, Math.round(row.fileCount))
+						fileCountRaw != null && Number.isFinite(fileCountRaw)
+							? Math.max(1, Math.round(fileCountRaw))
 							: 1,
 					files
 				});

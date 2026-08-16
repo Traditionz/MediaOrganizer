@@ -299,7 +299,8 @@ export async function insertMediaFromStream(
 	const nodeReadable =
 		input.body instanceof Readable
 			? input.body
-			: Readable.fromWeb(input.body as import('node:stream/web').ReadableStream);
+			: // SAFETY: Request/File body is a WHATWG ReadableStream; Node fromWeb accepts that contract.
+				Readable.fromWeb(input.body as import('node:stream/web').ReadableStream);
 
 	const progress =
 		input.mediaType === 'video'
@@ -471,7 +472,9 @@ async function pumpDurationBackfill() {
 	durationBackfillRunning = true;
 	try {
 		while (durationBackfillQueue.size > 0) {
-			const profileId = durationBackfillQueue.values().next().value as string;
+			const next = durationBackfillQueue.values().next();
+			if (next.done) break;
+			const profileId = next.value;
 			durationBackfillQueue.delete(profileId);
 			try {
 				const summary = await backfillMissingDurations(profileId);
@@ -734,6 +737,7 @@ export async function saveThumbnail(
 	const dest = filePathForKey(thumbKey);
 	const tmp = `${dest}.tmp`;
 
+	// SAFETY: Request body is a WHATWG ReadableStream; Node fromWeb accepts that contract.
 	const nodeStream = Readable.fromWeb(body as import('node:stream/web').ReadableStream);
 	await pipeline(nodeStream, createWriteStream(tmp));
 

@@ -1,4 +1,5 @@
 import { appDefaults } from '$lib/config/defaults';
+import { asPlainObject, ownString } from '$lib/parse';
 
 /** Format bytes for display */
 export function formatBytes(bytes: number): string {
@@ -42,13 +43,18 @@ export interface CollageLayout {
 	h: number;
 }
 
+export type CollageResult = {
+	layouts: CollageLayout[];
+	totalHeight: number;
+};
+
 /** Shortest-column masonry layout */
 export function layoutCollage(
 	items: CollageItem[],
 	columnCount: number,
 	containerWidth: number,
 	gap = 12
-): { layouts: CollageLayout[]; totalHeight: number } {
+): CollageResult {
 	const cols = Math.max(1, columnCount);
 	const colWidth = (containerWidth - gap * (cols - 1)) / cols;
 	const heights = Array.from({ length: cols }, () => 0);
@@ -480,12 +486,19 @@ export function uploadMediaFile(
 			options.signal?.removeEventListener('abort', onAbort);
 			if (xhr.status >= 200 && xhr.status < 300) {
 				options.onProgress?.({ pct: 100, loaded: file.size, total: file.size });
-				succeed(xhr.response as { id: string; media_type?: string });
+				const payload = asPlainObject(xhr.response);
+				const id = payload ? ownString(payload, 'id') : null;
+				if (!payload || !id) {
+					fail(new Error(`Upload succeeded without media id for ${file.name}`));
+					return;
+				}
+				succeed({ id, media_type: ownString(payload, 'media_type') ?? undefined });
 			} else {
+				const payload = asPlainObject(xhr.response);
 				const msg =
-					(xhr.response && (xhr.response.message || xhr.response.error)) ||
+					(payload ? (ownString(payload, 'message') ?? ownString(payload, 'error')) : null) ??
 					`Failed to upload ${file.name}`;
-				fail(new Error(typeof msg === 'string' ? msg : `Upload failed (${xhr.status})`));
+				fail(new Error(msg));
 			}
 		};
 		xhr.onabort = () => {
@@ -510,11 +523,8 @@ export function uploadMediaFile(
 	});
 }
 
-export function isAbortError(err: unknown): boolean {
-	return (
-		(err instanceof DOMException && err.name === 'AbortError') ||
-		(err instanceof Error && err.name === 'AbortError')
-	);
+export function isAbortError(err: Error): boolean {
+	return err.name === 'AbortError';
 }
 
 /** Run async work over items with a fixed parallel pool (browser-friendly concurrency). */
@@ -524,7 +534,7 @@ export async function mapWithConcurrency<T, R>(
 	worker: (item: T, index: number) => Promise<R>,
 	signal?: AbortSignal
 ): Promise<R[]> {
-	const results = new Array<R>(items.length);
+	const results: R[] = [];
 	let next = 0;
 	const limit = Math.max(1, Math.min(concurrency, items.length || 1));
 

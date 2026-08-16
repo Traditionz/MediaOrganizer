@@ -93,7 +93,9 @@ export class LibraryState {
 
 	async refresh() {
 		const [mediaRes, albumsRes] = await Promise.all([fetch('/api/media'), fetch('/api/albums')]);
-		const media = (await mediaRes.json()) as MediaItem[];
+		const payload = await mediaRes.json();
+		// SAFETY: GET /api/media returns the MediaItem[] from listMedia.
+		const media = payload as MediaItem[];
 		this.media = media.map((item) =>
 			this.thumbReady.has(item.id) ? { ...item, has_thumbnail: true } : item
 		);
