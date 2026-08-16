@@ -62,7 +62,7 @@
 
 	function observeCardHeight(id: string) {
 		return (node: HTMLElement) => {
-			if (typeof ResizeObserver === 'undefined') return;
+			if (!('ResizeObserver' in globalThis)) return;
 			const ro = new ResizeObserver((entries) => {
 				const entry = entries[0];
 				if (entry)
@@ -75,7 +75,7 @@
 	}
 
 	function observeWidth(node: HTMLElement) {
-		if (typeof ResizeObserver === 'undefined') return;
+		if (!('ResizeObserver' in globalThis)) return;
 		const ro = new ResizeObserver((entries) => {
 			const entry = entries[0];
 			if (entry) width = entry.contentRect.width;
@@ -87,10 +87,10 @@
 
 	$effect(() => {
 		const live = new Set(items.map((item) => item.id));
-		for (const id of [...cardHeights.keys()]) {
+		for (const id of cardHeights.keys()) {
 			if (!live.has(id)) cardHeights.delete(id);
 		}
-		for (const id of [...columnAssign.keys()]) {
+		for (const id of columnAssign.keys()) {
 			if (!live.has(id)) columnAssign.delete(id);
 		}
 	});

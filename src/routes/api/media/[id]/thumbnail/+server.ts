@@ -17,6 +17,7 @@ export const GET: RequestHandler = async ({ params, cookies }) => {
 
 	const size = statSync(thumb.path).size;
 	const nodeStream = openFileReadStream(thumb.path);
+	// SAFETY: Node Readable.toWeb() is a WHATWG ReadableStream accepted by Response.
 	const webStream = Readable.toWeb(nodeStream) as ReadableStream;
 
 	return new Response(webStream, {

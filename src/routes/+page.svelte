@@ -25,6 +25,7 @@
 	import ContextMenu, { type ContextMenuItem } from '$lib/components/ContextMenu.svelte';
 	import TransferPanel from '$lib/components/TransferPanel.svelte';
 	import { isInternalDragActive } from '$lib/dragSession';
+	import { asFiniteNumber, asPlainObject, eventTargetHtml, own, ownString } from '$lib/parse';
 	import { fade } from 'svelte/transition';
 	import { createAppState, setAppState } from '$lib/state';
 
@@ -59,8 +60,9 @@
 						body: JSON.stringify({ action: 'backfill-durations' })
 					});
 					if (!res.ok) return;
-					const summary = (await res.json()) as { updated?: number };
-					if ((summary.updated ?? 0) > 0) await library.refresh();
+					const summary = asPlainObject(await res.json());
+					const updated = summary ? asFiniteNumber(own(summary, 'updated')) : null;
+					if ((updated ?? 0) > 0) await library.refresh();
 				} catch {
 					/* duration backfill optional */
 				}
@@ -414,14 +416,16 @@
 
 		const count = ui.contextMenu.mediaIds.length;
 		const single = count === 1;
-		return [
+		const items: ContextMenuItem[] = [
 			{ id: 'copy', label: count > 1 ? `Copy ${count} items` : 'Copy' },
 			{ id: 'cut', label: count > 1 ? `Cut ${count} items` : 'Cut' },
 			{ id: 'duplicate', label: count > 1 ? `Duplicate ${count}` : 'Duplicate' },
-			{ id: 'add-to-album', label: 'Add to album…' },
-			...(typeof library.activeAlbum === 'string' && library.activeAlbum !== 'all'
-				? [{ id: 'remove-from-album', label: 'Remove from album' } as ContextMenuItem]
-				: []),
+			{ id: 'add-to-album', label: 'Add to album…' }
+		];
+		if (library.activeAlbum !== null && library.activeAlbum !== 'all') {
+			items.push({ id: 'remove-from-album', label: 'Remove from album' });
+		}
+		items.push(
 			{ id: 'copy-name', label: single ? 'Copy name' : 'Copy names' },
 			{ id: 'rename', label: 'Rename', disabled: !single },
 			{ id: 'download', label: count > 1 ? `Download ${count}` : 'Download' },
@@ -431,7 +435,8 @@
 			},
 			{ id: 'sep-1', label: '', separator: true },
 			{ id: 'delete', label: 'Delete', danger: true }
-		];
+		);
+		return items;
 	});
 
 	function openMediaContextMenu(e: MouseEvent, item: MediaItem) {
@@ -449,8 +454,8 @@
 	}
 
 	function openEmptyContextMenu(e: MouseEvent) {
-		const target = e.target as HTMLElement;
-		if (target.closest('.media-card')) return;
+		const target = eventTargetHtml(e);
+		if (target?.closest('.media-card')) return;
 		e.preventDefault();
 		ui.openContextMenu({
 			x: e.clientX,
@@ -512,7 +517,7 @@
 			return;
 		}
 		if (id === 'remove-from-album') {
-			if (typeof library.activeAlbum === 'string' && library.activeAlbum !== 'all') {
+			if (library.activeAlbum !== null && library.activeAlbum !== 'all') {
 				await removeMediaFromAlbum(ids, library.activeAlbum);
 			}
 			return;
@@ -523,7 +528,7 @@
 	}
 
 	function onKeydown(e: KeyboardEvent) {
-		const target = e.target as HTMLElement | null;
+		const target = eventTargetHtml(e);
 		if (
 			target &&
 			(target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
@@ -768,7 +773,7 @@
 		const transferFiles = filesToUpload.map((file) => ({
 			id: crypto.randomUUID(),
 			name: file.name,
-			kind: (isVideoFile(file) ? 'video' : 'image') as 'video' | 'image',
+			kind: isVideoFile(file) ? ('video' as const) : ('image' as const),
 			progress: 0,
 			loaded: 0,
 			total: file.size,
@@ -827,7 +832,7 @@
 							status: 'done'
 						});
 					} catch (err) {
-						if (isAbortError(err) || signal?.aborted) {
+						if ((err instanceof Error && isAbortError(err)) || signal?.aborted) {
 							ui.setFileProgress(jobId, fileId, { status: 'cancelled' });
 							return;
 						}
@@ -854,7 +859,7 @@
 				ui.convertResultMessage = `Uploaded ${uniqueFiles.length} file(s); skipped ${duplicateFiles.length} duplicate name(s).`;
 			}
 		} catch (err) {
-			if (!isAbortError(err) && !signal?.aborted) {
+			if (!(err instanceof Error && isAbortError(err)) && !signal?.aborted) {
 				ui.errorMessage = err instanceof Error ? err.message : 'Upload failed';
 			}
 		} finally {
@@ -908,7 +913,8 @@
 
 	function onContentPointerDown(e: PointerEvent) {
 		if (e.button !== 0) return;
-		const target = e.target as HTMLElement;
+		const target = eventTargetHtml(e);
+		if (!target) return;
 		if (target.closest('.media-card')) return;
 		if (!selection.contentEl) return;
 

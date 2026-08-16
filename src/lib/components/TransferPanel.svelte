@@ -14,14 +14,14 @@
 
 	const { ui } = getAppState();
 
-	const STATUS_RANK: Record<TransferFile['status'], number> = {
+	const STATUS_RANK = {
 		uploading: 0,
 		saving: 1,
 		error: 2,
 		cancelled: 3,
 		queued: 4,
 		done: 5
-	};
+	} as const;
 
 	let expanded = $state(true);
 

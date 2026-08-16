@@ -3,6 +3,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import * as schema from './schema';
+import { asPlainObject, type JsonObject, type JsonValue } from '$lib/parse';
 
 export const DATA_DIR = join(process.cwd(), 'data');
 export const FILES_DIR = join(DATA_DIR, 'files');
@@ -19,18 +20,29 @@ createSchema();
 
 const db = drizzle(sqlite, { schema });
 
-function tableNames(): Set<string> {
-	const rows = sqlite
-		.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
-		.all() as Array<{ name: string }>;
-	return new Set(rows.map((r) => r.name));
+function sqliteNames(rows: JsonObject[]): string[] {
+	const names: string[] = [];
+	for (const row of rows) {
+		const desc = Object.getOwnPropertyDescriptor(row, 'name');
+		if (!desc) continue;
+		const name = `${desc.value}`;
+		if (name) names.push(name);
+	}
+	return names;
 }
 
 function tableColumns(table: string): Set<string> {
-	const rows = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-	return new Set(rows.map((r) => r.name));
+	const rows = sqlite.prepare(`PRAGMA table_info(${table})`).all();
+	const bags: JsonObject[] = [];
+	if (Array.isArray(rows)) {
+		for (const row of rows) {
+			// SAFETY: PRAGMA table_info rows are JSON-shaped column objects.
+			const bag = asPlainObject(row as JsonValue);
+			if (bag) bags.push(bag);
+		}
+	}
+	return new Set(sqliteNames(bags));
 }
-
 
 function createSchema() {
 	sqlite.exec(`
@@ -94,7 +106,6 @@ function createSchema() {
 	}
 }
 
-
 export const PROFILE_COOKIE = 'mo_profile';
 
 export function newId(): string {
@@ -105,9 +116,8 @@ export function filePathForKey(storageKey: string): string {
 	return join(FILES_DIR, storageKey);
 }
 
-export function isUniqueConstraintError(err: unknown): boolean {
-	const message = err instanceof Error ? err.message : String(err);
-	return message.includes('UNIQUE');
+export function isUniqueConstraintError(err: Error): boolean {
+	return err.message.includes('UNIQUE');
 }
 
 export default db;

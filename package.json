@@ -12,11 +12,13 @@
 		"reinstall": "pnpm install --ignore-scripts && pnpm prepare && node node_modules/ffmpeg-static/install.js",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"lint": "oxlint .",
 		"format": "prettier --write .",
 		"db:push": "drizzle-kit push",
 		"db:studio": "drizzle-kit studio"
 	},
 	"devDependencies": {
+		"@oxlint/plugins": "1.78.0",
 		"@sveltejs/adapter-auto": "^7.0.1",
 		"@sveltejs/kit": "^2.70.2",
 		"@sveltejs/vite-plugin-svelte": "^7.3.0",
@@ -25,6 +27,7 @@
 		"@types/ffmpeg-static": "^3.0.3",
 		"@types/node": "^26.2.0",
 		"drizzle-kit": "^0.31.10",
+		"oxlint": "1.78.0",
 		"prettier": "^3.9.6",
 		"prettier-plugin-svelte": "^4.1.1",
 		"prettier-plugin-tailwindcss": "^0.8.1",

@@ -6,6 +6,7 @@
 	import Volume1 from '@lucide/svelte/icons/volume-1';
 	import Volume2 from '@lucide/svelte/icons/volume-2';
 	import VolumeX from '@lucide/svelte/icons/volume-x';
+	import { eventHtml } from '$lib/parse';
 
 	interface Props {
 		src: string;
@@ -192,7 +193,8 @@
 
 	function updateTimelineHover(e: PointerEvent) {
 		if (duration <= 0) return;
-		const hit = e.currentTarget as HTMLElement;
+		const hit = eventHtml(e);
+		if (!hit) return;
 		const ratio = ratioFromClientX(e.clientX, hit, '.custom-progress');
 		hoverRatio = ratio;
 		hoverTime = ratio * duration;
@@ -271,7 +273,8 @@
 	}
 
 	function onScrubPointerDown(e: PointerEvent) {
-		const track = e.currentTarget as HTMLElement;
+		const track = eventHtml(e);
+		if (!track) return;
 		scrubbing = true;
 		pendingSeek = null;
 		showControls = true;
@@ -284,23 +287,29 @@
 	function onScrubPointerMove(e: PointerEvent) {
 		updateTimelineHover(e);
 		if (!scrubbing) return;
-		previewSeek(e.clientX, e.currentTarget as HTMLElement);
+		const hit = eventHtml(e);
+		if (hit) previewSeek(e.clientX, hit);
 	}
 
 	function onScrubPointerUp(e: PointerEvent) {
 		if (scrubbing) {
-			previewSeek(e.clientX, e.currentTarget as HTMLElement);
+			const hit = eventHtml(e);
+			if (hit) previewSeek(e.clientX, hit);
 			commitSeek();
 			scrubbing = false;
 			try {
-				(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+				eventHtml(e)?.releasePointerCapture(e.pointerId);
 			} catch {
 				/* ignore */
 			}
 			if (playing) startTick();
 			scheduleHide();
 		}
-		const node = e.currentTarget as HTMLElement;
+		const node = eventHtml(e);
+		if (!node) {
+			hideTimelineHover();
+			return;
+		}
 		const rect = node.getBoundingClientRect();
 		const inside =
 			e.clientX >= rect.left &&
@@ -312,7 +321,8 @@
 	}
 
 	function onVolumePointerDown(e: PointerEvent) {
-		const hit = e.currentTarget as HTMLElement;
+		const hit = eventHtml(e);
+		if (!hit) return;
 		volumeDragging = true;
 		showControls = true;
 		hit.setPointerCapture(e.pointerId);
@@ -321,19 +331,19 @@
 
 	function onVolumePointerMove(e: PointerEvent) {
 		if (!volumeDragging) return;
-		applyVolume(
-			ratioFromClientX(e.clientX, e.currentTarget as HTMLElement, '.custom-volume-track')
-		);
+		const hit = eventHtml(e);
+		if (!hit) return;
+		applyVolume(ratioFromClientX(e.clientX, hit, '.custom-volume-track'));
 	}
 
 	function onVolumePointerUp(e: PointerEvent) {
 		if (!volumeDragging) return;
-		applyVolume(
-			ratioFromClientX(e.clientX, e.currentTarget as HTMLElement, '.custom-volume-track')
-		);
+		const hit = eventHtml(e);
+		if (!hit) return;
+		applyVolume(ratioFromClientX(e.clientX, hit, '.custom-volume-track'));
 		volumeDragging = false;
 		try {
-			(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+			eventHtml(e)?.releasePointerCapture(e.pointerId);
 		} catch {
 			/* ignore */
 		}

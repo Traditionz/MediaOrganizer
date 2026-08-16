@@ -7,7 +7,7 @@ let dragGhostEl: HTMLElement | null = null;
 
 export function beginMediaDrag(ids: string[]) {
 	kind = 'media';
-	mediaIds = ids.filter((id) => typeof id === 'string' && id.length > 0);
+	mediaIds = ids.filter((id) => id.length > 0);
 }
 
 export function endInternalDrag() {
@@ -45,8 +45,8 @@ export function setCompactMediaDragImage(dt: DataTransfer, sourceEl: HTMLElement
 		'z-index:99999'
 	].join(';');
 
-	const media = sourceEl.querySelector('img, video') as HTMLImageElement | HTMLVideoElement | null;
-	if (media) {
+	const media = sourceEl.querySelector('img, video');
+	if (media instanceof HTMLImageElement || media instanceof HTMLVideoElement) {
 		const preview = document.createElement('img');
 		preview.alt = '';
 		preview.draggable = false;

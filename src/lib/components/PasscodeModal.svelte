@@ -44,11 +44,8 @@
 
 	// Reset fields whenever the dialog opens / target changes
 	$effect(() => {
-		if (!open) return;
-		mode;
-		profileName;
-		requiresPasscode;
-		mediaCount;
+		const resetKey = `${open}:${mode}:${profileName}:${requiresPasscode}:${mediaCount}`;
+		if (!open || resetKey === '\0') return;
 		name = mode === 'create' ? profileName : '';
 		passcode = '';
 		confirmPasscode = '';
@@ -76,10 +73,9 @@
 
 		if (mode === 'delete') {
 			const typedName = confirmName.trim();
-			const countRaw =
-				typeof confirmMediaCount === 'number'
-					? String(confirmMediaCount)
-					: String(confirmMediaCount).trim();
+			const countRaw = Number.isFinite(confirmMediaCount)
+				? String(confirmMediaCount)
+				: String(confirmMediaCount).trim();
 			const typedCount = Number(countRaw);
 			if (!typedName) {
 				localError = 'Enter the profile name to confirm';

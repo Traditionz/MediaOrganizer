@@ -2,11 +2,12 @@ import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { unlockProfile } from '$lib/server/profiles';
 import { setProfileCookie } from '$lib/server/profileContext';
+import { ownString, readJsonObject } from '$lib/parse';
 
 export const POST: RequestHandler = async ({ request, cookies }) => {
-	const body = await request.json();
-	const id = typeof body?.id === 'string' ? body.id : '';
-	const passcode = typeof body?.passcode === 'string' ? body.passcode : '';
+	const body = await readJsonObject(request);
+	const id = body ? ownString(body, 'id') ?? '' : '';
+	const passcode = body ? ownString(body, 'passcode') ?? '' : '';
 	if (!id) throw error(400, 'Profile id is required');
 
 	try {

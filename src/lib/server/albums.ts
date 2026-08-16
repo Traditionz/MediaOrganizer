@@ -41,7 +41,7 @@ export function createAlbum(profileId: string, name: string): Album {
 	try {
 		db.insert(albums).values({ id, profileId, name: trimmed }).run();
 	} catch (err) {
-		if (isUniqueConstraintError(err)) {
+		if (err instanceof Error && isUniqueConstraintError(err)) {
 			throw new Error('An album with that name already exists');
 		}
 		throw err;
@@ -73,7 +73,7 @@ export function renameAlbum(profileId: string, id: string, name: string): Album 
 			.where(and(eq(albums.id, id), eq(albums.profileId, profileId)))
 			.run();
 	} catch (err) {
-		if (isUniqueConstraintError(err)) {
+		if (err instanceof Error && isUniqueConstraintError(err)) {
 			throw new Error('An album with that name already exists');
 		}
 		throw err;
@@ -128,7 +128,7 @@ export function duplicateAlbum(profileId: string, id: string): Album {
 			}
 		});
 	} catch (err) {
-		if (isUniqueConstraintError(err)) {
+		if (err instanceof Error && isUniqueConstraintError(err)) {
 			throw new Error('An album with that name already exists');
 		}
 		throw err;

@@ -9,6 +9,7 @@
 	import User from '@lucide/svelte/icons/user';
 	import type { Album, Profile } from '$lib/types';
 	import { endInternalDrag, getInternalDrag, isInternalDragActive } from '$lib/dragSession';
+	import { asString, eventHtml, parseJsonText } from '$lib/parse';
 	import ContextMenu, { type ContextMenuItem } from './ContextMenu.svelte';
 
 	interface Props {
@@ -175,17 +176,23 @@
 
 	function onDragLeaveTarget(e: DragEvent, target: string) {
 		if (dropTarget === target) {
-			const related = e.relatedTarget as Node | null;
-			if (related && (e.currentTarget as Node).contains(related)) return;
+			const related = e.relatedTarget instanceof Node ? e.relatedTarget : null;
+			const current = eventHtml(e);
+			if (related && current?.contains(related)) return;
 			dropTarget = null;
 		}
 	}
 
 	function parseIdList(raw: string): string[] {
 		try {
-			const parsed = JSON.parse(raw);
+			const parsed = parseJsonText(raw);
 			if (!Array.isArray(parsed)) return [];
-			return parsed.filter((id): id is string => typeof id === 'string' && id.length > 0);
+			const ids: string[] = [];
+			for (const item of parsed) {
+				const id = asString(item);
+				if (id) ids.push(id);
+			}
+			return ids;
 		} catch {
 			return [];
 		}

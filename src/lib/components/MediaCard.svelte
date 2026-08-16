@@ -166,7 +166,7 @@
 			if (needsDuration) startLazyDuration();
 		};
 
-		if (typeof IntersectionObserver === 'undefined') {
+		if (!('IntersectionObserver' in globalThis)) {
 			runVisibleWork();
 			return () => {
 				if (cardEl === node) cardEl = undefined;

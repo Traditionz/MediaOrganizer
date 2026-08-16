@@ -11,6 +11,7 @@
 
 <script lang="ts">
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+	import { eventTargetNode } from '$lib/parse';
 
 	interface Props {
 		open: boolean;
@@ -111,8 +112,8 @@
 
 	function onPointerDown(e: PointerEvent) {
 		if (!open || !menuEl) return;
-		const target = e.target as Node;
-		if (!menuEl.contains(target)) close();
+		const target = eventTargetNode(e);
+		if (target && !menuEl.contains(target)) close();
 	}
 
 	const openSubmenu = $derived(

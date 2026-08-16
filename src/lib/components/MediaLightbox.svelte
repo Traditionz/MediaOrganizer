@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { browser } from '$app/environment';
 	import type { MediaItem } from '$lib/types';
 	import { formatBytes, formatDate } from '$lib/utils';
 	import { fade, scale } from 'svelte/transition';
@@ -30,8 +31,8 @@
 	});
 
 	const fitSize = $derived.by(() => {
-		const maxW = typeof window !== 'undefined' ? window.innerWidth * 0.88 : 900;
-		const maxH = typeof window !== 'undefined' ? window.innerHeight * 0.68 : 500;
+		const maxW = browser ? window.innerWidth * 0.88 : 900;
+		const maxH = browser ? window.innerHeight * 0.68 : 500;
 		const srcW = intrinsic?.w ?? item?.width ?? 1280;
 		const srcH = intrinsic?.h ?? item?.height ?? Math.round(srcW * aspect);
 		const scale = Math.min(1, maxW / srcW, maxH / srcH);
@@ -53,7 +54,7 @@
 		e.stopPropagation();
 		resizing = true;
 		resizeStart = { x: e.clientX, y: e.clientY, scale: userScale };
-		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+		if (e.currentTarget instanceof HTMLElement) e.currentTarget.setPointerCapture(e.pointerId);
 	}
 
 	function onResizeMove(e: PointerEvent) {
@@ -62,10 +63,9 @@
 		const dy = e.clientY - resizeStart.y;
 		const delta = (dx + dy) / 2;
 		const next = resizeStart.scale + delta / fitSize.w;
-		const maxScale =
-			typeof window !== 'undefined'
-				? Math.min((window.innerWidth * 0.92) / fitSize.w, (window.innerHeight * 0.75) / fitSize.h)
-				: 1.4;
+		const maxScale = browser
+			? Math.min((window.innerWidth * 0.92) / fitSize.w, (window.innerHeight * 0.75) / fitSize.h)
+			: 1.4;
 		userScale = Math.min(maxScale, Math.max(0.55, next));
 	}
 
@@ -74,7 +74,8 @@
 		resizing = false;
 		resizeStart = null;
 		try {
-			(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+			if (e.currentTarget instanceof HTMLElement)
+				e.currentTarget.releasePointerCapture(e.pointerId);
 		} catch {
 			/* ignore */
 		}

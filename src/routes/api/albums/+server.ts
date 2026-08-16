@@ -8,6 +8,7 @@ import {
 	renameAlbum
 } from '$lib/server/albums';
 import { resolveProfileFromCookies } from '$lib/server/profileContext';
+import { ownString, readJsonObject } from '$lib/parse';
 
 function requireProfile(cookies: Parameters<RequestHandler>[0]['cookies']) {
 	const profile = resolveProfileFromCookies(cookies);
@@ -22,10 +23,11 @@ export const GET: RequestHandler = async ({ cookies }) => {
 
 export const POST: RequestHandler = async ({ request, cookies }) => {
 	const profile = requireProfile(cookies);
-	const body = await request.json();
+	const body = await readJsonObject(request);
+	const action = body ? ownString(body, 'action') : null;
 
-	if (body?.action === 'duplicate') {
-		const id = typeof body?.id === 'string' ? body.id : '';
+	if (action === 'duplicate') {
+		const id = body ? (ownString(body, 'id') ?? '') : '';
 		if (!id) throw error(400, 'Album id is required');
 		try {
 			return json(duplicateAlbum(profile.id, id), { status: 201 });
@@ -37,7 +39,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		}
 	}
 
-	const name = typeof body?.name === 'string' ? body.name.trim() : '';
+	const name = (body ? ownString(body, 'name') : null)?.trim() ?? '';
 	if (!name) throw error(400, 'Album name is required');
 
 	try {
@@ -51,16 +53,17 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
 export const PATCH: RequestHandler = async ({ request, cookies }) => {
 	const profile = requireProfile(cookies);
-	const body = await request.json();
-	const id = typeof body?.id === 'string' ? body.id : '';
+	const body = await readJsonObject(request);
+	const id = body ? (ownString(body, 'id') ?? '') : '';
 	if (!id) throw error(400, 'Album id is required');
 
-	if (typeof body?.name !== 'string') {
+	const name = body ? ownString(body, 'name') : null;
+	if (name == null) {
 		throw error(400, 'Album name is required');
 	}
 
 	try {
-		return json(renameAlbum(profile.id, id, body.name));
+		return json(renameAlbum(profile.id, id, name));
 	} catch (err) {
 		const message = err instanceof Error ? err.message : 'Failed to rename album';
 		if (message.includes('not found')) throw error(404, message);
@@ -73,8 +76,8 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 
 export const DELETE: RequestHandler = async ({ request, cookies }) => {
 	const profile = requireProfile(cookies);
-	const body = await request.json();
-	const id = typeof body?.id === 'string' ? body.id : '';
+	const body = await readJsonObject(request);
+	const id = body ? (ownString(body, 'id') ?? '') : '';
 	if (!id) throw error(400, 'Album id is required');
 	deleteAlbum(profile.id, id);
 	return json({ ok: true });
