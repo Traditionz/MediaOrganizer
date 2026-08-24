@@ -205,7 +205,13 @@ Still uses local `data/` — this project is not intended for remote production 
 
 - Click to select; **Ctrl/Cmd** toggle; **Shift** range select
 - Drag on empty space for a Windows‑style **marquee** selection
-- Multi‑select to add to an album, download, duplicate, cut/copy, or delete
+- Multi‑select to add to an album, download, duplicate, cut/copy, or move to trash
+
+### Trash
+
+- **Move to trash** soft-deletes media (files stay on disk)
+- Sidebar **Trash** view: restore or delete forever
+- Items in trash longer than **30 days** are permanently deleted on page load
 
 ### Media context menu (right‑click)
 
@@ -218,17 +224,17 @@ Still uses local `data/` — this project is not intended for remote production 
 | Rename              | Single item                                           |
 | Download            | One or many                                           |
 | Compress (AV1/AVIF) | Manual re‑encode (see Compression below)              |
-| Delete              | Confirms first                                        |
+| Move to trash       | Soft delete; permanently removed after 30 days        |
 
-Empty area: **Paste**, **Upload…**
+Empty area: **Paste**, **Upload…** (in Trash: **Empty trash**)
 
 ### Upload settings
 
 The toolbar **Upload settings** group (separate from filters) has:
 
-| Setting             | Default | Effect                                                                                                                                                 |
-| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Warn duplicates** | on      | If a file name already exists in the library (or twice in the same batch), ask before saving a duplicate. Turn off to always upload without prompting. |
+| Setting             | Default | Effect                                                                                                                                                                                                 |
+| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Warn duplicates** | on      | If a file name already exists, ask: **Skip duplicates** (default) or **Upload as duplicates**. Skipping into an album links the existing library item. Off = skip silently (Amazon Photos–style). |
 
 ### Compression
 
@@ -244,7 +250,7 @@ Uploads are stored as-is. There is **no** background or on-upload recompress.
 | Ctrl/Cmd + X | Cut                                  |
 | Ctrl/Cmd + V | Paste (copy → duplicate, cut → move) |
 | F2           | Rename                               |
-| Delete       | Delete selection                     |
+| Delete       | Move selection to trash (or delete forever in Trash) |
 
 ---
 

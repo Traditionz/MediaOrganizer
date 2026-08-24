@@ -144,6 +144,7 @@
 					>
 						<CustomPlayer
 							src={`/api/media/${item.id}`}
+							mediaId={item.id}
 							onmetadata={(meta) => {
 								intrinsic = { w: meta.w, h: meta.h };
 							}}

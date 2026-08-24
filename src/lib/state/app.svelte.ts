@@ -1,4 +1,5 @@
 import { createContext } from 'svelte';
+import type { LibraryAlbumFilter } from '$lib/types';
 import { PreferencesState } from './preferences.svelte';
 import { LibraryState, type LibraryLoad } from './library.svelte';
 import { SelectionState } from './selection.svelte';
@@ -21,7 +22,7 @@ export class AppState {
 		this.library.sync(data);
 	}
 
-	selectAlbum(id: string | null | 'all') {
+	selectAlbum(id: LibraryAlbumFilter) {
 		this.library.setActiveAlbum(id);
 		this.selection.selectedIds.clear();
 		this.selection.selectionAnchor = null;

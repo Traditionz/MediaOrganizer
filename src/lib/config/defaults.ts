@@ -3,7 +3,7 @@
  * User overrides (theme, duplicate warn) still win via localStorage after first change.
  */
 import { env } from '$env/dynamic/public';
-import type { ThemeMode, ViewMode } from '$lib/types';
+import type { LibraryAlbumFilter, ThemeMode, ViewMode } from '$lib/types';
 
 export type DefaultAlbumView = 'unassigned' | 'all';
 
@@ -58,6 +58,6 @@ export const appDefaults = {
 	uploadConcurrency: int('PUBLIC_UPLOAD_CONCURRENCY', 6, 1, 12)
 } as const;
 
-export function defaultActiveAlbum(): string | null | 'all' {
+export function defaultActiveAlbum(): LibraryAlbumFilter {
 	return appDefaults.albumView === 'all' ? 'all' : null;
 }

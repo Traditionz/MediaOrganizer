@@ -99,6 +99,12 @@ function createSchema() {
 	if (mediaCols.size > 0 && !mediaCols.has('duration')) {
 		sqlite.exec('ALTER TABLE media ADD COLUMN duration REAL');
 	}
+	if (mediaCols.size > 0 && !mediaCols.has('deleted_at')) {
+		sqlite.exec('ALTER TABLE media ADD COLUMN deleted_at TEXT');
+	}
+	sqlite.exec(
+		'CREATE INDEX IF NOT EXISTS idx_media_deleted ON media(profile_id, deleted_at)'
+	);
 
 	const profileCols = tableColumns('profiles');
 	if (profileCols.size > 0 && !profileCols.has('passcode_hash')) {

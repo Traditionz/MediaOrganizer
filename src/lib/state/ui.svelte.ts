@@ -31,7 +31,12 @@ export type TransferJob = {
 	files: TransferFile[];
 };
 
-export type ConfirmKind = 'delete-album' | 'delete-media' | 'upload-duplicates';
+export type ConfirmKind =
+	| 'delete-album'
+	| 'delete-media'
+	| 'delete-media-forever'
+	| 'empty-trash'
+	| 'upload-duplicates';
 
 function parseFileStatus(value: string | null): TransferFileStatus {
 	switch (value) {

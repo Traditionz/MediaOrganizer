@@ -69,14 +69,14 @@
 
 	function handleDragStart(e: DragEvent) {
 		if (!e.dataTransfer) return;
+		// Snapshot selection up front — SvelteSet + click handlers can mutate mid-gesture.
+		const selected = selectedIds ? Array.from(selectedIds) : [];
 		const ids =
-			selectedIds && selectedIds.has(item.id) && selectedIds.size > 1
-				? [...selectedIds]
-				: [item.id];
+			selected.length > 1 && selected.includes(item.id) ? selected : [item.id];
 		beginMediaDrag(ids);
 		e.dataTransfer.setData(MEDIA_MIME, JSON.stringify(ids));
 		e.dataTransfer.setData('text/plain', `media:${ids.join(',')}`);
-		e.dataTransfer.effectAllowed = 'move';
+		e.dataTransfer.effectAllowed = 'copyMove';
 		dragging = true;
 		if (cardEl) setCompactMediaDragImage(e.dataTransfer, cardEl, ids.length);
 	}

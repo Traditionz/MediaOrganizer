@@ -44,6 +44,7 @@
 		library.sync({
 			albums: data.albums,
 			media: data.media,
+			trash: data.trash,
 			totalCount: data.totalCount,
 			profiles: data.profiles,
 			activeProfile: data.activeProfile
@@ -404,6 +405,16 @@
 
 	const contextMenuItems = $derived.by((): ContextMenuItem[] => {
 		if (ui.contextMenu.kind === 'empty') {
+			if (library.activeAlbum === 'trash') {
+				return [
+					{
+						id: 'empty-trash',
+						label: 'Empty trash',
+						danger: true,
+						disabled: library.trashCount === 0
+					}
+				];
+			}
 			return [
 				{
 					id: 'paste',
@@ -416,13 +427,31 @@
 
 		const count = ui.contextMenu.mediaIds.length;
 		const single = count === 1;
+
+		if (library.activeAlbum === 'trash') {
+			return [
+				{ id: 'restore', label: count > 1 ? `Restore ${count}` : 'Restore' },
+				{ id: 'download', label: count > 1 ? `Download ${count}` : 'Download' },
+				{ id: 'sep-1', label: '', separator: true },
+				{
+					id: 'delete-forever',
+					label: count > 1 ? `Delete ${count} forever` : 'Delete forever',
+					danger: true
+				}
+			];
+		}
+
 		const items: ContextMenuItem[] = [
 			{ id: 'copy', label: count > 1 ? `Copy ${count} items` : 'Copy' },
 			{ id: 'cut', label: count > 1 ? `Cut ${count} items` : 'Cut' },
 			{ id: 'duplicate', label: count > 1 ? `Duplicate ${count}` : 'Duplicate' },
 			{ id: 'add-to-album', label: 'Add to album…' }
 		];
-		if (library.activeAlbum !== null && library.activeAlbum !== 'all') {
+		if (
+			library.activeAlbum !== null &&
+			library.activeAlbum !== 'all' &&
+			library.activeAlbum !== 'trash'
+		) {
 			items.push({ id: 'remove-from-album', label: 'Remove from album' });
 		}
 		items.push(
@@ -434,7 +463,7 @@
 				label: count > 1 ? `Compress ${count} (AV1/AVIF)` : 'Compress (AV1/AVIF)'
 			},
 			{ id: 'sep-1', label: '', separator: true },
-			{ id: 'delete', label: 'Delete', danger: true }
+			{ id: 'delete', label: 'Move to trash', danger: true }
 		);
 		return items;
 	});
@@ -504,11 +533,38 @@
 			if (!ids.length) return;
 			ui.openConfirmModal({
 				kind: 'delete-media',
-				title: 'Delete media',
-				message: `Delete ${ids.length} item(s)?`,
-				confirmLabel: 'Delete',
+				title: 'Move to trash',
+				message: `Move ${ids.length} item(s) to trash? Items are deleted forever after 30 days.`,
+				confirmLabel: 'Move to trash',
 				destructive: true,
 				mediaIds: ids
+			});
+			return;
+		}
+		if (id === 'delete-forever') {
+			if (!ids.length) return;
+			ui.openConfirmModal({
+				kind: 'delete-media-forever',
+				title: 'Delete forever',
+				message: `Permanently delete ${ids.length} item(s)? This cannot be undone.`,
+				confirmLabel: 'Delete forever',
+				destructive: true,
+				mediaIds: ids
+			});
+			return;
+		}
+		if (id === 'restore') {
+			await restoreSelected(ids);
+			return;
+		}
+		if (id === 'empty-trash') {
+			ui.openConfirmModal({
+				kind: 'empty-trash',
+				title: 'Empty trash',
+				message: `Permanently delete all ${library.trashCount} item(s) in trash?`,
+				confirmLabel: 'Empty trash',
+				destructive: true,
+				mediaIds: library.trash.map((m) => m.id)
 			});
 			return;
 		}
@@ -517,7 +573,11 @@
 			return;
 		}
 		if (id === 'remove-from-album') {
-			if (library.activeAlbum !== null && library.activeAlbum !== 'all') {
+			if (
+				library.activeAlbum !== null &&
+				library.activeAlbum !== 'all' &&
+				library.activeAlbum !== 'trash'
+			) {
 				await removeMediaFromAlbum(ids, library.activeAlbum);
 			}
 			return;
@@ -594,6 +654,9 @@
 			if (selection.selectedIds.has(id)) selection.selectedIds.delete(id);
 			else selection.selectedIds.add(id);
 			selection.selectionAnchor = id;
+		} else if (selection.selectedIds.has(id) && selection.selectedIds.size > 1) {
+			// Keep multi-select so drag-to-album moves the whole set (Explorer-style).
+			selection.selectionAnchor = id;
 		} else {
 			selection.selectOnly(id);
 		}
@@ -631,22 +694,58 @@
 
 	async function deleteSelected() {
 		if (!selection.selectedIds.size) return;
+		if (library.activeAlbum === 'trash') {
+			ui.openConfirmModal({
+				kind: 'delete-media-forever',
+				title: 'Delete forever',
+				message: `Permanently delete ${selection.selectedIds.size} item(s)? This cannot be undone.`,
+				confirmLabel: 'Delete forever',
+				destructive: true,
+				mediaIds: [...selection.selectedIds]
+			});
+			return;
+		}
 		ui.openConfirmModal({
 			kind: 'delete-media',
-			title: 'Delete media',
-			message: `Delete ${selection.selectedIds.size} item(s)?`,
-			confirmLabel: 'Delete',
+			title: 'Move to trash',
+			message: `Move ${selection.selectedIds.size} item(s) to trash? Items are deleted forever after 30 days.`,
+			confirmLabel: 'Move to trash',
 			destructive: true,
 			mediaIds: [...selection.selectedIds]
 		});
 	}
 
-	async function runDeleteMedia(ids: string[]) {
+	async function restoreSelected(ids?: string[]) {
+		const targetIds = ids ?? [...selection.selectedIds];
+		if (!targetIds.length) return;
+		await fetch('/api/media', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ action: 'restore', ids: targetIds })
+		});
+		for (const mid of targetIds) selection.selectedIds.delete(mid);
+		selection.selectionAnchor = null;
+		await library.refresh();
+	}
+
+	async function emptyTrash() {
+		if (!library.trash.length) return;
+		ui.openConfirmModal({
+			kind: 'empty-trash',
+			title: 'Empty trash',
+			message: `Permanently delete all ${library.trashCount} item(s) in trash?`,
+			confirmLabel: 'Empty trash',
+			destructive: true,
+			mediaIds: library.trash.map((m) => m.id)
+		});
+	}
+
+	async function runDeleteMedia(ids: string[], permanent = false) {
 		if (!ids.length) return;
 		await fetch('/api/media', {
 			method: 'DELETE',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ ids })
+			body: JSON.stringify({ ids, permanent })
 		});
 		for (const mid of ids) selection.selectedIds.delete(mid);
 		selection.selectionAnchor = null;
@@ -659,7 +758,8 @@
 		ui.confirmModalBusy = true;
 		try {
 			if (kind === 'upload-duplicates') {
-				resolveUploadDuplicatePrompt(true);
+				// Primary confirm = Skip duplicates (Amazon Photos–style)
+				resolveUploadDuplicatePrompt(false);
 				ui.closeConfirmModal();
 				return;
 			}
@@ -669,7 +769,12 @@
 				return;
 			}
 			if (kind === 'delete-media') {
-				await runDeleteMedia(mediaIds);
+				await runDeleteMedia(mediaIds, false);
+				ui.closeConfirmModal();
+				return;
+			}
+			if (kind === 'delete-media-forever' || kind === 'empty-trash') {
+				await runDeleteMedia(mediaIds, true);
 				ui.closeConfirmModal();
 			}
 		} catch (err) {
@@ -680,7 +785,8 @@
 
 	function handleConfirmModalCancel() {
 		if (ui.confirmModal.kind === 'upload-duplicates') {
-			resolveUploadDuplicatePrompt(false);
+			// Secondary action = Upload as duplicates
+			resolveUploadDuplicatePrompt(true);
 		}
 		ui.closeConfirmModal();
 	}
@@ -712,19 +818,30 @@
 		const extra = duplicateNames.length > 5 ? ` and ${duplicateNames.length - 5} more` : '';
 		const message =
 			duplicateNames.length === 1
-				? `"${duplicateNames[0]}" is already in your library. Upload another copy anyway?`
-				: `${duplicateNames.length} files already exist by name (${sample}${extra}). Upload duplicates anyway?`;
+				? `"${duplicateNames[0]}" is already in your library. Skip it, or upload another copy as a duplicate?`
+				: `${duplicateNames.length} files already exist by name (${sample}${extra}). Skip them, or upload as duplicates?`;
 
 		return new Promise((resolve) => {
 			uploadDuplicateResolver = resolve;
 			ui.openConfirmModal({
 				kind: 'upload-duplicates',
-				title: 'Duplicate file names',
+				title: 'Duplicates found',
 				message,
-				confirmLabel: 'Upload duplicates',
-				cancelLabel: 'Skip duplicates'
+				confirmLabel: 'Skip duplicates',
+				cancelLabel: 'Upload as duplicates'
 			});
 		});
+	}
+
+	/** Existing library ids matching file names (case-insensitive, one id per name). */
+	function existingIdsForDuplicateFiles(files: File[]): string[] {
+		const wanted = new Set(files.map((f) => f.name.toLowerCase()));
+		const byName = new Map<string, string>();
+		for (const item of library.media) {
+			const key = item.original_name.toLowerCase();
+			if (wanted.has(key) && !byName.has(key)) byName.set(key, item.id);
+		}
+		return [...byName.values()];
 	}
 
 	async function uploadFiles(fileList: FileList | File[]) {
@@ -749,24 +866,49 @@
 			}
 		}
 
+		const albumId = library.pasteTargetAlbumId();
 		let filesToUpload = uniqueFiles;
+		let uploadDupes = false;
+
 		if (duplicateFiles.length) {
 			if (prefs.warnDuplicateUploads) {
-				const uploadDupes = await askUploadDuplicates([
+				const choice = await askUploadDuplicates([
 					...new Set(duplicateFiles.map((f) => f.name))
 				]);
-				if (uploadDupes == null) return;
+				if (choice == null) return;
+				uploadDupes = choice;
 				if (uploadDupes) filesToUpload = [...uniqueFiles, ...duplicateFiles];
 			} else {
-				filesToUpload = [...uniqueFiles, ...duplicateFiles];
+				// Amazon Photos–style: skip duplicates by default when warn is off
+				uploadDupes = false;
+			}
+		}
+
+		// Skipping duplicates into an album: link existing library items instead of re-uploading
+		if (duplicateFiles.length && !uploadDupes && albumId) {
+			const existingIds = existingIdsForDuplicateFiles(duplicateFiles);
+			if (existingIds.length) {
+				await fetch('/api/media', {
+					method: 'PATCH',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ action: 'add-to-album', ids: existingIds, albumId })
+				});
 			}
 		}
 
 		if (!filesToUpload.length) {
-			ui.errorMessage =
-				duplicateFiles.length > 0
-					? 'Upload skipped — duplicate names were not saved.'
-					: 'Nothing to upload.';
+			await library.refresh();
+			if (duplicateFiles.length) {
+				const linked = albumId
+					? existingIdsForDuplicateFiles(duplicateFiles).length
+					: 0;
+				ui.convertResultMessage =
+					linked > 0
+						? `Skipped ${duplicateFiles.length} duplicate(s); added ${linked} existing item(s) to album.`
+						: `Skipped ${duplicateFiles.length} duplicate name(s).`;
+			} else {
+				ui.errorMessage = 'Nothing to upload.';
+			}
 			return;
 		}
 
@@ -787,8 +929,6 @@
 			files: transferFiles
 		});
 
-		const albumId =
-			library.activeAlbum === 'all' || library.activeAlbum === null ? null : library.activeAlbum;
 		const errors: string[] = [];
 		const signal = ui.transferSignal(jobId);
 
@@ -851,12 +991,12 @@
 					errors.length === 1
 						? errors[0]
 						: `${errors.length} of ${filesToUpload.length} uploads failed: ${errors[0]}`;
-			} else if (
-				prefs.warnDuplicateUploads &&
-				duplicateFiles.length &&
-				filesToUpload.length === uniqueFiles.length
-			) {
-				ui.convertResultMessage = `Uploaded ${uniqueFiles.length} file(s); skipped ${duplicateFiles.length} duplicate name(s).`;
+			} else if (duplicateFiles.length && !uploadDupes) {
+				const linked = albumId ? existingIdsForDuplicateFiles(duplicateFiles).length : 0;
+				ui.convertResultMessage =
+					linked > 0
+						? `Uploaded ${uniqueFiles.length} file(s); skipped ${duplicateFiles.length} duplicate(s) and added ${linked} to album.`
+						: `Uploaded ${uniqueFiles.length} file(s); skipped ${duplicateFiles.length} duplicate name(s).`;
 			}
 		} catch (err) {
 			if (!(err instanceof Error && isAbortError(err)) && !signal?.aborted) {
@@ -1010,6 +1150,7 @@
 			activeAlbum={library.activeAlbum}
 			totalCount={library.totalCount}
 			unassignedCount={library.unassignedCount}
+			trashCount={library.trashCount}
 			profile={library.activeProfile}
 			profiles={library.profiles}
 			onselect={(id) => app.selectAlbum(id)}
@@ -1037,6 +1178,8 @@
 				uploading={ui.uploading}
 				warnDuplicateUploads={prefs.warnDuplicateUploads}
 				theme={prefs.theme}
+				trashMode={library.activeAlbum === 'trash'}
+				trashCount={library.trashCount}
 				onviewMode={(m) => prefs.setViewMode(m)}
 				onshowImages={(v) => prefs.setShowImages(v)}
 				onshowVideos={(v) => prefs.setShowVideos(v)}
@@ -1050,6 +1193,8 @@
 				onopenAlbumPicker={openAlbumPickerForSelection}
 				oncompress={() => compressMediaIds([...selection.selectedIds])}
 				ondelete={deleteSelected}
+				onrestore={() => restoreSelected()}
+				onemptyTrash={emptyTrash}
 				onuploadClick={() => ui.fileInput?.click()}
 				ontheme={(t) => prefs.setTheme(t)}
 			/>
@@ -1087,13 +1232,17 @@
 						<p class="text-base-content/80 text-lg font-medium">
 							{prefs.searchQuery.trim()
 								? 'No matching media'
-								: library.activeAlbum === null
-									? 'No unassigned media'
-									: 'No media yet'}
+								: library.activeAlbum === 'trash'
+									? 'Trash is empty'
+									: library.activeAlbum === null
+										? 'No unassigned media'
+										: 'No media yet'}
 						</p>
 						<p class="mt-1 max-w-sm text-sm">
 							{#if prefs.searchQuery.trim()}
 								Try a different search, or clear the search box.
+							{:else if library.activeAlbum === 'trash'}
+								Deleted items stay here for 30 days, then are removed forever on page load.
 							{:else if library.activeAlbum === null}
 								Upload files here, or remove items from albums to see them in Unassigned.
 							{:else}

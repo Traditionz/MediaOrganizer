@@ -7,20 +7,21 @@
 	import Search from '@lucide/svelte/icons/search';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import User from '@lucide/svelte/icons/user';
-	import type { Album, Profile } from '$lib/types';
+	import type { Album, LibraryAlbumFilter, Profile } from '$lib/types';
 	import { endInternalDrag, getInternalDrag, isInternalDragActive } from '$lib/dragSession';
 	import { asString, eventHtml, parseJsonText } from '$lib/parse';
 	import ContextMenu, { type ContextMenuItem } from './ContextMenu.svelte';
 
 	interface Props {
 		albums: Album[];
-		activeAlbum: string | null | 'all';
+		activeAlbum: LibraryAlbumFilter;
 		totalCount: number;
 		unassignedCount: number;
+		trashCount: number;
 		profile: Profile;
 		profiles: Profile[];
 		profileBusy?: boolean;
-		onselect: (albumId: string | null | 'all') => void;
+		onselect: (albumId: LibraryAlbumFilter) => void;
 		oncreate: (name: string) => Promise<void>;
 		ondelete: (id: string) => Promise<void>;
 		onrename: (id: string, name: string) => Promise<void>;
@@ -38,6 +39,7 @@
 		activeAlbum,
 		totalCount,
 		unassignedCount,
+		trashCount,
 		profile,
 		profiles,
 		profileBusy: profileBusyProp = false,
@@ -101,6 +103,103 @@
 			node.focus();
 			node.select();
 		});
+	}
+
+	/** Edge auto-scroll + wheel scroll while dragging media onto albums. */
+	function attachAlbumNavScroll(nav: HTMLElement) {
+		const EDGE_PX = 52;
+		const MAX_SPEED = 22;
+		let raf = 0;
+		let velocity = 0;
+
+		function stopScroll() {
+			velocity = 0;
+			if (raf) {
+				cancelAnimationFrame(raf);
+				raf = 0;
+			}
+		}
+
+		function tick() {
+			if (!velocity || !isInternalDragActive()) {
+				stopScroll();
+				return;
+			}
+			const max = nav.scrollHeight - nav.clientHeight;
+			if (max <= 0) {
+				stopScroll();
+				return;
+			}
+			nav.scrollTop = Math.max(0, Math.min(max, nav.scrollTop + velocity));
+			raf = requestAnimationFrame(tick);
+		}
+
+		function updateVelocity(clientX: number, clientY: number) {
+			if (!isInternalDragActive()) {
+				stopScroll();
+				return;
+			}
+			const rect = nav.getBoundingClientRect();
+			const inX = clientX >= rect.left && clientX <= rect.right;
+			const inY = clientY >= rect.top - EDGE_PX && clientY <= rect.bottom + EDGE_PX;
+			if (!inX || !inY) {
+				stopScroll();
+				return;
+			}
+
+			const distTop = clientY - rect.top;
+			const distBottom = rect.bottom - clientY;
+			let next = 0;
+			if (distTop < EDGE_PX) {
+				const t = 1 - Math.max(0, distTop) / EDGE_PX;
+				next = -Math.max(2, Math.ceil(MAX_SPEED * t * t));
+			} else if (distBottom < EDGE_PX) {
+				const t = 1 - Math.max(0, distBottom) / EDGE_PX;
+				next = Math.max(2, Math.ceil(MAX_SPEED * t * t));
+			}
+
+			velocity = next;
+			if (velocity && !raf) raf = requestAnimationFrame(tick);
+			if (!velocity) stopScroll();
+		}
+
+		function onDragOverCapture(e: DragEvent) {
+			if (!isInternalDragActive()) return;
+			updateVelocity(e.clientX, e.clientY);
+		}
+
+		function onDragLeave(e: DragEvent) {
+			const related = e.relatedTarget instanceof Node ? e.relatedTarget : null;
+			if (related && nav.contains(related)) return;
+			stopScroll();
+		}
+
+		function onWheel(e: WheelEvent) {
+			if (!isInternalDragActive()) return;
+			if (nav.scrollHeight <= nav.clientHeight) return;
+			e.preventDefault();
+			nav.scrollTop += e.deltaY;
+		}
+
+		function onDragEnd() {
+			stopScroll();
+		}
+
+		// Capture: album rows stopPropagation on dragover.
+		nav.addEventListener('dragover', onDragOverCapture, true);
+		nav.addEventListener('dragleave', onDragLeave);
+		nav.addEventListener('wheel', onWheel, { passive: false });
+		window.addEventListener('dragend', onDragEnd);
+		window.addEventListener('drop', onDragEnd);
+
+		return () => {
+			stopScroll();
+			nav.removeEventListener('dragover', onDragOverCapture, true);
+			nav.removeEventListener('dragleave', onDragLeave);
+			nav.removeEventListener('wheel', onWheel);
+			window.removeEventListener('dragend', onDragEnd);
+			window.removeEventListener('drop', onDragEnd);
+		};
 	}
 
 	function startCreate() {
@@ -167,10 +266,12 @@
 
 	function onDragOverTarget(e: DragEvent, target: string) {
 		if (isOsFileOnly(e.dataTransfer)) return;
-		if (!isInternalDragActive()) return;
+		if (!isInternalDragActive() && !(e.dataTransfer && [...e.dataTransfer.types].includes(MEDIA_MIME))) {
+			return;
+		}
 		e.preventDefault();
 		e.stopPropagation();
-		if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
 		dropTarget = target;
 	}
 
@@ -201,22 +302,30 @@
 	async function onDropTarget(e: DragEvent, albumId: string) {
 		if (isOsFileOnly(e.dataTransfer)) return;
 		const session = getInternalDrag();
-		if (!session && !e.dataTransfer) return;
+		const dt = e.dataTransfer;
+		if (!session && !dt) return;
 
 		e.preventDefault();
 		e.stopPropagation();
 		dropTarget = null;
 
-		const dt = e.dataTransfer;
-
-		if (session?.kind === 'media' || (dt && [...dt.types].includes(MEDIA_MIME))) {
-			let ids = session?.kind === 'media' ? session.mediaIds : [];
-			if (!ids.length && dt) {
-				ids = parseIdList(dt.getData(MEDIA_MIME));
+		let ids = session?.kind === 'media' ? session.mediaIds : [];
+		if (!ids.length && dt) {
+			ids = parseIdList(dt.getData(MEDIA_MIME));
+			if (!ids.length) {
+				const plain = dt.getData('text/plain');
+				if (plain.startsWith('media:')) {
+					ids = plain
+						.slice('media:'.length)
+						.split(',')
+						.map((s) => s.trim())
+						.filter(Boolean);
+				}
 			}
-			if (ids.length) await onaddMedia(ids, albumId);
-			endInternalDrag();
 		}
+		// End session before await so dragend / UI class clears even if request hangs.
+		endInternalDrag();
+		if (ids.length) await onaddMedia(ids, albumId);
 	}
 
 	function dropHighlight(target: string) {
@@ -416,7 +525,7 @@
 		</div>
 	</div>
 
-	<nav class="media-scroll flex-1 overflow-y-auto p-3">
+	<nav {@attach attachAlbumNavScroll} class="media-scroll flex-1 overflow-y-auto p-3">
 		<button
 			type="button"
 			class={[
@@ -441,6 +550,19 @@
 			<Inbox class="h-5 w-5" />
 			Unassigned
 			<span class="badge badge-ghost ml-auto">{unassignedCount}</span>
+		</button>
+
+		<button
+			type="button"
+			class={[
+				'btn btn-ghost mt-1 w-full justify-start gap-2 font-medium',
+				activeAlbum === 'trash' && 'btn-active bg-base-200'
+			]}
+			onclick={() => onselect('trash')}
+		>
+			<Trash2 class="h-5 w-5" />
+			Trash
+			<span class="badge badge-ghost ml-auto">{trashCount}</span>
 		</button>
 
 		<div class="mt-4 mb-2 flex items-center justify-between rounded-lg px-2 py-1">
@@ -496,10 +618,11 @@
 				<li>
 					<div
 						class={[
-							'group flex items-center gap-0.5 rounded-lg',
+							'album-drop-row group flex items-center gap-0.5 rounded-lg',
 							activeAlbum === album.id && 'bg-base-200',
 							dropHighlight(album.id)
 						]}
+						ondragenter={(e) => onDragOverTarget(e, album.id)}
 						ondragover={(e) => onDragOverTarget(e, album.id)}
 						ondragleave={(e) => onDragLeaveTarget(e, album.id)}
 						ondrop={(e) => onDropTarget(e, album.id)}
@@ -532,23 +655,30 @@
 								/>
 							</form>
 						{:else}
-							<button
-								type="button"
-								class="flex min-w-0 flex-1 items-center gap-1.5 px-1 py-1.5 text-left"
-								onclick={() => onselect(album.id)}
+							<div
+								class="album-drop-hit flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 px-1 py-1.5 text-left"
+								role="button"
+								tabindex="0"
 								title={album.name}
+								onclick={() => onselect(album.id)}
+								onkeydown={(e) => {
+									if (e.key === 'Enter' || e.key === ' ') {
+										e.preventDefault();
+										onselect(album.id);
+									}
+								}}
 							>
 								<Folder class="h-4 w-4 shrink-0" />
 								<span class="truncate">{album.name}</span>
 								<span class="badge badge-ghost badge-sm ml-auto shrink-0"
 									>{album.media_count ?? 0}</span
 								>
-							</button>
+							</div>
 						{/if}
 
 						<button
 							type="button"
-							class="btn btn-ghost btn-xs btn-circle opacity-0 group-hover:opacity-100"
+							class="album-drop-hit btn btn-ghost btn-xs btn-circle opacity-0 group-hover:opacity-100"
 							aria-label="Delete album"
 							title="Delete album"
 							onclick={(e) => {
@@ -577,3 +707,10 @@
 	onselect={handleContextSelect}
 	onclose={() => (contextMenu = { ...contextMenu, open: false })}
 />
+
+<style>
+	/* Nested controls steal HTML5 drops; hit parent row while media drag is active. */
+	:global(html.mo-media-dragging) .album-drop-hit {
+		pointer-events: none;
+	}
+</style>

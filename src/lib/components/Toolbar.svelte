@@ -30,6 +30,10 @@
 		onopenAlbumPicker: () => void;
 		oncompress: () => void;
 		ondelete: () => void;
+		onrestore?: () => void;
+		onemptyTrash?: () => void;
+		trashMode?: boolean;
+		trashCount?: number;
 		onuploadClick: () => void;
 		ontheme: (theme: ThemeMode) => void;
 	}
@@ -60,6 +64,10 @@
 		onopenAlbumPicker,
 		oncompress,
 		ondelete,
+		onrestore,
+		onemptyTrash,
+		trashMode = false,
+		trashCount = 0,
 		onuploadClick,
 		ontheme
 	}: Props = $props();
@@ -72,25 +80,44 @@
 >
 	{#if showSelectionActions}
 		<span class="badge badge-primary badge-outline">{selectedCount} selected</span>
-		<button class="btn btn-sm btn-primary" disabled={!selectedCount} onclick={onopenAlbumPicker}>
-			Add to album…
-		</button>
-		<button class="btn btn-sm" disabled={!selectedCount || uploading} onclick={() => oncompress()}>
-			Compress
-		</button>
-		<button class="btn btn-sm btn-error btn-outline" disabled={!selectedCount} onclick={ondelete}>
-			Delete
-		</button>
+		{#if trashMode}
+			<button class="btn btn-sm btn-primary" disabled={!selectedCount} onclick={() => onrestore?.()}>
+				Restore
+			</button>
+			<button class="btn btn-sm btn-error btn-outline" disabled={!selectedCount} onclick={ondelete}>
+				Delete forever
+			</button>
+		{:else}
+			<button class="btn btn-sm btn-primary" disabled={!selectedCount} onclick={onopenAlbumPicker}>
+				Add to album…
+			</button>
+			<button class="btn btn-sm" disabled={!selectedCount || uploading} onclick={() => oncompress()}>
+				Compress
+			</button>
+			<button class="btn btn-sm btn-error btn-outline" disabled={!selectedCount} onclick={ondelete}>
+				Move to trash
+			</button>
+		{/if}
 		<button class="btn btn-sm" onclick={onclearSelection}>Clear</button>
 		<button class="btn btn-sm btn-ghost" onclick={ontoggleSelect}>Done</button>
 	{:else}
 		<button class="btn btn-sm btn-outline" onclick={ontoggleSelect}>Select</button>
-		<button class="btn btn-sm btn-primary" onclick={onuploadClick}>
-			{#if uploading}
-				<span class="loading loading-spinner loading-xs"></span>
-			{/if}
-			Upload
-		</button>
+		{#if trashMode}
+			<button
+				class="btn btn-sm btn-error btn-outline"
+				disabled={trashCount === 0}
+				onclick={() => onemptyTrash?.()}
+			>
+				Empty trash
+			</button>
+		{:else}
+			<button class="btn btn-sm btn-primary" onclick={onuploadClick}>
+				{#if uploading}
+					<span class="loading loading-spinner loading-xs"></span>
+				{/if}
+				Upload
+			</button>
+		{/if}
 	{/if}
 
 	<div class="flex flex-wrap items-center gap-2">
@@ -186,7 +213,7 @@
 		</span>
 		<label
 			class="flex cursor-pointer items-center gap-1.5 text-sm"
-			title="Ask before uploading a file whose name already exists in the library"
+			title="When on, ask whether to skip or upload files whose names already exist. When off, skip duplicates silently (Amazon Photos–style)."
 		>
 			<input
 				type="checkbox"

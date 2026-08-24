@@ -9,8 +9,11 @@ import {
 	duplicateMedia,
 	insertMediaFromStream,
 	listMedia,
+	purgeExpiredTrash,
 	removeMediaFromAlbum,
 	renameMedia,
+	restoreMedia,
+	softDeleteMedia,
 	updateMediaDuration
 } from '$lib/server/media';
 import { resolveProfileFromCookies } from '$lib/server/profileContext';
@@ -80,6 +83,7 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 	const mediaType = typeParam === 'image' || typeParam === 'video' ? typeParam : 'all';
 	const dateFrom = url.searchParams.get('from') ?? undefined;
 	const dateTo = url.searchParams.get('to') ?? undefined;
+	const trash = url.searchParams.get('trash') === '1' || url.searchParams.get('trash') === 'true';
 
 	let albumId: string | null | 'all' = 'all';
 	if (albumParam === 'null' || albumParam === 'unfiled' || albumParam === 'unassigned') {
@@ -90,10 +94,11 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 
 	return json(
 		listMedia(profile.id, {
-			albumId,
+			albumId: trash ? 'all' : albumId,
 			mediaType,
 			dateFrom,
-			dateTo
+			dateTo,
+			trash
 		})
 	);
 };
@@ -259,6 +264,18 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 		return json(summary);
 	}
 
+	if (action === 'restore') {
+		const ids = stringList(body ? own(body, 'ids') : undefined);
+		if (!ids.length) throw error(400, 'At least one media id is required');
+		restoreMedia(profile.id, ids);
+		return json({ ok: true });
+	}
+
+	if (action === 'purge-trash') {
+		const purged = purgeExpiredTrash(profile.id);
+		return json({ ok: true, purged });
+	}
+
 	const ids = stringList(body ? own(body, 'ids') : undefined);
 	if (!ids.length) throw error(400, 'At least one media id is required');
 
@@ -299,6 +316,11 @@ export const DELETE: RequestHandler = async ({ request, cookies }) => {
 	const body = await request.json();
 	const ids = Array.isArray(body?.ids) ? body.ids.map(String).filter(Boolean) : [];
 	if (!ids.length) throw error(400, 'At least one media id is required');
-	deleteMedia(profile.id, ids);
+	const permanent = body?.permanent === true;
+	if (permanent) {
+		deleteMedia(profile.id, ids);
+	} else {
+		softDeleteMedia(profile.id, ids);
+	}
 	return json({ ok: true });
 };
