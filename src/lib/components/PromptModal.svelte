@@ -1,6 +1,11 @@
 <script lang="ts">
-	import { fade, scale } from 'svelte/transition';
 	import type { Attachment } from 'svelte/attachments';
+	import { Button } from '$lib/components/ui/button/index.js';
+	import * as Alert from '$lib/components/ui/alert/index.js';
+	import * as Dialog from '$lib/components/ui/dialog/index.js';
+	import { Input } from '$lib/components/ui/input/index.js';
+	import { Label } from '$lib/components/ui/label/index.js';
+	import { Spinner } from '$lib/components/ui/spinner/index.js';
 
 	interface Props {
 		open: boolean;
@@ -52,66 +57,53 @@
 		await onsubmit(trimmed);
 	}
 
-	function onkeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape' && open && !busy) oncancel();
+	function dismiss() {
+		if (busy || !open) return;
+		oncancel();
 	}
 </script>
 
-<svelte:window {onkeydown} />
-
 {#if open}
-	<div
-		class="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
-		transition:fade={{ duration: 120 }}
-		role="dialog"
-		aria-modal="true"
-		aria-label={title}
-		tabindex="-1"
-		onclick={(e) => {
-			if (e.target === e.currentTarget && !busy) oncancel();
-		}}
-		onkeydown={(e) => {
-			if (e.key === 'Escape' && !busy) oncancel();
+	<Dialog.Root
+		open={true}
+		onOpenChange={(next) => {
+			if (!next) dismiss();
 		}}
 	>
-		<form
-			class="border-base-300 bg-base-100 w-full max-w-md rounded-2xl border p-5 shadow-2xl"
-			transition:scale={{ duration: 140, start: 0.96 }}
-			onsubmit={submit}
+		<Dialog.Content
+			class="sm:max-w-md"
+			showCloseButton={false}
+			interactOutsideBehavior={busy ? 'ignore' : 'close'}
+			escapeKeydownBehavior={busy ? 'ignore' : 'close'}
 		>
-			<header class="mb-4">
-				<h2 class="text-lg font-semibold">{title}</h2>
-			</header>
+			<form onsubmit={submit}>
+				<Dialog.Header>
+					<Dialog.Title>{title}</Dialog.Title>
+				</Dialog.Header>
 
-			{#if localError || errorMessage}
-				<div class="alert alert-error mb-3 py-2 text-sm" role="alert">
-					<span>{localError || errorMessage}</span>
+				{#if localError || errorMessage}
+					<Alert.Root variant="destructive" class="mt-3">
+						<Alert.Description>{localError || errorMessage}</Alert.Description>
+					</Alert.Root>
+				{/if}
+
+				<div class="mt-3 grid gap-2">
+					<Label class="text-muted-foreground text-xs">{label}</Label>
+					<Input {@attach setupInput} bind:value disabled={busy} required autocomplete="off" />
 				</div>
-			{/if}
 
-			<label class="form-control mb-3 w-full">
-				<span class="text-base-content/60 mb-1 text-xs font-medium">{label}</span>
-				<input
-					{@attach setupInput}
-					class="input input-bordered input-sm w-full"
-					bind:value
-					disabled={busy}
-					required
-					autocomplete="off"
-				/>
-			</label>
-
-			<footer class="mt-2 flex justify-end gap-2">
-				<button type="button" class="btn btn-ghost btn-sm" disabled={busy} onclick={oncancel}>
-					{cancelLabel}
-				</button>
-				<button type="submit" class="btn btn-primary btn-sm" disabled={busy}>
-					{#if busy}
-						<span class="loading loading-spinner loading-xs"></span>
-					{/if}
-					{confirmLabel}
-				</button>
-			</footer>
-		</form>
-	</div>
+				<Dialog.Footer class="mt-4">
+					<Button type="button" variant="ghost" size="sm" disabled={busy} onclick={oncancel}>
+						{cancelLabel}
+					</Button>
+					<Button type="submit" size="sm" disabled={busy}>
+						{#if busy}
+							<Spinner class="size-3" />
+						{/if}
+						{confirmLabel}
+					</Button>
+				</Dialog.Footer>
+			</form>
+		</Dialog.Content>
+	</Dialog.Root>
 {/if}

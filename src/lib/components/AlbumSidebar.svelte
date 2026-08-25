@@ -7,20 +7,26 @@
 	import Search from '@lucide/svelte/icons/search';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import User from '@lucide/svelte/icons/user';
-	import type { Album, Profile } from '$lib/types';
+	import { Badge } from '$lib/components/ui/badge/index.js';
+	import { Button } from '$lib/components/ui/button/index.js';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
+	import { Input } from '$lib/components/ui/input/index.js';
+	import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
+	import type { Album, LibraryAlbumFilter, Profile } from '$lib/types';
 	import { endInternalDrag, getInternalDrag, isInternalDragActive } from '$lib/dragSession';
 	import { asString, eventHtml, parseJsonText } from '$lib/parse';
 	import ContextMenu, { type ContextMenuItem } from './ContextMenu.svelte';
 
 	interface Props {
 		albums: Album[];
-		activeAlbum: string | null | 'all';
+		activeAlbum: LibraryAlbumFilter;
 		totalCount: number;
 		unassignedCount: number;
+		trashCount: number;
 		profile: Profile;
 		profiles: Profile[];
 		profileBusy?: boolean;
-		onselect: (albumId: string | null | 'all') => void;
+		onselect: (albumId: LibraryAlbumFilter) => void;
 		oncreate: (name: string) => Promise<void>;
 		ondelete: (id: string) => Promise<void>;
 		onrename: (id: string, name: string) => Promise<void>;
@@ -38,6 +44,7 @@
 		activeAlbum,
 		totalCount,
 		unassignedCount,
+		trashCount,
 		profile,
 		profiles,
 		profileBusy: profileBusyProp = false,
@@ -101,6 +108,111 @@
 			node.focus();
 			node.select();
 		});
+	}
+
+	let albumNavViewport = $state<HTMLElement | null>(null);
+
+	$effect(() => {
+		const nav = albumNavViewport;
+		if (!nav) return;
+		return attachAlbumNavScroll(nav);
+	});
+
+	/** Edge auto-scroll + wheel scroll while dragging media onto albums. */
+	function attachAlbumNavScroll(nav: HTMLElement) {
+		const EDGE_PX = 52;
+		const MAX_SPEED = 22;
+		let raf = 0;
+		let velocity = 0;
+
+		function stopScroll() {
+			velocity = 0;
+			if (raf) {
+				cancelAnimationFrame(raf);
+				raf = 0;
+			}
+		}
+
+		function tick() {
+			if (!velocity || !isInternalDragActive()) {
+				stopScroll();
+				return;
+			}
+			const max = nav.scrollHeight - nav.clientHeight;
+			if (max <= 0) {
+				stopScroll();
+				return;
+			}
+			nav.scrollTop = Math.max(0, Math.min(max, nav.scrollTop + velocity));
+			raf = requestAnimationFrame(tick);
+		}
+
+		function updateVelocity(clientX: number, clientY: number) {
+			if (!isInternalDragActive()) {
+				stopScroll();
+				return;
+			}
+			const rect = nav.getBoundingClientRect();
+			const inX = clientX >= rect.left && clientX <= rect.right;
+			const inY = clientY >= rect.top - EDGE_PX && clientY <= rect.bottom + EDGE_PX;
+			if (!inX || !inY) {
+				stopScroll();
+				return;
+			}
+
+			const distTop = clientY - rect.top;
+			const distBottom = rect.bottom - clientY;
+			let next = 0;
+			if (distTop < EDGE_PX) {
+				const t = 1 - Math.max(0, distTop) / EDGE_PX;
+				next = -Math.max(2, Math.ceil(MAX_SPEED * t * t));
+			} else if (distBottom < EDGE_PX) {
+				const t = 1 - Math.max(0, distBottom) / EDGE_PX;
+				next = Math.max(2, Math.ceil(MAX_SPEED * t * t));
+			}
+
+			velocity = next;
+			if (velocity && !raf) raf = requestAnimationFrame(tick);
+			if (!velocity) stopScroll();
+		}
+
+		function onDragOverCapture(e: DragEvent) {
+			if (!isInternalDragActive()) return;
+			updateVelocity(e.clientX, e.clientY);
+		}
+
+		function onDragLeave(e: DragEvent) {
+			const related = e.relatedTarget instanceof Node ? e.relatedTarget : null;
+			if (related && nav.contains(related)) return;
+			stopScroll();
+		}
+
+		function onWheel(e: WheelEvent) {
+			if (!isInternalDragActive()) return;
+			if (nav.scrollHeight <= nav.clientHeight) return;
+			e.preventDefault();
+			nav.scrollTop += e.deltaY;
+		}
+
+		function onDragEnd() {
+			stopScroll();
+		}
+
+		// Capture: album rows stopPropagation on dragover.
+		nav.addEventListener('dragover', onDragOverCapture, true);
+		nav.addEventListener('dragleave', onDragLeave);
+		nav.addEventListener('wheel', onWheel, { passive: false });
+		window.addEventListener('dragend', onDragEnd);
+		window.addEventListener('drop', onDragEnd);
+
+		return () => {
+			stopScroll();
+			nav.removeEventListener('dragover', onDragOverCapture, true);
+			nav.removeEventListener('dragleave', onDragLeave);
+			nav.removeEventListener('wheel', onWheel);
+			window.removeEventListener('dragend', onDragEnd);
+			window.removeEventListener('drop', onDragEnd);
+		};
 	}
 
 	function startCreate() {
@@ -167,10 +279,15 @@
 
 	function onDragOverTarget(e: DragEvent, target: string) {
 		if (isOsFileOnly(e.dataTransfer)) return;
-		if (!isInternalDragActive()) return;
+		if (
+			!isInternalDragActive() &&
+			!(e.dataTransfer && [...e.dataTransfer.types].includes(MEDIA_MIME))
+		) {
+			return;
+		}
 		e.preventDefault();
 		e.stopPropagation();
-		if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
 		dropTarget = target;
 	}
 
@@ -201,22 +318,30 @@
 	async function onDropTarget(e: DragEvent, albumId: string) {
 		if (isOsFileOnly(e.dataTransfer)) return;
 		const session = getInternalDrag();
-		if (!session && !e.dataTransfer) return;
+		const dt = e.dataTransfer;
+		if (!session && !dt) return;
 
 		e.preventDefault();
 		e.stopPropagation();
 		dropTarget = null;
 
-		const dt = e.dataTransfer;
-
-		if (session?.kind === 'media' || (dt && [...dt.types].includes(MEDIA_MIME))) {
-			let ids = session?.kind === 'media' ? session.mediaIds : [];
-			if (!ids.length && dt) {
-				ids = parseIdList(dt.getData(MEDIA_MIME));
+		let ids = session?.kind === 'media' ? session.mediaIds : [];
+		if (!ids.length && dt) {
+			ids = parseIdList(dt.getData(MEDIA_MIME));
+			if (!ids.length) {
+				const plain = dt.getData('text/plain');
+				if (plain.startsWith('media:')) {
+					ids = plain
+						.slice('media:'.length)
+						.split(',')
+						.map((s) => s.trim())
+						.filter(Boolean);
+				}
 			}
-			if (ids.length) await onaddMedia(ids, albumId);
-			endInternalDrag();
 		}
+		// End session before await so dragend / UI class clears even if request hangs.
+		endInternalDrag();
+		if (ids.length) await onaddMedia(ids, albumId);
 	}
 
 	function dropHighlight(target: string) {
@@ -303,69 +428,61 @@
 </script>
 
 <aside
-	class="border-base-300 bg-base-100 flex h-full w-[var(--media-sidebar-width)] shrink-0 flex-col border-r"
+	class="border-border bg-background flex h-full w-[var(--media-sidebar-width)] shrink-0 flex-col border-r"
 >
-	<div class="border-base-300 border-b px-4 py-5">
-		<p class="text-base-content/50 text-xs font-semibold tracking-[0.14em] uppercase">Library</p>
+	<div class="border-border border-b px-4 py-5">
+		<p class="text-muted-foreground text-xs font-semibold tracking-[0.14em] uppercase">Library</p>
 		<h1 class="mt-1 text-xl font-bold tracking-tight">Media Organizer</h1>
 
-		<div class="relative mt-3">
-			<button
-				type="button"
-				class="btn btn-ghost btn-sm h-auto w-full justify-between gap-2 px-2 py-1.5 font-normal"
-				aria-expanded={profileMenuOpen}
-				aria-haspopup="menu"
-				disabled={isBusy}
-				onclick={() => {
-					profileMenuOpen = !profileMenuOpen;
-					if (!profileMenuOpen) {
+		<div class="mt-3">
+			<DropdownMenu.Root
+				bind:open={profileMenuOpen}
+				onOpenChange={(next) => {
+					if (!next) {
 						creatingProfile = false;
 						newProfileName = '';
 					}
 				}}
 			>
-				<span class="flex min-w-0 items-center gap-2">
-					<User class="text-base-content/60 h-4 w-4 shrink-0" />
-					<span class="truncate font-medium">{profile.name}</span>
-				</span>
-				<ChevronDown
-					class={[
-						'h-4 w-4 shrink-0 opacity-60 transition-transform',
-						profileMenuOpen && 'rotate-180'
-					]}
-				/>
-			</button>
-
-			{#if profileMenuOpen}
-				<div
-					class="rounded-box border-base-300 bg-base-100 absolute right-0 left-0 z-30 mt-1 border p-1 shadow-lg"
-					role="menu"
-				>
-					{#if otherProfiles.length > 0}
-						<p
-							class="text-base-content/50 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase"
+				<DropdownMenu.Trigger>
+					{#snippet child({ props })}
+						<Button
+							{...props}
+							type="button"
+							variant="ghost"
+							size="sm"
+							class="h-auto w-full justify-between gap-2 px-2 py-1.5 font-normal"
+							disabled={isBusy}
 						>
-							Switch to…
-						</p>
+							<span class="flex min-w-0 items-center gap-2">
+								<User class="text-muted-foreground h-4 w-4 shrink-0" />
+								<span class="truncate font-medium">{profile.name}</span>
+							</span>
+							<ChevronDown
+								class={[
+									'h-4 w-4 shrink-0 opacity-60 transition-transform',
+									profileMenuOpen && 'rotate-180'
+								]}
+							/>
+						</Button>
+					{/snippet}
+				</DropdownMenu.Trigger>
+				<DropdownMenu.Content class="w-[var(--media-sidebar-width)]" align="start">
+					{#if otherProfiles.length > 0}
+						<DropdownMenu.Label>Switch to…</DropdownMenu.Label>
 						{#each otherProfiles as p (p.id)}
-							<button
-								type="button"
-								class="btn btn-ghost btn-sm w-full justify-start font-normal"
-								role="menuitem"
-								disabled={isBusy}
-								onclick={() => switchProfile(p.id)}
-							>
+							<DropdownMenu.Item disabled={isBusy} onclick={() => switchProfile(p.id)}>
 								{p.name}
-							</button>
+							</DropdownMenu.Item>
 						{/each}
-						<div class="bg-base-300 my-1 h-px"></div>
+						<DropdownMenu.Separator />
 					{/if}
 
 					{#if creatingProfile}
 						<form class="px-1 py-1" onsubmit={submitNewProfile}>
-							<input
+							<Input
 								{@attach autofocusCreate}
-								class="input input-bordered input-sm mb-1 w-full min-w-0"
+								class="mb-1 min-w-0"
 								placeholder="Profile name"
 								bind:value={newProfileName}
 								disabled={isBusy}
@@ -377,95 +494,114 @@
 									}
 								}}
 							/>
-							<button
+							<Button
 								type="submit"
-								class="btn btn-primary btn-sm w-full"
+								size="sm"
+								class="w-full"
 								disabled={isBusy || !newProfileName.trim()}
 							>
 								Create
-							</button>
+							</Button>
 						</form>
 					{:else}
-						<button
-							type="button"
-							class="btn btn-ghost btn-sm w-full justify-start gap-2 font-normal"
-							role="menuitem"
+						<DropdownMenu.Item
 							disabled={isBusy}
-							onclick={() => {
+							onSelect={(e) => {
+								e.preventDefault();
 								creatingProfile = true;
 								newProfileName = '';
 							}}
 						>
 							<Plus class="h-4 w-4" />
 							New profile…
-						</button>
+						</DropdownMenu.Item>
 					{/if}
 
-					<button
-						type="button"
-						class="btn btn-ghost btn-sm text-error w-full justify-start gap-2 font-normal"
-						role="menuitem"
+					<DropdownMenu.Item
+						variant="destructive"
 						disabled={isBusy}
-						onclick={deleteCurrentProfile}
+						onclick={() => deleteCurrentProfile()}
 					>
 						<Trash2 class="h-4 w-4" />
 						Delete current profile
-					</button>
-				</div>
-			{/if}
+					</DropdownMenu.Item>
+				</DropdownMenu.Content>
+			</DropdownMenu.Root>
 		</div>
 	</div>
 
-	<nav class="media-scroll flex-1 overflow-y-auto p-3">
-		<button
+	<ScrollArea class="min-h-0 flex-1" bind:viewportRef={albumNavViewport}>
+		<nav class="p-3">
+		<Button
 			type="button"
+			variant="ghost"
 			class={[
-				'btn btn-ghost w-full justify-start gap-2 font-medium',
-				activeAlbum === 'all' && 'btn-active bg-base-200'
+				'w-full justify-start gap-2 font-medium',
+				activeAlbum === 'all' && 'bg-accent text-accent-foreground'
 			]}
 			onclick={() => onselect('all')}
 		>
 			<Images class="h-5 w-5" />
 			All media
-			<span class="badge badge-ghost ml-auto">{totalCount}</span>
-		</button>
+			<Badge variant="secondary" class="ml-auto">{totalCount}</Badge>
+		</Button>
 
-		<button
+		<Button
 			type="button"
+			variant="ghost"
 			class={[
-				'btn btn-ghost mt-1 w-full justify-start gap-2 font-medium',
-				activeAlbum === null && 'btn-active bg-base-200'
+				'mt-1 w-full justify-start gap-2 font-medium',
+				activeAlbum === null && 'bg-accent text-accent-foreground'
 			]}
 			onclick={() => onselect(null)}
 		>
 			<Inbox class="h-5 w-5" />
 			Unassigned
-			<span class="badge badge-ghost ml-auto">{unassignedCount}</span>
-		</button>
+			<Badge variant="secondary" class="ml-auto">{unassignedCount}</Badge>
+		</Button>
+
+		<Button
+			type="button"
+			variant="ghost"
+			class={[
+				'mt-1 w-full justify-start gap-2 font-medium',
+				activeAlbum === 'trash' && 'bg-accent text-accent-foreground'
+			]}
+			onclick={() => onselect('trash')}
+		>
+			<Trash2 class="h-5 w-5" />
+			Trash
+			<Badge variant="secondary" class="ml-auto">{trashCount}</Badge>
+		</Button>
 
 		<div class="mt-4 mb-2 flex items-center justify-between rounded-lg px-2 py-1">
-			<span class="text-base-content/50 text-xs font-semibold tracking-wide uppercase">Albums</span>
-			<button
+			<span class="text-muted-foreground text-xs font-semibold tracking-wide uppercase">Albums</span
+			>
+			<Button
 				type="button"
-				class="btn btn-ghost btn-xs btn-circle"
+				variant="ghost"
+				size="icon-xs"
 				onclick={startCreate}
 				aria-label="New album"
 				title="New album"
 			>
 				<Plus class="h-4 w-4" />
-			</button>
+			</Button>
 		</div>
 
-		<label class="input input-bordered input-sm mb-2 flex w-full items-center gap-2">
-			<Search class="h-4 w-4 shrink-0 opacity-50" aria-hidden="true" />
-			<input
+		<div class="relative mb-2">
+			<Search
+				class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+				aria-hidden="true"
+			/>
+			<Input
 				type="search"
-				class="grow bg-transparent outline-none"
+				class="pl-8"
 				placeholder="Search albums…"
 				bind:value={albumQuery}
 				aria-label="Search albums"
 			/>
-		</label>
+		</div>
 
 		{#if creating}
 			<form
@@ -475,9 +611,9 @@
 					submitCreate();
 				}}
 			>
-				<input
+				<Input
 					{@attach autofocusCreate}
-					class="input input-bordered input-sm w-full min-w-0"
+					class="min-w-0"
 					placeholder="Album name"
 					bind:value={newName}
 					disabled={busy}
@@ -491,15 +627,16 @@
 			</form>
 		{/if}
 
-		<ul class="menu menu-sm w-full gap-0.5 p-0">
+		<ul class="flex w-full flex-col gap-0.5 p-0">
 			{#each visibleAlbums as album (album.id)}
 				<li>
 					<div
 						class={[
-							'group flex items-center gap-0.5 rounded-lg',
-							activeAlbum === album.id && 'bg-base-200',
+							'album-drop-row group flex items-center gap-0.5 rounded-lg',
+							activeAlbum === album.id && 'bg-accent text-accent-foreground',
 							dropHighlight(album.id)
 						]}
+						ondragenter={(e) => onDragOverTarget(e, album.id)}
 						ondragover={(e) => onDragOverTarget(e, album.id)}
 						ondragleave={(e) => onDragLeaveTarget(e, album.id)}
 						ondrop={(e) => onDropTarget(e, album.id)}
@@ -514,9 +651,9 @@
 									submitRename();
 								}}
 							>
-								<input
+								<Input
 									{@attach autofocusCreate}
-									class="input input-bordered input-xs w-full min-w-0"
+									class="h-7 min-w-0 text-xs"
 									bind:value={renameName}
 									disabled={busy}
 									onclick={(e) => e.stopPropagation()}
@@ -532,23 +669,30 @@
 								/>
 							</form>
 						{:else}
-							<button
-								type="button"
-								class="flex min-w-0 flex-1 items-center gap-1.5 px-1 py-1.5 text-left"
-								onclick={() => onselect(album.id)}
+							<div
+								class="album-drop-hit flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 px-1 py-1.5 text-left"
+								role="button"
+								tabindex="0"
 								title={album.name}
+								onclick={() => onselect(album.id)}
+								onkeydown={(e) => {
+									if (e.key === 'Enter' || e.key === ' ') {
+										e.preventDefault();
+										onselect(album.id);
+									}
+								}}
 							>
 								<Folder class="h-4 w-4 shrink-0" />
 								<span class="truncate">{album.name}</span>
-								<span class="badge badge-ghost badge-sm ml-auto shrink-0"
-									>{album.media_count ?? 0}</span
-								>
-							</button>
+								<Badge variant="secondary" class="ml-auto shrink-0">{album.media_count ?? 0}</Badge>
+							</div>
 						{/if}
 
-						<button
+						<Button
 							type="button"
-							class="btn btn-ghost btn-xs btn-circle opacity-0 group-hover:opacity-100"
+							variant="ghost"
+							size="icon-xs"
+							class="album-drop-hit opacity-0 group-hover:opacity-100"
 							aria-label="Delete album"
 							title="Delete album"
 							onclick={(e) => {
@@ -557,18 +701,18 @@
 							}}
 						>
 							<Trash2 class="h-4 w-4" />
-						</button>
+						</Button>
 					</div>
 				</li>
 			{:else}
-				<li class="text-base-content/60 px-2 py-6 text-center text-sm">
+				<li class="text-muted-foreground px-2 py-6 text-center text-sm">
 					{albums.length === 0 ? 'No albums yet.' : 'No albums match your search.'}
 				</li>
 			{/each}
 		</ul>
 	</nav>
+	</ScrollArea>
 </aside>
-
 <ContextMenu
 	open={contextMenu.open}
 	x={contextMenu.x}
@@ -577,3 +721,10 @@
 	onselect={handleContextSelect}
 	onclose={() => (contextMenu = { ...contextMenu, open: false })}
 />
+
+<style>
+	/* Nested controls steal HTML5 drops; hit parent row while media drag is active. */
+	:global(html.mo-media-dragging) .album-drop-hit {
+		pointer-events: none;
+	}
+</style>

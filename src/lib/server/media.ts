@@ -9,7 +9,7 @@ import {
 } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { Readable, Transform } from 'node:stream';
-import { and, count, eq, exists, inArray, notExists, sql } from 'drizzle-orm';
+import { and, count, eq, exists, inArray, isNotNull, isNull, notExists, sql } from 'drizzle-orm';
 import type { MediaItem, MediaType } from '$lib/types';
 import db, { filePathForKey, newId } from './db';
 import { albumMedia, albums, media } from './schema';
@@ -19,11 +19,16 @@ import { listAlbums } from './albums';
 /** Reject near-empty / black-frame JPEGs from failed captures. */
 const MIN_THUMB_BYTES = 3000;
 
+/** Soft-deleted items older than this are purged on page load. */
+export const TRASH_RETENTION_DAYS = 30;
+
 export interface MediaQuery {
 	albumId?: string | null | 'all';
 	mediaType?: 'all' | MediaType;
 	dateFrom?: string;
 	dateTo?: string;
+	/** When true, only trashed items; when false/omitted, only active. */
+	trash?: boolean;
 }
 
 function normalizeCreated(iso: string): string {
@@ -105,6 +110,7 @@ function mapRow(row: MediaRow, albumIds: string[], albumNames: string[]): MediaI
 		height: row.height,
 		duration: normalizeDuration(row.duration),
 		created_at: normalizeCreated(row.createdAt),
+		deleted_at: row.deletedAt ? normalizeCreated(row.deletedAt) : null,
 		has_thumbnail: isValidThumbnail(row.thumbnailKey)
 	};
 }
@@ -131,7 +137,13 @@ function getMediaRow(profileId: string, id: string): MediaRow | undefined {
 export function listMedia(profileId: string, query: MediaQuery = {}): MediaItem[] {
 	const clauses = [eq(media.profileId, profileId)];
 
-	if (query.albumId !== undefined && query.albumId !== 'all') {
+	if (query.trash) {
+		clauses.push(isNotNull(media.deletedAt));
+	} else {
+		clauses.push(isNull(media.deletedAt));
+	}
+
+	if (!query.trash && query.albumId !== undefined && query.albumId !== 'all') {
 		if (query.albumId === null) {
 			clauses.push(notExists(db.select().from(albumMedia).where(eq(albumMedia.mediaId, media.id))));
 		} else {
@@ -157,11 +169,15 @@ export function listMedia(profileId: string, query: MediaQuery = {}): MediaItem[
 		clauses.push(sql`date(${media.createdAt}) <= date(${query.dateTo})`);
 	}
 
+	const orderBy = query.trash
+		? sql`${media.deletedAt} DESC, ${media.id} DESC`
+		: sql`${media.createdAt} DESC, ${media.id} DESC`;
+
 	const rows = db
 		.select()
 		.from(media)
 		.where(and(...clauses))
-		.orderBy(sql`${media.createdAt} DESC, ${media.id} DESC`)
+		.orderBy(orderBy)
 		.all();
 
 	return attachAlbums(profileId, rows);
@@ -697,6 +713,53 @@ export function deleteMedia(profileId: string, ids: string[]): void {
 	});
 }
 
+/** Move media to trash (soft delete). Keeps files and album membership. */
+export function softDeleteMedia(profileId: string, ids: string[]): void {
+	if (!ids.length) return;
+	db.update(media)
+		.set({ deletedAt: sql`(datetime('now'))` })
+		.where(
+			and(eq(media.profileId, profileId), inArray(media.id, ids), isNull(media.deletedAt))
+		)
+		.run();
+}
+
+/** Restore media from trash. */
+export function restoreMedia(profileId: string, ids: string[]): void {
+	if (!ids.length) return;
+	db.update(media)
+		.set({ deletedAt: null })
+		.where(
+			and(eq(media.profileId, profileId), inArray(media.id, ids), isNotNull(media.deletedAt))
+		)
+		.run();
+}
+
+/**
+ * Permanently delete trash items older than `days` (default 30).
+ * Call on page load.
+ */
+export function purgeExpiredTrash(
+	profileId: string,
+	days: number = TRASH_RETENTION_DAYS
+): number {
+	const retention = Math.max(1, Math.floor(days));
+	const rows = db
+		.select({ id: media.id })
+		.from(media)
+		.where(
+			and(
+				eq(media.profileId, profileId),
+				isNotNull(media.deletedAt),
+				sql`${media.deletedAt} < datetime('now', ${`-${retention} days`})`
+			)
+		)
+		.all();
+	const ids = rows.map((r) => r.id);
+	if (ids.length) deleteMedia(profileId, ids);
+	return ids.length;
+}
+
 export function getThumbnailPath(
 	profileId: string,
 	id: string
@@ -770,7 +833,23 @@ export async function saveThumbnail(
 }
 
 export function countAllMedia(profileId: string): number {
-	return db.select({ c: count() }).from(media).where(eq(media.profileId, profileId)).get()?.c ?? 0;
+	return (
+		db
+			.select({ c: count() })
+			.from(media)
+			.where(and(eq(media.profileId, profileId), isNull(media.deletedAt)))
+			.get()?.c ?? 0
+	);
+}
+
+export function countTrashMedia(profileId: string): number {
+	return (
+		db
+			.select({ c: count() })
+			.from(media)
+			.where(and(eq(media.profileId, profileId), isNotNull(media.deletedAt)))
+			.get()?.c ?? 0
+	);
 }
 
 export function countUnassignedMedia(profileId: string): number {
@@ -781,6 +860,7 @@ export function countUnassignedMedia(profileId: string): number {
 			.where(
 				and(
 					eq(media.profileId, profileId),
+					isNull(media.deletedAt),
 					notExists(db.select().from(albumMedia).where(eq(albumMedia.mediaId, media.id)))
 				)
 			)

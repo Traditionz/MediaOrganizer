@@ -1,7 +1,0 @@
-allowBuilds:
-  better-sqlite3: true
-  esbuild: true
-  ffmpeg-static: true
-  sharp: true
-minimumReleaseAgeExclude:
-  - svelte@5.56.9

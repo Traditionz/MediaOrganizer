@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en">
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -14,7 +14,7 @@
 							: window.matchMedia('(prefers-color-scheme: dark)').matches
 								? 'dark'
 								: 'light';
-					document.documentElement.setAttribute('data-theme', theme);
+					document.documentElement.classList.toggle('dark', theme === 'dark');
 				} catch (_) {
 					/* ignore */
 				}

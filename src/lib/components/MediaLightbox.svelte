@@ -4,6 +4,8 @@
 	import { formatBytes, formatDate } from '$lib/utils';
 	import { fade, scale } from 'svelte/transition';
 	import MoveDiagonal2 from '@lucide/svelte/icons/move-diagonal-2';
+	import X from '@lucide/svelte/icons/x';
+	import { Button } from '$lib/components/ui/button/index.js';
 	import CustomPlayer from './CustomPlayer.svelte';
 
 	interface Props {
@@ -100,30 +102,32 @@
 		}}
 	>
 		<div
-			class="bg-base-100 relative flex max-h-[92vh] flex-col overflow-hidden rounded-2xl shadow-2xl"
+			class="bg-card text-card-foreground relative flex max-h-[92vh] flex-col overflow-hidden rounded-2xl shadow-2xl"
 			class:w-full={item.media_type === 'image'}
 			class:max-w-5xl={item.media_type === 'image'}
 			style:width={item.media_type === 'video' ? `${videoWidth + 24}px` : undefined}
 			transition:scale={{ duration: 160, start: 0.96 }}
 		>
-			<header class="border-base-300 flex items-start justify-between gap-3 border-b px-3 py-3">
+			<header class="border-border flex items-start justify-between gap-3 border-b px-3 py-3">
 				<div class="min-w-0 flex-1">
 					<h2 class="truncate text-base font-semibold">{item.original_name}</h2>
-					<p class="text-base-content/60 mt-0.5 truncate text-xs">
+					<p class="text-muted-foreground mt-0.5 truncate text-xs">
 						{albumSummary} · {formatDate(item.created_at)} · {formatBytes(item.size)}
 					</p>
 				</div>
-				<button
-					class="btn btn-ghost btn-sm btn-circle shrink-0"
+				<Button
+					variant="ghost"
+					size="icon-sm"
+					class="shrink-0"
 					onclick={onclose}
 					aria-label="Close"
 				>
-					✕
-				</button>
+					<X class="size-4" />
+				</Button>
 			</header>
 
 			<div
-				class="bg-base-200 flex items-center justify-center"
+				class="bg-muted flex items-center justify-center"
 				class:p-3={item.media_type === 'image'}
 				class:px-3={item.media_type === 'video'}
 				class:pb-3={item.media_type === 'video'}
@@ -144,6 +148,7 @@
 					>
 						<CustomPlayer
 							src={`/api/media/${item.id}`}
+							mediaId={item.id}
 							onmetadata={(meta) => {
 								intrinsic = { w: meta.w, h: meta.h };
 							}}

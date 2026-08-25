@@ -6,8 +6,8 @@ import { ownString, readJsonObject } from '$lib/parse';
 
 export const POST: RequestHandler = async ({ request, cookies }) => {
 	const body = await readJsonObject(request);
-	const id = body ? ownString(body, 'id') ?? '' : '';
-	const passcode = body ? ownString(body, 'passcode') ?? '' : '';
+	const id = body ? (ownString(body, 'id') ?? '') : '';
+	const passcode = body ? (ownString(body, 'passcode') ?? '') : '';
 	if (!id) throw error(400, 'Profile id is required');
 
 	try {

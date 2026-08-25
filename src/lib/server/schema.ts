@@ -54,12 +54,15 @@ export const media = sqliteTable(
 		duration: real('duration'),
 		createdAt: text('created_at')
 			.notNull()
-			.default(sql`(datetime('now'))`)
+			.default(sql`(datetime('now'))`),
+		/** Soft-delete timestamp; null = active library */
+		deletedAt: text('deleted_at')
 	},
 	(t) => [
 		index('idx_media_profile').on(t.profileId),
 		index('idx_media_type').on(t.profileId, t.mediaType),
-		index('idx_media_created').on(t.profileId, t.createdAt)
+		index('idx_media_created').on(t.profileId, t.createdAt),
+		index('idx_media_deleted').on(t.profileId, t.deletedAt)
 	]
 );
 

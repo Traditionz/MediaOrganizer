@@ -1,5 +1,10 @@
 <script lang="ts">
 	import { formatDuration } from '$lib/utils';
+	import {
+		clearPlaybackPosition,
+		resumePlaybackPosition,
+		setPlaybackPosition
+	} from '$lib/playbackPosition';
 	import Maximize from '@lucide/svelte/icons/maximize';
 	import Pause from '@lucide/svelte/icons/pause';
 	import Play from '@lucide/svelte/icons/play';
@@ -10,14 +15,17 @@
 
 	interface Props {
 		src: string;
+		/** Media id — used to resume where playback left off */
+		mediaId?: string;
 		onmetadata?: (meta: { w: number; h: number; duration: number }) => void;
 	}
 
 	const SPEED_OPTIONS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
 	const PREVIEW_H_REM = 9.34375;
 	const PREVIEW_MAX_W_REM = 17.875;
+	const SAVE_INTERVAL_MS = 2500;
 
-	let { src, onmetadata }: Props = $props();
+	let { src, mediaId = '', onmetadata }: Props = $props();
 
 	let videoEl: HTMLVideoElement | undefined = $state();
 	let playerEl: HTMLDivElement | undefined = $state();
@@ -43,6 +51,8 @@
 	let hoverTime = $state(0);
 	let previewBusy = false;
 	let queuedPreview = -1;
+	let resumeApplied = false;
+	let lastSaveAt = 0;
 
 	const progress = $derived(duration > 0 ? current / duration : 0);
 	const bufferPct = $derived(duration > 0 ? Math.min(1, buffered / duration) : 0);
@@ -125,8 +135,36 @@
 		current = videoEl.currentTime;
 	}
 
+	function savePosition(force = false) {
+		if (!mediaId || !videoEl) return;
+		const t = pendingSeek ?? videoEl.currentTime;
+		const d = duration || videoEl.duration || 0;
+		if (!Number.isFinite(t)) return;
+		const now = Date.now();
+		if (!force && now - lastSaveAt < SAVE_INTERVAL_MS) return;
+		lastSaveAt = now;
+		setPlaybackPosition(mediaId, t, d);
+	}
+
+	function applyResume() {
+		if (resumeApplied || !mediaId || !videoEl) return;
+		const d = videoEl.duration || duration || 0;
+		if (!Number.isFinite(d) || d <= 0) return;
+		resumeApplied = true;
+		const resume = resumePlaybackPosition(mediaId, d);
+		if (resume == null || resume <= 0) return;
+		pendingSeek = resume;
+		current = resume;
+		try {
+			videoEl.currentTime = resume;
+		} catch {
+			/* seek may fail until more data is buffered */
+		}
+	}
+
 	function tick() {
 		syncTime();
+		if (playing && !scrubbing) savePosition(false);
 		rafId = playing && !scrubbing ? requestAnimationFrame(tick) : 0;
 	}
 
@@ -143,10 +181,23 @@
 
 	function attachVideo(node: HTMLVideoElement) {
 		videoEl = node;
+		resumeApplied = false;
+		lastSaveAt = 0;
 		node.playbackRate = playbackRate;
 		node.volume = volume;
 		node.muted = muted;
+
+		const onPageHide = () => savePosition(true);
+		const onVisibility = () => {
+			if (document.visibilityState === 'hidden') savePosition(true);
+		};
+		window.addEventListener('pagehide', onPageHide);
+		document.addEventListener('visibilitychange', onVisibility);
+
 		return () => {
+			savePosition(true);
+			window.removeEventListener('pagehide', onPageHide);
+			document.removeEventListener('visibilitychange', onVisibility);
 			stopTick();
 			if (videoEl === node) videoEl = undefined;
 		};
@@ -211,6 +262,7 @@
 	function onMeta() {
 		if (!videoEl) return;
 		duration = videoEl.duration || 0;
+		applyResume();
 		if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
 			onmetadata?.({
 				w: videoEl.videoWidth,
@@ -270,6 +322,7 @@
 		const t = Math.min(duration, Math.max(0, current));
 		pendingSeek = t;
 		videoEl.currentTime = t;
+		savePosition(true);
 	}
 
 	function onScrubPointerDown(e: PointerEvent) {
@@ -454,6 +507,7 @@
 			playing = false;
 			stopTick();
 			syncTime();
+			savePosition(true);
 			showControls = true;
 			clearHideTimer();
 		}}
@@ -461,6 +515,7 @@
 			pendingSeek = null;
 			syncTime();
 			readBuffer();
+			savePosition(true);
 		}}
 		onvolumechange={() => {
 			if (!videoEl) return;
@@ -471,6 +526,7 @@
 			playing = false;
 			stopTick();
 			syncTime();
+			if (mediaId) clearPlaybackPosition(mediaId);
 			showControls = true;
 		}}
 		onratechange={() => {

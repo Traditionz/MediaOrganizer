@@ -31,9 +31,14 @@ export interface MediaItem {
 	/** Video duration in seconds when known */
 	duration: number | null;
 	created_at: string;
+	/** Soft-delete time; null/undefined = active */
+	deleted_at?: string | null;
 	/** True when a generated video preview image exists */
 	has_thumbnail?: boolean;
 }
+
+/** Library nav: concrete album id, all, unassigned (null), or trash */
+export type LibraryAlbumFilter = string | null | 'all' | 'trash';
 
 export interface MediaFilters {
 	albumId: string | null | 'all';

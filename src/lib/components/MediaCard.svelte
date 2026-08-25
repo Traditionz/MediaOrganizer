@@ -1,6 +1,9 @@
 <script lang="ts">
 	import type { MediaItem } from '$lib/types';
 	import Play from '@lucide/svelte/icons/play';
+	import { Badge } from '$lib/components/ui/badge/index.js';
+	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+	import { Spinner } from '$lib/components/ui/spinner/index.js';
 	import { beginMediaDrag, endInternalDrag, setCompactMediaDragImage } from '$lib/dragSession';
 	import { getAppState } from '$lib/state';
 	import { enqueueThumbnailJob } from '$lib/thumbnailQueue';
@@ -69,14 +72,13 @@
 
 	function handleDragStart(e: DragEvent) {
 		if (!e.dataTransfer) return;
-		const ids =
-			selectedIds && selectedIds.has(item.id) && selectedIds.size > 1
-				? [...selectedIds]
-				: [item.id];
+		// Snapshot selection up front — SvelteSet + click handlers can mutate mid-gesture.
+		const selected = selectedIds ? Array.from(selectedIds) : [];
+		const ids = selected.length > 1 && selected.includes(item.id) ? selected : [item.id];
 		beginMediaDrag(ids);
 		e.dataTransfer.setData(MEDIA_MIME, JSON.stringify(ids));
 		e.dataTransfer.setData('text/plain', `media:${ids.join(',')}`);
-		e.dataTransfer.effectAllowed = 'move';
+		e.dataTransfer.effectAllowed = 'copyMove';
 		dragging = true;
 		if (cardEl) setCompactMediaDragImage(e.dataTransfer, cardEl, ids.length);
 	}
@@ -194,10 +196,10 @@
 <div
 	{@attach attachCard}
 	class={[
-		'media-card group bg-base-200 relative overflow-hidden transition-shadow',
+		'media-card group bg-muted relative overflow-hidden transition-shadow',
 		variant === 'grid' && 'aspect-square rounded-xl shadow-sm hover:shadow-md',
 		variant === 'collage' && 'w-full rounded-lg shadow-sm hover:shadow-md',
-		selected && 'ring-primary ring-offset-base-100 ring-2 ring-offset-2',
+		selected && 'ring-primary ring-offset-background ring-2 ring-offset-2',
 		dragging && 'opacity-40',
 		showCheckbox ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
 	]}
@@ -244,17 +246,17 @@
 		</div>
 	{:else if generatingThumbnail}
 		<div
-			class="bg-base-300 flex h-full w-full flex-col items-center justify-center gap-2"
+			class="bg-border flex h-full w-full flex-col items-center justify-center gap-2"
 			aria-busy="true"
 			aria-label="Generating thumbnail"
 		>
-			<span class="loading loading-spinner loading-md text-base-content/55"></span>
-			<span class="text-base-content/45 text-[10px] font-medium tracking-wide uppercase">
+			<Spinner class="text-muted-foreground size-6" />
+			<span class="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
 				Thumbnail
 			</span>
 		</div>
 	{:else}
-		<div class="bg-base-300 relative h-full w-full">
+		<div class="bg-border relative h-full w-full">
 			<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
 				<span
 					class="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white shadow"
@@ -267,30 +269,29 @@
 
 	{#if showCheckbox}
 		<div class="absolute top-2 left-2 z-10">
-			<input
-				type="checkbox"
-				class="checkbox checkbox-primary checkbox-sm bg-base-100/90"
+			<Checkbox
 				checked={selected}
-				tabindex="-1"
+				class="bg-background/90"
+				tabindex={-1}
+				onpointerdown={(e) => e.stopPropagation()}
 				onclick={(e) => e.stopPropagation()}
-				onchange={(e) => {
-					e.stopPropagation();
-					onclick?.(e as unknown as MouseEvent);
+				onCheckedChange={() => {
+					onclick?.(new MouseEvent('click'));
 				}}
 			/>
 		</div>
 	{/if}
 
 	<div
-		class="bg-base-100/95 text-base-content absolute inset-x-0 bottom-0 px-2.5 py-2 opacity-0 transition-opacity group-hover:opacity-100"
+		class="bg-background/95 text-foreground absolute inset-x-0 bottom-0 px-2.5 py-2 opacity-0 transition-opacity group-hover:opacity-100"
 		class:opacity-100={selected}
 	>
 		<p class="truncate text-xs font-medium">{item.original_name}</p>
-		<div class="text-base-content/70 mt-1 flex items-center justify-between gap-2 text-[10px]">
+		<div class="text-muted-foreground mt-1 flex items-center justify-between gap-2 text-[10px]">
 			{#if showAlbumChip && albumLabel}
-				<span class="badge badge-sm bg-base-200 max-w-[70%] truncate border-0" title={albumTitle}>
+				<Badge variant="secondary" class="max-w-[70%] truncate" title={albumTitle}>
 					{albumLabel}
-				</span>
+				</Badge>
 			{:else}
 				<span></span>
 			{/if}
@@ -307,11 +308,12 @@
 	{/if}
 
 	{#if !showCheckbox && showAlbumChip && albumLabel}
-		<span
-			class="badge badge-sm bg-base-100/90 text-base-content absolute top-2 left-2 max-w-[75%] truncate border-0 shadow-sm"
+		<Badge
+			variant="secondary"
+			class="absolute top-2 left-2 max-w-[75%] truncate shadow-sm"
 			title={albumTitle}
 		>
 			{albumLabel}
-		</span>
+		</Badge>
 	{/if}
 </div>

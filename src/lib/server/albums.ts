@@ -1,7 +1,7 @@
-import { and, count, eq, sql } from 'drizzle-orm';
+import { and, count, eq, isNull, sql } from 'drizzle-orm';
 import type { Album } from '$lib/types';
 import db, { isUniqueConstraintError, newId } from './db';
-import { albumMedia, albums } from './schema';
+import { albumMedia, albums, media } from './schema';
 
 function normalizeCreated(iso: string): string {
 	return iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`;
@@ -11,7 +11,8 @@ export function listAlbums(profileId: string): Album[] {
 	const mediaCount = db
 		.select({ c: count() })
 		.from(albumMedia)
-		.where(eq(albumMedia.albumId, albums.id));
+		.innerJoin(media, eq(media.id, albumMedia.mediaId))
+		.where(and(eq(albumMedia.albumId, albums.id), isNull(media.deletedAt)));
 
 	const rows = db
 		.select({
@@ -84,19 +85,7 @@ export function renameAlbum(profileId: string, id: string, name: string): Album 
 	return updated;
 }
 
-/** Strip a trailing " (n)" so "Travel (2)" and "Travel" share the same stem. */
-function albumNameStem(name: string): string {
-	return name.replace(/\s+\(\d+\)$/, '').trim() || name;
-}
-
-/** Next available "Stem (x)" among album names in the profile. */
-export function nextDuplicateAlbumName(sourceName: string, existingNames: string[]): string {
-	const stem = albumNameStem(sourceName);
-	const taken = new Set(existingNames.map((n) => n.toLowerCase()));
-	let n = 1;
-	while (taken.has(`${stem} (${n})`.toLowerCase())) n += 1;
-	return `${stem} (${n})`;
-}
+import { nextDuplicateAlbumName } from '$lib/albumNaming.js';
 
 /**
  * Duplicate an album: new album named "Name (x)" with the same media memberships

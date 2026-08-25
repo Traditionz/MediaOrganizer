@@ -11,6 +11,9 @@
 
 <script lang="ts">
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+	import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
+	import { Separator } from '$lib/components/ui/separator/index.js';
+	import { cn } from '$lib/cn.js';
 	import { eventTargetNode } from '$lib/parse';
 
 	interface Props {
@@ -119,6 +122,9 @@
 	const openSubmenu = $derived(
 		submenuOpenId ? (items.find((i) => i.id === submenuOpenId)?.children ?? null) : null
 	);
+
+	const itemClass =
+		'hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground flex w-full cursor-default items-center justify-between gap-2 rounded-md px-1.5 py-1 text-sm outline-hidden select-none';
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -133,72 +139,75 @@
 		role="menu"
 		aria-label="Context menu"
 	>
-		<ul class="menu rounded-box border-base-300 bg-base-100 min-w-[11rem] border p-1 shadow-lg">
+		<div
+			class="bg-popover text-popover-foreground ring-foreground/10 min-w-36 rounded-lg p-1 shadow-md ring-1"
+		>
 			{#each items as item, i (item.separator ? `sep-${i}` : item.id)}
 				{#if item.separator}
-					<li class="menu-title bg-base-300 my-0.5 h-px p-0"></li>
+					<Separator class="my-1" />
 				{:else}
-					<li>
-						<button
-							type="button"
-							class={[
-								'flex w-full items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-sm',
-								item.danger && 'text-error',
-								item.disabled && 'pointer-events-none opacity-40'
-							]}
-							data-menu-id={item.id}
-							disabled={item.disabled}
-							role="menuitem"
-							onclick={() => handleSelect(item)}
-							onmouseenter={() => {
-								if (item.children?.length) openSubmenuFor(item);
-								else submenuOpenId = null;
-							}}
-						>
-							<span>{item.label}</span>
-							{#if item.children?.length}
-								<ChevronRight class="h-3.5 w-3.5 shrink-0 opacity-70" />
-							{/if}
-						</button>
-					</li>
+					<button
+						type="button"
+						class={cn(
+							itemClass,
+							item.danger && 'text-destructive hover:bg-destructive/10 focus:bg-destructive/10',
+							item.disabled && 'pointer-events-none opacity-50'
+						)}
+						data-menu-id={item.id}
+						disabled={item.disabled}
+						role="menuitem"
+						onclick={() => handleSelect(item)}
+						onmouseenter={() => {
+							if (item.children?.length) openSubmenuFor(item);
+							else submenuOpenId = null;
+						}}
+					>
+						<span>{item.label}</span>
+						{#if item.children?.length}
+							<ChevronRight class="size-4 shrink-0 opacity-70" />
+						{/if}
+					</button>
 				{/if}
 			{/each}
-		</ul>
+		</div>
 
 		{#if openSubmenu}
-			<ul
+			<div
 				data-submenu
-				class="menu rounded-box border-base-300 bg-base-100 fixed z-50 max-h-[min(20rem,70vh)] min-w-[11rem] overflow-y-auto border p-1 shadow-lg"
+				class="bg-popover text-popover-foreground ring-foreground/10 fixed z-50 min-w-36 rounded-lg p-1 shadow-md ring-1"
 				style:left="{submenuPos.left}px"
 				style:top="{submenuPos.top}px"
 				role="menu"
 			>
-				{#each openSubmenu as child, i (child.separator ? `sub-sep-${i}` : child.id)}
-					{#if child.separator}
-						<li class="menu-title bg-base-300 my-0.5 h-px p-0"></li>
-					{:else}
-						<li>
-							<button
-								type="button"
-								class={[
-									'flex w-full items-center rounded-lg px-3 py-1.5 text-sm',
-									child.danger && 'text-error',
-									child.disabled && 'pointer-events-none opacity-40'
-								]}
-								disabled={child.disabled}
-								role="menuitem"
-								onclick={() => {
-									if (child.disabled || child.separator) return;
-									onselect(child.id);
-									close();
-								}}
-							>
-								{child.label}
-							</button>
-						</li>
-					{/if}
-				{/each}
-			</ul>
+				<ScrollArea class="max-h-[min(20rem,70vh)]">
+					<div class="p-0">
+						{#each openSubmenu as child, i (child.separator ? `sub-sep-${i}` : child.id)}
+							{#if child.separator}
+								<Separator class="my-1" />
+							{:else}
+								<button
+									type="button"
+									class={cn(
+										itemClass,
+										child.danger &&
+											'text-destructive hover:bg-destructive/10 focus:bg-destructive/10',
+										child.disabled && 'pointer-events-none opacity-50'
+									)}
+									disabled={child.disabled}
+									role="menuitem"
+									onclick={() => {
+										if (child.disabled || child.separator) return;
+										onselect(child.id);
+										close();
+									}}
+								>
+									{child.label}
+								</button>
+							{/if}
+						{/each}
+					</div>
+				</ScrollArea>
+			</div>
 		{/if}
 	</div>
 {/if}

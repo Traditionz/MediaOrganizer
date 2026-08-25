@@ -1,19 +1,25 @@
 /** In-memory drag session — custom MIME types are unreliable during dragover. */
+import { browser } from '$app/environment';
+
 export type InternalDragKind = 'media';
 
 let kind: InternalDragKind | null = null;
 let mediaIds: string[] = [];
 let dragGhostEl: HTMLElement | null = null;
 
+const DRAG_CLASS = 'mo-media-dragging';
+
 export function beginMediaDrag(ids: string[]) {
 	kind = 'media';
 	mediaIds = ids.filter((id) => id.length > 0);
+	if (browser) document.documentElement.classList.add(DRAG_CLASS);
 }
 
 export function endInternalDrag() {
 	kind = null;
 	mediaIds = [];
 	clearDragGhost();
+	if (browser) document.documentElement.classList.remove(DRAG_CLASS);
 }
 
 function clearDragGhost() {

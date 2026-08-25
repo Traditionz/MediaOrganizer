@@ -1,6 +1,6 @@
 # Media Organizer
 
-A **local-only** media library for organizing pictures and videos. Built with **SvelteKit**, **DaisyUI**, **Drizzle**, and **SQLite**.
+A **local-only** media library for organizing pictures and videos. Built with **SvelteKit**, **shadcn-svelte**, **Drizzle**, and **SQLite**.
 
 - Metadata (profiles, albums, names) lives in a SQLite database: `data/media.db`
 - Media bytes are stored as files under `data/files/` and streamed on upload/playback
@@ -15,11 +15,10 @@ Each **profile** has its own albums and media. Passcodes are **optional** per pr
 | Tool          | Why                     | Version                       |
 | ------------- | ----------------------- | ----------------------------- |
 | **Git**       | Clone / get the project | Any recent                    |
-| **Node.js**   | Runs the app            | **20+** (LTS recommended)     |
-| **pnpm**      | Installs dependencies   | **11+** (`corepack enable`)   |
+| **Bun**       | Runtime + packages      | **1.4+**                      |
 | **A browser** | Use the UI              | Chrome, Firefox, Edge, Safari |
 
-No Docker or MongoDB install is required.
+No Docker, npm, or MongoDB install is required. Node is not required for day-to-day use (Bun runs the app).
 
 ---
 
@@ -54,20 +53,30 @@ sudo apt install -y git
 git --version
 ```
 
-### B. Install Node.js and pnpm
+### B. Install Bun 1.4+
 
-1. Open [https://nodejs.org/](https://nodejs.org/).
-2. Download the **LTS** installer (20.x or newer).
-3. Install with “Add to PATH” enabled.
-4. **Close and reopen** your terminal, then check:
+**macOS / Linux / WSL / Git Bash**
 
 ```bash
-node -v
-corepack enable
-pnpm -v
+curl -fsSL https://bun.com/install | bash -s "bun-v1.4.0"
 ```
 
-Optional: [nvm](https://github.com/nvm-sh/nvm) / [nvm-windows](https://github.com/coreybutler/nvm-windows), or `brew install node` on macOS.
+Add Bun to your PATH if the installer says so, then reopen the terminal:
+
+```bash
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+bun --version
+```
+
+**Windows (PowerShell)**
+
+```powershell
+powershell -c "irm bun.sh/install.ps1 | iex"
+bun --version
+```
+
+Or see [https://bun.com/docs/installation](https://bun.com/docs/installation).
 
 ### C. Get the project
 
@@ -89,13 +98,13 @@ cd path/to/MediaOrganizer
 ### 1. Install project dependencies
 
 ```bash
-pnpm install
+bun install
 ```
 
 ### 2. Start the dev server
 
 ```bash
-pnpm dev
+bun run dev
 ```
 
 The first run creates `data/media.db` and `data/files/` automatically.
@@ -120,8 +129,8 @@ Press `Ctrl+C` in the terminal. No background database process remains.
 
 ```bash
 cd MediaOrganizer
-pnpm install
-pnpm dev
+bun install
+bun run dev
 ```
 
 Open [http://localhost:5173](http://localhost:5173).
@@ -143,21 +152,21 @@ Back up the whole `data/` folder to keep your library.
 
 ## Troubleshooting
 
-| Problem                               | What to try                                                               |
-| ------------------------------------- | ------------------------------------------------------------------------- |
-| `node` / `pnpm` not found             | Reinstall Node LTS; run `corepack enable`; reopen the terminal            |
-| Port 5173 in use                      | `pnpm dev -- --port 5174`                                                 |
-| Upload / APIs return 401              | Create or select a profile first                                          |
-| `better-sqlite3` build errors         | Use Node 20+ LTS; on Windows, a normal Node install is enough (prebuilds) |
-| Lost library after moving the project | Copy the `data/` directory with the project                               |
+| Problem                               | What to try                                                              |
+| ------------------------------------- | ------------------------------------------------------------------------ |
+| `bun` not found                       | Install Bun 1.4+; add `~/.bun/bin` to PATH; reopen the terminal          |
+| Port 5173 in use                      | `bun run dev -- --port 5174`                                             |
+| Upload / APIs return 401              | Create or select a profile first                                         |
+| `better-sqlite3` build errors         | Use Bun 1.4+; on Windows, a normal install is usually enough (prebuilds) |
+| Lost library after moving the project | Copy the `data/` directory with the project                              |
 
 ---
 
 ## Production build (still local)
 
 ```bash
-pnpm build
-pnpm preview
+bun run build
+bun run preview
 ```
 
 Still uses local `data/` — this project is not intended for remote production servers.
@@ -196,7 +205,13 @@ Still uses local `data/` — this project is not intended for remote production 
 
 - Click to select; **Ctrl/Cmd** toggle; **Shift** range select
 - Drag on empty space for a Windows‑style **marquee** selection
-- Multi‑select to add to an album, download, duplicate, cut/copy, or delete
+- Multi‑select to add to an album, download, duplicate, cut/copy, or move to trash
+
+### Trash
+
+- **Move to trash** soft-deletes media (files stay on disk)
+- Sidebar **Trash** view: restore or delete forever
+- Items in trash longer than **30 days** are permanently deleted on page load
 
 ### Media context menu (right‑click)
 
@@ -209,17 +224,17 @@ Still uses local `data/` — this project is not intended for remote production 
 | Rename              | Single item                                           |
 | Download            | One or many                                           |
 | Compress (AV1/AVIF) | Manual re‑encode (see Compression below)              |
-| Delete              | Confirms first                                        |
+| Move to trash       | Soft delete; permanently removed after 30 days        |
 
-Empty area: **Paste**, **Upload…**
+Empty area: **Paste**, **Upload…** (in Trash: **Empty trash**)
 
 ### Upload settings
 
 The toolbar **Upload settings** group (separate from filters) has:
 
-| Setting             | Default | Effect                                                                                                                                                 |
-| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Warn duplicates** | on      | If a file name already exists in the library (or twice in the same batch), ask before saving a duplicate. Turn off to always upload without prompting. |
+| Setting             | Default | Effect                                                                                                                                                                                                 |
+| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Warn duplicates** | on      | If a file name already exists, ask: **Skip duplicates** (default) or **Upload as duplicates**. Skipping into an album links the existing library item. Off = skip silently (Amazon Photos–style). |
 
 ### Compression
 
@@ -235,29 +250,31 @@ Uploads are stored as-is. There is **no** background or on-upload recompress.
 | Ctrl/Cmd + X | Cut                                  |
 | Ctrl/Cmd + V | Paste (copy → duplicate, cut → move) |
 | F2           | Rename                               |
-| Delete       | Delete selection                     |
+| Delete       | Move selection to trash (or delete forever in Trash) |
 
 ---
 
 ## Project scripts
 
-| Command        | Description                  |
-| -------------- | ---------------------------- |
-| `pnpm dev`     | Dev server with HMR          |
-| `pnpm build`   | Production build             |
-| `pnpm preview` | Preview the production build |
-| `pnpm check`   | Typecheck / Svelte check     |
-| `pnpm format`  | Format with Prettier         |
+| Command           | Description                   |
+| ----------------- | ----------------------------- |
+| `bun run dev`     | Dev server with HMR           |
+| `bun run build`   | Production build              |
+| `bun run preview` | Preview the production build  |
+| `bun run check`   | Typecheck / Svelte check      |
+| `bun run format`    | Format with Oxfmt             |
+| `bun run lint`      | Oxlint (anti-slop + defaults) |
+| `bun run reinstall` | Reinstall deps + sync types   |
 
 ---
 
 ## Tech stack
 
 - **SvelteKit** + **Svelte 5** (runes)
-- **Tailwind CSS** + **DaisyUI**
+- **Tailwind CSS** + **shadcn-svelte**
 - **Drizzle ORM** + **SQLite** (`better-sqlite3`) for metadata
 - **@lucide/svelte** for icons
-- **Prettier** for formatting
-- **pnpm** for packages
+- **Oxfmt** for formatting
+- **Bun 1.4+** for runtime and packages
 - **Local filesystem** under `data/files/` for media bytes
 - **ffmpeg-static** + **sharp** for duration/size probes and optional manual AV1 / AVIF compression
