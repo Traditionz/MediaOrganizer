@@ -7,6 +7,10 @@
 	import Search from '@lucide/svelte/icons/search';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import User from '@lucide/svelte/icons/user';
+	import { Badge } from '$lib/components/ui/badge/index.js';
+	import { Button } from '$lib/components/ui/button/index.js';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
+	import { Input } from '$lib/components/ui/input/index.js';
 	import type { Album, LibraryAlbumFilter, Profile } from '$lib/types';
 	import { endInternalDrag, getInternalDrag, isInternalDragActive } from '$lib/dragSession';
 	import { asString, eventHtml, parseJsonText } from '$lib/parse';
@@ -266,7 +270,10 @@
 
 	function onDragOverTarget(e: DragEvent, target: string) {
 		if (isOsFileOnly(e.dataTransfer)) return;
-		if (!isInternalDragActive() && !(e.dataTransfer && [...e.dataTransfer.types].includes(MEDIA_MIME))) {
+		if (
+			!isInternalDragActive() &&
+			!(e.dataTransfer && [...e.dataTransfer.types].includes(MEDIA_MIME))
+		) {
 			return;
 		}
 		e.preventDefault();
@@ -412,69 +419,61 @@
 </script>
 
 <aside
-	class="border-base-300 bg-base-100 flex h-full w-[var(--media-sidebar-width)] shrink-0 flex-col border-r"
+	class="border-border bg-background flex h-full w-[var(--media-sidebar-width)] shrink-0 flex-col border-r"
 >
-	<div class="border-base-300 border-b px-4 py-5">
-		<p class="text-base-content/50 text-xs font-semibold tracking-[0.14em] uppercase">Library</p>
+	<div class="border-border border-b px-4 py-5">
+		<p class="text-muted-foreground text-xs font-semibold tracking-[0.14em] uppercase">Library</p>
 		<h1 class="mt-1 text-xl font-bold tracking-tight">Media Organizer</h1>
 
-		<div class="relative mt-3">
-			<button
-				type="button"
-				class="btn btn-ghost btn-sm h-auto w-full justify-between gap-2 px-2 py-1.5 font-normal"
-				aria-expanded={profileMenuOpen}
-				aria-haspopup="menu"
-				disabled={isBusy}
-				onclick={() => {
-					profileMenuOpen = !profileMenuOpen;
-					if (!profileMenuOpen) {
+		<div class="mt-3">
+			<DropdownMenu.Root
+				bind:open={profileMenuOpen}
+				onOpenChange={(next) => {
+					if (!next) {
 						creatingProfile = false;
 						newProfileName = '';
 					}
 				}}
 			>
-				<span class="flex min-w-0 items-center gap-2">
-					<User class="text-base-content/60 h-4 w-4 shrink-0" />
-					<span class="truncate font-medium">{profile.name}</span>
-				</span>
-				<ChevronDown
-					class={[
-						'h-4 w-4 shrink-0 opacity-60 transition-transform',
-						profileMenuOpen && 'rotate-180'
-					]}
-				/>
-			</button>
-
-			{#if profileMenuOpen}
-				<div
-					class="rounded-box border-base-300 bg-base-100 absolute right-0 left-0 z-30 mt-1 border p-1 shadow-lg"
-					role="menu"
-				>
-					{#if otherProfiles.length > 0}
-						<p
-							class="text-base-content/50 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase"
+				<DropdownMenu.Trigger>
+					{#snippet child({ props })}
+						<Button
+							{...props}
+							type="button"
+							variant="ghost"
+							size="sm"
+							class="h-auto w-full justify-between gap-2 px-2 py-1.5 font-normal"
+							disabled={isBusy}
 						>
-							Switch to…
-						</p>
+							<span class="flex min-w-0 items-center gap-2">
+								<User class="text-muted-foreground h-4 w-4 shrink-0" />
+								<span class="truncate font-medium">{profile.name}</span>
+							</span>
+							<ChevronDown
+								class={[
+									'h-4 w-4 shrink-0 opacity-60 transition-transform',
+									profileMenuOpen && 'rotate-180'
+								]}
+							/>
+						</Button>
+					{/snippet}
+				</DropdownMenu.Trigger>
+				<DropdownMenu.Content class="w-[var(--media-sidebar-width)]" align="start">
+					{#if otherProfiles.length > 0}
+						<DropdownMenu.Label>Switch to…</DropdownMenu.Label>
 						{#each otherProfiles as p (p.id)}
-							<button
-								type="button"
-								class="btn btn-ghost btn-sm w-full justify-start font-normal"
-								role="menuitem"
-								disabled={isBusy}
-								onclick={() => switchProfile(p.id)}
-							>
+							<DropdownMenu.Item disabled={isBusy} onclick={() => switchProfile(p.id)}>
 								{p.name}
-							</button>
+							</DropdownMenu.Item>
 						{/each}
-						<div class="bg-base-300 my-1 h-px"></div>
+						<DropdownMenu.Separator />
 					{/if}
 
 					{#if creatingProfile}
 						<form class="px-1 py-1" onsubmit={submitNewProfile}>
-							<input
+							<Input
 								{@attach autofocusCreate}
-								class="input input-bordered input-sm mb-1 w-full min-w-0"
+								class="mb-1 min-w-0"
 								placeholder="Profile name"
 								bind:value={newProfileName}
 								disabled={isBusy}
@@ -486,108 +485,113 @@
 									}
 								}}
 							/>
-							<button
+							<Button
 								type="submit"
-								class="btn btn-primary btn-sm w-full"
+								size="sm"
+								class="w-full"
 								disabled={isBusy || !newProfileName.trim()}
 							>
 								Create
-							</button>
+							</Button>
 						</form>
 					{:else}
-						<button
-							type="button"
-							class="btn btn-ghost btn-sm w-full justify-start gap-2 font-normal"
-							role="menuitem"
+						<DropdownMenu.Item
 							disabled={isBusy}
-							onclick={() => {
+							onSelect={(e) => {
+								e.preventDefault();
 								creatingProfile = true;
 								newProfileName = '';
 							}}
 						>
 							<Plus class="h-4 w-4" />
 							New profile…
-						</button>
+						</DropdownMenu.Item>
 					{/if}
 
-					<button
-						type="button"
-						class="btn btn-ghost btn-sm text-error w-full justify-start gap-2 font-normal"
-						role="menuitem"
+					<DropdownMenu.Item
+						variant="destructive"
 						disabled={isBusy}
-						onclick={deleteCurrentProfile}
+						onclick={() => deleteCurrentProfile()}
 					>
 						<Trash2 class="h-4 w-4" />
 						Delete current profile
-					</button>
-				</div>
-			{/if}
+					</DropdownMenu.Item>
+				</DropdownMenu.Content>
+			</DropdownMenu.Root>
 		</div>
 	</div>
 
 	<nav {@attach attachAlbumNavScroll} class="media-scroll flex-1 overflow-y-auto p-3">
-		<button
+		<Button
 			type="button"
+			variant="ghost"
 			class={[
-				'btn btn-ghost w-full justify-start gap-2 font-medium',
-				activeAlbum === 'all' && 'btn-active bg-base-200'
+				'w-full justify-start gap-2 font-medium',
+				activeAlbum === 'all' && 'bg-accent text-accent-foreground'
 			]}
 			onclick={() => onselect('all')}
 		>
 			<Images class="h-5 w-5" />
 			All media
-			<span class="badge badge-ghost ml-auto">{totalCount}</span>
-		</button>
+			<Badge variant="secondary" class="ml-auto">{totalCount}</Badge>
+		</Button>
 
-		<button
+		<Button
 			type="button"
+			variant="ghost"
 			class={[
-				'btn btn-ghost mt-1 w-full justify-start gap-2 font-medium',
-				activeAlbum === null && 'btn-active bg-base-200'
+				'mt-1 w-full justify-start gap-2 font-medium',
+				activeAlbum === null && 'bg-accent text-accent-foreground'
 			]}
 			onclick={() => onselect(null)}
 		>
 			<Inbox class="h-5 w-5" />
 			Unassigned
-			<span class="badge badge-ghost ml-auto">{unassignedCount}</span>
-		</button>
+			<Badge variant="secondary" class="ml-auto">{unassignedCount}</Badge>
+		</Button>
 
-		<button
+		<Button
 			type="button"
+			variant="ghost"
 			class={[
-				'btn btn-ghost mt-1 w-full justify-start gap-2 font-medium',
-				activeAlbum === 'trash' && 'btn-active bg-base-200'
+				'mt-1 w-full justify-start gap-2 font-medium',
+				activeAlbum === 'trash' && 'bg-accent text-accent-foreground'
 			]}
 			onclick={() => onselect('trash')}
 		>
 			<Trash2 class="h-5 w-5" />
 			Trash
-			<span class="badge badge-ghost ml-auto">{trashCount}</span>
-		</button>
+			<Badge variant="secondary" class="ml-auto">{trashCount}</Badge>
+		</Button>
 
 		<div class="mt-4 mb-2 flex items-center justify-between rounded-lg px-2 py-1">
-			<span class="text-base-content/50 text-xs font-semibold tracking-wide uppercase">Albums</span>
-			<button
+			<span class="text-muted-foreground text-xs font-semibold tracking-wide uppercase">Albums</span
+			>
+			<Button
 				type="button"
-				class="btn btn-ghost btn-xs btn-circle"
+				variant="ghost"
+				size="icon-xs"
 				onclick={startCreate}
 				aria-label="New album"
 				title="New album"
 			>
 				<Plus class="h-4 w-4" />
-			</button>
+			</Button>
 		</div>
 
-		<label class="input input-bordered input-sm mb-2 flex w-full items-center gap-2">
-			<Search class="h-4 w-4 shrink-0 opacity-50" aria-hidden="true" />
-			<input
+		<div class="relative mb-2">
+			<Search
+				class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+				aria-hidden="true"
+			/>
+			<Input
 				type="search"
-				class="grow bg-transparent outline-none"
+				class="pl-8"
 				placeholder="Search albums…"
 				bind:value={albumQuery}
 				aria-label="Search albums"
 			/>
-		</label>
+		</div>
 
 		{#if creating}
 			<form
@@ -597,9 +601,9 @@
 					submitCreate();
 				}}
 			>
-				<input
+				<Input
 					{@attach autofocusCreate}
-					class="input input-bordered input-sm w-full min-w-0"
+					class="min-w-0"
 					placeholder="Album name"
 					bind:value={newName}
 					disabled={busy}
@@ -613,13 +617,13 @@
 			</form>
 		{/if}
 
-		<ul class="menu menu-sm w-full gap-0.5 p-0">
+		<ul class="flex w-full flex-col gap-0.5 p-0">
 			{#each visibleAlbums as album (album.id)}
 				<li>
 					<div
 						class={[
 							'album-drop-row group flex items-center gap-0.5 rounded-lg',
-							activeAlbum === album.id && 'bg-base-200',
+							activeAlbum === album.id && 'bg-accent text-accent-foreground',
 							dropHighlight(album.id)
 						]}
 						ondragenter={(e) => onDragOverTarget(e, album.id)}
@@ -637,9 +641,9 @@
 									submitRename();
 								}}
 							>
-								<input
+								<Input
 									{@attach autofocusCreate}
-									class="input input-bordered input-xs w-full min-w-0"
+									class="h-7 min-w-0 text-xs"
 									bind:value={renameName}
 									disabled={busy}
 									onclick={(e) => e.stopPropagation()}
@@ -670,15 +674,15 @@
 							>
 								<Folder class="h-4 w-4 shrink-0" />
 								<span class="truncate">{album.name}</span>
-								<span class="badge badge-ghost badge-sm ml-auto shrink-0"
-									>{album.media_count ?? 0}</span
-								>
+								<Badge variant="secondary" class="ml-auto shrink-0">{album.media_count ?? 0}</Badge>
 							</div>
 						{/if}
 
-						<button
+						<Button
 							type="button"
-							class="album-drop-hit btn btn-ghost btn-xs btn-circle opacity-0 group-hover:opacity-100"
+							variant="ghost"
+							size="icon-xs"
+							class="album-drop-hit opacity-0 group-hover:opacity-100"
 							aria-label="Delete album"
 							title="Delete album"
 							onclick={(e) => {
@@ -687,18 +691,17 @@
 							}}
 						>
 							<Trash2 class="h-4 w-4" />
-						</button>
+						</Button>
 					</div>
 				</li>
 			{:else}
-				<li class="text-base-content/60 px-2 py-6 text-center text-sm">
+				<li class="text-muted-foreground px-2 py-6 text-center text-sm">
 					{albums.length === 0 ? 'No albums yet.' : 'No albums match your search.'}
 				</li>
 			{/each}
 		</ul>
 	</nav>
 </aside>
-
 <ContextMenu
 	open={contextMenu.open}
 	x={contextMenu.x}

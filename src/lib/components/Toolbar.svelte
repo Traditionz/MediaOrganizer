@@ -2,6 +2,13 @@
 	import Moon from '@lucide/svelte/icons/moon';
 	import Search from '@lucide/svelte/icons/search';
 	import Sun from '@lucide/svelte/icons/sun';
+	import { Badge } from '$lib/components/ui/badge/index.js';
+	import { Button } from '$lib/components/ui/button/index.js';
+	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+	import { Input } from '$lib/components/ui/input/index.js';
+	import { Slider } from '$lib/components/ui/slider/index.js';
+	import { Spinner } from '$lib/components/ui/spinner/index.js';
+	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
 	import type { ThemeMode, ViewMode } from '$lib/types';
 
 	interface Props {
@@ -73,160 +80,158 @@
 	}: Props = $props();
 
 	const showSelectionActions = $derived(selectMode || selectedCount > 0);
+
+	function asBool(v: boolean | 'indeterminate'): boolean {
+		return v === true;
+	}
 </script>
 
 <div
-	class="border-base-300 bg-base-100/90 flex flex-wrap items-center gap-2 border-b px-4 py-3 backdrop-blur"
+	class="border-border bg-background/90 flex flex-wrap items-center gap-2 border-b px-4 py-3 backdrop-blur"
 >
 	{#if showSelectionActions}
-		<span class="badge badge-primary badge-outline">{selectedCount} selected</span>
+		<Badge variant="outline">{selectedCount} selected</Badge>
 		{#if trashMode}
-			<button class="btn btn-sm btn-primary" disabled={!selectedCount} onclick={() => onrestore?.()}>
-				Restore
-			</button>
-			<button class="btn btn-sm btn-error btn-outline" disabled={!selectedCount} onclick={ondelete}>
+			<Button size="sm" disabled={!selectedCount} onclick={() => onrestore?.()}>Restore</Button>
+			<Button size="sm" variant="destructive" disabled={!selectedCount} onclick={ondelete}>
 				Delete forever
-			</button>
+			</Button>
 		{:else}
-			<button class="btn btn-sm btn-primary" disabled={!selectedCount} onclick={onopenAlbumPicker}>
-				Add to album…
-			</button>
-			<button class="btn btn-sm" disabled={!selectedCount || uploading} onclick={() => oncompress()}>
+			<Button size="sm" disabled={!selectedCount} onclick={onopenAlbumPicker}>Add to album…</Button>
+			<Button
+				size="sm"
+				variant="secondary"
+				disabled={!selectedCount || uploading}
+				onclick={() => oncompress()}
+			>
 				Compress
-			</button>
-			<button class="btn btn-sm btn-error btn-outline" disabled={!selectedCount} onclick={ondelete}>
+			</Button>
+			<Button size="sm" variant="destructive" disabled={!selectedCount} onclick={ondelete}>
 				Move to trash
-			</button>
+			</Button>
 		{/if}
-		<button class="btn btn-sm" onclick={onclearSelection}>Clear</button>
-		<button class="btn btn-sm btn-ghost" onclick={ontoggleSelect}>Done</button>
+		<Button size="sm" variant="secondary" onclick={onclearSelection}>Clear</Button>
+		<Button size="sm" variant="ghost" onclick={ontoggleSelect}>Done</Button>
 	{:else}
-		<button class="btn btn-sm btn-outline" onclick={ontoggleSelect}>Select</button>
+		<Button size="sm" variant="outline" onclick={ontoggleSelect}>Select</Button>
 		{#if trashMode}
-			<button
-				class="btn btn-sm btn-error btn-outline"
+			<Button
+				size="sm"
+				variant="destructive"
 				disabled={trashCount === 0}
 				onclick={() => onemptyTrash?.()}
 			>
 				Empty trash
-			</button>
+			</Button>
 		{:else}
-			<button class="btn btn-sm btn-primary" onclick={onuploadClick}>
+			<Button size="sm" onclick={onuploadClick}>
 				{#if uploading}
-					<span class="loading loading-spinner loading-xs"></span>
+					<Spinner class="size-3" />
 				{/if}
 				Upload
-			</button>
+			</Button>
 		{/if}
 	{/if}
 
 	<div class="flex flex-wrap items-center gap-2">
-		<div class="join">
-			<button
-				class={['btn btn-sm join-item', viewMode === 'grid' && 'btn-active']}
-				onclick={() => onviewMode('grid')}
-			>
-				Grid
-			</button>
-			<button
-				class={['btn btn-sm join-item', viewMode === 'collage' && 'btn-active']}
-				onclick={() => onviewMode('collage')}
-			>
-				Collage
-			</button>
-		</div>
-		<label class="text-base-content/70 flex items-center gap-2 text-sm">
+		<ToggleGroup.Root
+			type="single"
+			variant="outline"
+			size="sm"
+			value={viewMode}
+			onValueChange={(v) => {
+				if (v === 'grid' || v === 'collage') onviewMode(v);
+			}}
+		>
+			<ToggleGroup.Item value="grid">Grid</ToggleGroup.Item>
+			<ToggleGroup.Item value="collage">Collage</ToggleGroup.Item>
+		</ToggleGroup.Root>
+		<label class="text-muted-foreground flex items-center gap-2 text-sm">
 			<span class="whitespace-nowrap">Cols {columns}</span>
-			<input
-				type="range"
-				class="range range-primary range-xs w-24"
-				min="2"
-				max="8"
-				step="1"
+			<Slider
+				type="single"
+				class="w-24"
+				min={2}
+				max={8}
+				step={1}
 				value={columns}
-				oninput={(e) => oncolumns(Number(e.currentTarget.value))}
+				onValueChange={(v) => {
+					const n = Array.isArray(v) ? v[0] : v;
+					if (typeof n === 'number') oncolumns(n);
+				}}
 			/>
 		</label>
 	</div>
 
-	<label
-		class="input input-bordered input-sm flex max-w-xs min-w-[10rem] flex-1 items-center gap-2"
-	>
-		<Search class="h-4 w-4 shrink-0 opacity-50" aria-hidden="true" />
-		<input
+	<div class="relative max-w-xs min-w-[10rem] flex-1">
+		<Search
+			class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+			aria-hidden="true"
+		/>
+		<Input
 			type="search"
-			class="grow bg-transparent outline-none"
+			class="pl-8"
 			placeholder="Search media…"
 			value={searchQuery}
 			oninput={(e) => onsearchQuery(e.currentTarget.value)}
 			aria-label="Search media"
 		/>
-	</label>
+	</div>
 
 	<div class="flex items-center gap-3 px-1">
 		<label class="flex cursor-pointer items-center gap-1.5 text-sm">
-			<input
-				type="checkbox"
-				class="checkbox checkbox-sm checkbox-primary"
-				checked={showImages}
-				onchange={(e) => onshowImages(e.currentTarget.checked)}
-			/>
+			<Checkbox checked={showImages} onCheckedChange={(v) => onshowImages(asBool(v))} />
 			Pictures
 		</label>
 		<label class="flex cursor-pointer items-center gap-1.5 text-sm">
-			<input
-				type="checkbox"
-				class="checkbox checkbox-sm checkbox-primary"
-				checked={showVideos}
-				onchange={(e) => onshowVideos(e.currentTarget.checked)}
-			/>
+			<Checkbox checked={showVideos} onCheckedChange={(v) => onshowVideos(asBool(v))} />
 			Videos
 		</label>
 	</div>
 
-	<label class="text-base-content/70 flex items-center gap-1.5 text-sm">
+	<label class="text-muted-foreground flex items-center gap-1.5 text-sm">
 		<span class="hidden sm:inline">From</span>
-		<input
+		<Input
 			type="date"
-			class="input input-bordered input-sm w-auto"
+			class="w-auto"
 			value={dateFrom}
 			onchange={(e) => ondateFrom(e.currentTarget.value)}
 		/>
 	</label>
-	<label class="text-base-content/70 flex items-center gap-1.5 text-sm">
+	<label class="text-muted-foreground flex items-center gap-1.5 text-sm">
 		<span class="hidden sm:inline">To</span>
-		<input
+		<Input
 			type="date"
-			class="input input-bordered input-sm w-auto"
+			class="w-auto"
 			value={dateTo}
 			onchange={(e) => ondateTo(e.currentTarget.value)}
 		/>
 	</label>
 
 	<div
-		class="border-base-300 bg-base-200/50 flex flex-wrap items-center gap-3 rounded-lg border px-3 py-1.5"
+		class="border-border bg-muted/50 flex flex-wrap items-center gap-3 rounded-lg border px-3 py-1.5"
 		role="group"
 		aria-label="Upload settings"
 	>
-		<span class="text-base-content/55 text-xs font-semibold tracking-wide uppercase">
+		<span class="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
 			Upload settings
 		</span>
 		<label
 			class="flex cursor-pointer items-center gap-1.5 text-sm"
 			title="When on, ask whether to skip or upload files whose names already exist. When off, skip duplicates silently (Amazon Photos–style)."
 		>
-			<input
-				type="checkbox"
-				class="checkbox checkbox-sm checkbox-primary"
+			<Checkbox
 				checked={warnDuplicateUploads}
-				onchange={(e) => onwarnDuplicateUploads(e.currentTarget.checked)}
+				onCheckedChange={(v) => onwarnDuplicateUploads(asBool(v))}
 			/>
 			<span class="whitespace-nowrap">Warn duplicates</span>
 		</label>
 	</div>
 
-	<button
-		class="btn btn-sm btn-ghost btn-square ml-auto"
+	<Button
+		variant="ghost"
+		size="icon-sm"
+		class="ml-auto"
 		onclick={() => ontheme(theme === 'dark' ? 'light' : 'dark')}
 		aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
 		title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
@@ -236,5 +241,5 @@
 		{:else}
 			<Moon class="h-5 w-5" />
 		{/if}
-	</button>
+	</Button>
 </div>

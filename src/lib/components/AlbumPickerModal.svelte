@@ -1,6 +1,11 @@
 <script lang="ts">
-	import { fade, scale } from 'svelte/transition';
 	import Search from '@lucide/svelte/icons/search';
+	import { Badge } from '$lib/components/ui/badge/index.js';
+	import { Button } from '$lib/components/ui/button/index.js';
+	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+	import * as Dialog from '$lib/components/ui/dialog/index.js';
+	import { Input } from '$lib/components/ui/input/index.js';
+	import { Spinner } from '$lib/components/ui/spinner/index.js';
 	import type { Album } from '$lib/types';
 
 	interface Props {
@@ -129,90 +134,75 @@
 		}
 	}
 
-	function onkeydown(e: KeyboardEvent) {
-		if (e.key !== 'Escape' || !open || busy) return;
-		e.preventDefault();
-		e.stopPropagation();
-		oncancel();
-	}
-
-	function onBackdropPointerDown(e: PointerEvent) {
-		if (e.target !== e.currentTarget || busy) return;
-		// Close on pointer down only — not mouseup/click, so releasing outside after a drag doesn't dismiss.
+	function dismiss() {
+		if (busy || !open) return;
 		oncancel();
 	}
 </script>
 
-<svelte:window {onkeydown} />
-
 {#if open}
-	<div
-		{@attach resetOnOpen}
-		class="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
-		transition:fade={{ duration: 120 }}
-		role="dialog"
-		aria-modal="true"
-		aria-label={title}
-		tabindex="-1"
-		onpointerdown={onBackdropPointerDown}
-		onkeydown={(e) => {
-			if (e.key === 'Escape' && !busy) {
-				e.preventDefault();
-				e.stopPropagation();
-				oncancel();
-			}
+	<Dialog.Root
+		open={true}
+		onOpenChange={(next) => {
+			if (!next) dismiss();
 		}}
 	>
-		<div
-			class="border-base-300 bg-base-100 flex h-[min(42rem,92vh)] w-full max-w-lg flex-col overflow-hidden rounded-2xl border shadow-2xl"
-			transition:scale={{ duration: 140, start: 0.96 }}
+		<Dialog.Content
+			{@attach resetOnOpen}
+			class="flex h-[min(42rem,92vh)] max-w-lg flex-col gap-0 overflow-hidden p-0 sm:max-w-lg"
+			showCloseButton={false}
+			interactOutsideBehavior={busy ? 'ignore' : 'close'}
+			escapeKeydownBehavior={busy ? 'ignore' : 'close'}
 		>
-			<header class="border-base-300 shrink-0 border-b px-5 py-4">
-				<h2 class="text-lg font-semibold">{title}</h2>
-				<p class="text-base-content/60 mt-1 text-sm">Select one or more albums, then confirm.</p>
-				<label class="input input-bordered input-sm mt-3 flex w-full items-center gap-2">
-					<Search class="h-4 w-4 shrink-0 opacity-50" aria-hidden="true" />
-					<input
+			<header class="border-border shrink-0 border-b px-5 py-4">
+				<Dialog.Header>
+					<Dialog.Title>{title}</Dialog.Title>
+					<Dialog.Description>Select one or more albums, then confirm.</Dialog.Description>
+				</Dialog.Header>
+				<div class="relative mt-3">
+					<Search
+						class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+						aria-hidden="true"
+					/>
+					<Input
 						type="search"
-						class="grow bg-transparent outline-none"
+						class="pl-8"
 						placeholder="Search albums…"
 						bind:value={query}
 						aria-label="Search albums"
 					/>
-				</label>
+				</div>
 			</header>
 
 			<div class="flex min-h-0 flex-1">
 				<div {@attach attachList} class="min-h-0 flex-1 overflow-y-auto px-2 py-2">
 					{#if groupedAlbums.length === 0}
-						<p class="text-base-content/60 px-3 py-8 text-center text-sm">
+						<p class="text-muted-foreground px-3 py-8 text-center text-sm">
 							{albums.length === 0 ? 'No albums yet.' : 'No albums match your search.'}
 						</p>
 					{:else}
 						{#each groupedAlbums as group (group.letter)}
 							<section class="mb-2" data-letter={group.letter}>
 								<h3
-									class="bg-base-100/95 text-base-content/50 sticky top-0 z-10 px-3 py-1.5 text-xs font-semibold tracking-wide backdrop-blur"
+									class="bg-popover/95 text-muted-foreground sticky top-0 z-10 px-3 py-1.5 text-xs font-semibold tracking-wide backdrop-blur"
 								>
 									{group.letter}
 								</h3>
-								<ul class="menu menu-sm w-full p-0">
+								<ul class="flex w-full flex-col p-0">
 									{#each group.albums as album (album.id)}
 										<li>
 											<label
-												class="hover:bg-base-200 flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2"
+												class="hover:bg-muted flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2"
 											>
-												<input
-													type="checkbox"
-													class="checkbox checkbox-primary checkbox-sm"
+												<Checkbox
 													checked={selectedIds.has(album.id)}
-													onchange={() => toggleAlbum(album.id)}
+													onCheckedChange={() => toggleAlbum(album.id)}
 												/>
 												<span class="min-w-0 flex-1 truncate">{album.name}</span>
 												{#if album.media_count != null}
-													<span class="badge badge-ghost badge-sm shrink-0">
+													<Badge variant="secondary" class="shrink-0">
 														{album.media_count}
-													</span>
+													</Badge>
 												{/if}
 											</label>
 										</li>
@@ -224,7 +214,7 @@
 				</div>
 
 				<nav
-					class="border-base-300 flex h-full w-7 shrink-0 flex-col justify-between overflow-hidden border-l py-1.5"
+					class="border-border flex h-full w-7 shrink-0 flex-col justify-between overflow-hidden border-l py-1.5"
 					aria-label="Album letter index"
 				>
 					{#each LETTERS as letter (letter)}
@@ -234,7 +224,7 @@
 								'flex h-[1.15rem] w-full items-center justify-center border-0 bg-transparent p-0 text-[10px] leading-none font-semibold',
 								availableLetters.has(letter)
 									? 'text-primary hover:bg-primary/10 cursor-pointer'
-									: 'text-base-content/25 pointer-events-none',
+									: 'text-muted-foreground/25 pointer-events-none',
 								activeLetter === letter && availableLetters.has(letter) && 'bg-primary/15'
 							]}
 							disabled={!availableLetters.has(letter)}
@@ -248,28 +238,23 @@
 			</div>
 
 			<footer
-				class="border-base-300 flex shrink-0 items-center justify-between gap-2 border-t px-5 py-3"
+				class="border-border flex shrink-0 items-center justify-between gap-2 border-t px-5 py-3"
 			>
-				<span class="text-base-content/60 text-sm">
+				<span class="text-muted-foreground text-sm">
 					{selectedCount ? `${selectedCount} selected` : 'None selected'}
 				</span>
 				<div class="flex gap-2">
-					<button type="button" class="btn btn-ghost btn-sm" disabled={busy} onclick={oncancel}>
+					<Button type="button" variant="ghost" size="sm" disabled={busy} onclick={oncancel}>
 						Cancel
-					</button>
-					<button
-						type="button"
-						class="btn btn-primary btn-sm"
-						disabled={busy || selectedCount === 0}
-						onclick={submit}
-					>
+					</Button>
+					<Button type="button" size="sm" disabled={busy || selectedCount === 0} onclick={submit}>
 						{#if busy}
-							<span class="loading loading-spinner loading-xs"></span>
+							<Spinner class="size-3" />
 						{/if}
 						Add
-					</button>
+					</Button>
 				</div>
 			</footer>
-		</div>
-	</div>
+		</Dialog.Content>
+	</Dialog.Root>
 {/if}

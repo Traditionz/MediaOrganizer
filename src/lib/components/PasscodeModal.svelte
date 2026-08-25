@@ -1,5 +1,11 @@
 <script lang="ts">
-	import { fade, scale } from 'svelte/transition';
+	import { Button } from '$lib/components/ui/button/index.js';
+	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+	import * as Alert from '$lib/components/ui/alert/index.js';
+	import * as Dialog from '$lib/components/ui/dialog/index.js';
+	import { Input } from '$lib/components/ui/input/index.js';
+	import { Label } from '$lib/components/ui/label/index.js';
+	import { Spinner } from '$lib/components/ui/spinner/index.js';
 	import type { PasscodeModalMode } from '$lib/types';
 
 	interface Props {
@@ -129,144 +135,124 @@
 		});
 	}
 
-	function onkeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape' && !busy) oncancel();
+	function dismiss() {
+		if (busy || !open) return;
+		oncancel();
 	}
 </script>
 
-<svelte:window {onkeydown} />
-
 {#if open}
-	<div
-		class="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
-		transition:fade={{ duration: 120 }}
-		role="dialog"
-		aria-modal="true"
-		aria-label={title}
-		tabindex="-1"
-		onclick={(e) => {
-			if (e.target === e.currentTarget && !busy) oncancel();
-		}}
-		onkeydown={(e) => {
-			if (e.key === 'Escape' && !busy) oncancel();
+	<Dialog.Root
+		open={true}
+		onOpenChange={(next) => {
+			if (!next) dismiss();
 		}}
 	>
-		<form
-			class="border-base-300 bg-base-100 w-full max-w-md rounded-2xl border p-5 shadow-2xl"
-			transition:scale={{ duration: 140, start: 0.96 }}
-			onsubmit={submit}
+		<Dialog.Content
+			class="sm:max-w-md"
+			showCloseButton={false}
+			interactOutsideBehavior={busy ? 'ignore' : 'close'}
+			escapeKeydownBehavior={busy ? 'ignore' : 'close'}
 		>
-			<header class="mb-4">
-				<h2 class="text-lg font-semibold">{title}</h2>
-				{#if subtitle}
-					<p class="text-base-content/60 mt-1 text-sm">{subtitle}</p>
+			<form onsubmit={submit}>
+				<Dialog.Header>
+					<Dialog.Title>{title}</Dialog.Title>
+					{#if subtitle}
+						<Dialog.Description>{subtitle}</Dialog.Description>
+					{/if}
+				</Dialog.Header>
+
+				{#if localError || errorMessage}
+					<Alert.Root variant="destructive" class="mt-3">
+						<Alert.Description>{localError || errorMessage}</Alert.Description>
+					</Alert.Root>
 				{/if}
-			</header>
 
-			{#if localError || errorMessage}
-				<div class="alert alert-error mb-3 py-2 text-sm" role="alert">
-					<span>{localError || errorMessage}</span>
-				</div>
-			{/if}
+				{#if mode === 'create'}
+					<div class="mt-3 grid gap-2">
+						<Label class="text-muted-foreground text-xs">Name</Label>
+						<Input placeholder="Profile name" bind:value={name} disabled={busy} required />
+					</div>
 
-			{#if mode === 'create'}
-				<label class="form-control mb-3 w-full">
-					<span class="text-base-content/60 mb-1 text-xs font-medium">Name</span>
-					<input
-						class="input input-bordered input-sm w-full"
-						placeholder="Profile name"
-						bind:value={name}
-						disabled={busy}
-						required
-					/>
-				</label>
-
-				<label class="mb-3 flex cursor-pointer items-center gap-2 text-sm">
-					<input
-						type="checkbox"
-						class="checkbox checkbox-sm checkbox-primary"
-						bind:checked={usePasscode}
-						disabled={busy}
-					/>
-					Protect with a passcode
-				</label>
-			{/if}
-
-			{#if mode === 'delete'}
-				<label class="form-control mb-3 w-full">
-					<span class="text-base-content/60 mb-1 text-xs font-medium"> Type profile name </span>
-					<input
-						class="input input-bordered input-sm w-full"
-						placeholder={profileName}
-						bind:value={confirmName}
-						disabled={busy}
-						required
-						autocomplete="off"
-					/>
-				</label>
-				<label class="form-control mb-3 w-full">
-					<span class="text-base-content/60 mb-1 text-xs font-medium"> Type media count </span>
-					<input
-						class="input input-bordered input-sm w-full"
-						type="number"
-						inputmode="numeric"
-						min="0"
-						step="1"
-						placeholder="Total media items"
-						bind:value={confirmMediaCount}
-						disabled={busy}
-						required
-					/>
-				</label>
-			{:else if mode === 'unlock' && !requiresPasscode}
-				<p class="text-base-content/70 mb-4 text-sm">This profile has no passcode.</p>
-			{:else if (mode === 'create' && usePasscode) || (mode === 'unlock' && requiresPasscode)}
-				<label class="form-control mb-3 w-full">
-					<span class="text-base-content/60 mb-1 text-xs font-medium">Passcode</span>
-					<input
-						class="input input-bordered input-sm w-full"
-						type="password"
-						placeholder={mode === 'create' ? 'Passcode (min 4)' : 'Passcode'}
-						bind:value={passcode}
-						disabled={busy}
-						required
-						minlength="4"
-						autocomplete={mode === 'create' ? 'new-password' : 'current-password'}
-					/>
-				</label>
-
-				{#if mode === 'create' && usePasscode}
-					<label class="form-control mb-3 w-full">
-						<span class="text-base-content/60 mb-1 text-xs font-medium">Confirm</span>
-						<input
-							class="input input-bordered input-sm w-full"
-							type="password"
-							placeholder="Confirm passcode"
-							bind:value={confirmPasscode}
-							disabled={busy}
-							required
-							minlength="4"
-							autocomplete="new-password"
-						/>
+					<label class="mt-3 flex cursor-pointer items-center gap-2 text-sm">
+						<Checkbox bind:checked={usePasscode} disabled={busy} />
+						Protect with a passcode
 					</label>
 				{/if}
-			{/if}
 
-			<footer class="mt-2 flex justify-end gap-2">
-				<button type="button" class="btn btn-ghost btn-sm" disabled={busy} onclick={oncancel}>
-					Cancel
-				</button>
-				<button
-					type="submit"
-					class={['btn btn-sm', mode === 'delete' ? 'btn-error' : 'btn-primary']}
-					disabled={busy}
-				>
-					{#if busy}
-						<span class="loading loading-spinner loading-xs"></span>
+				{#if mode === 'delete'}
+					<div class="mt-3 grid gap-2">
+						<Label class="text-muted-foreground text-xs">Type profile name</Label>
+						<Input
+							placeholder={profileName}
+							bind:value={confirmName}
+							disabled={busy}
+							required
+							autocomplete="off"
+						/>
+					</div>
+					<div class="mt-3 grid gap-2">
+						<Label class="text-muted-foreground text-xs">Type media count</Label>
+						<Input
+							type="number"
+							inputmode="numeric"
+							min="0"
+							step="1"
+							placeholder="Total media items"
+							bind:value={confirmMediaCount}
+							disabled={busy}
+							required
+						/>
+					</div>
+				{:else if mode === 'unlock' && !requiresPasscode}
+					<p class="text-muted-foreground mt-3 mb-1 text-sm">This profile has no passcode.</p>
+				{:else if (mode === 'create' && usePasscode) || (mode === 'unlock' && requiresPasscode)}
+					<div class="mt-3 grid gap-2">
+						<Label class="text-muted-foreground text-xs">Passcode</Label>
+						<Input
+							type="password"
+							placeholder={mode === 'create' ? 'Passcode (min 4)' : 'Passcode'}
+							bind:value={passcode}
+							disabled={busy}
+							required
+							minlength={4}
+							autocomplete={mode === 'create' ? 'new-password' : 'current-password'}
+						/>
+					</div>
+
+					{#if mode === 'create' && usePasscode}
+						<div class="mt-3 grid gap-2">
+							<Label class="text-muted-foreground text-xs">Confirm</Label>
+							<Input
+								type="password"
+								placeholder="Confirm passcode"
+								bind:value={confirmPasscode}
+								disabled={busy}
+								required
+								minlength={4}
+								autocomplete="new-password"
+							/>
+						</div>
 					{/if}
-					{mode === 'unlock' ? 'Unlock' : mode === 'create' ? 'Create' : 'Delete'}
-				</button>
-			</footer>
-		</form>
-	</div>
+				{/if}
+
+				<Dialog.Footer class="mt-4">
+					<Button type="button" variant="ghost" size="sm" disabled={busy} onclick={oncancel}>
+						Cancel
+					</Button>
+					<Button
+						type="submit"
+						size="sm"
+						variant={mode === 'delete' ? 'destructive' : 'default'}
+						disabled={busy}
+					>
+						{#if busy}
+							<Spinner class="size-3" />
+						{/if}
+						{mode === 'unlock' ? 'Unlock' : mode === 'create' ? 'Create' : 'Delete'}
+					</Button>
+				</Dialog.Footer>
+			</form>
+		</Dialog.Content>
+	</Dialog.Root>
 {/if}

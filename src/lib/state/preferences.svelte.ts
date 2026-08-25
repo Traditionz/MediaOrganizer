@@ -9,8 +9,8 @@ function readStoredTheme(fallback: ThemeMode | 'system'): ThemeMode {
 	if (!browser) {
 		return fallback === 'system' ? 'light' : fallback;
 	}
-	const attr = document.documentElement.getAttribute('data-theme');
-	if (attr === 'dark' || attr === 'light') return attr;
+	if (document.documentElement.classList.contains('dark')) return 'dark';
+	if (document.documentElement.classList.contains('light')) return 'light';
 	try {
 		const stored = localStorage.getItem(THEME_KEY);
 		if (stored === 'dark' || stored === 'light') return stored;
@@ -87,7 +87,7 @@ export class PreferencesState {
 	setTheme(next: ThemeMode) {
 		this.theme = next;
 		if (!browser) return;
-		document.documentElement.setAttribute('data-theme', next);
+		document.documentElement.classList.toggle('dark', next === 'dark');
 		try {
 			localStorage.setItem(THEME_KEY, next);
 		} catch {

@@ -4,9 +4,10 @@
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
 	import Film from '@lucide/svelte/icons/film';
 	import ImageIcon from '@lucide/svelte/icons/image';
-	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import Upload from '@lucide/svelte/icons/upload';
 	import X from '@lucide/svelte/icons/x';
+	import { Button } from '$lib/components/ui/button/index.js';
+	import { Spinner } from '$lib/components/ui/spinner/index.js';
 	import { getAppState } from '$lib/state';
 	import type { TransferFile, TransferJob } from '$lib/state/ui.svelte';
 	import { formatBytes } from '$lib/utils';
@@ -74,20 +75,20 @@
 		return `${file.progress}%`;
 	}
 
-	function progressClass(file: TransferFile): string {
-		if (file.status === 'error') return 'progress progress-error';
-		if (file.status === 'cancelled') return 'progress progress-warning';
-		if (file.status === 'done') return 'progress progress-success';
-		if (file.status === 'saving') return 'progress progress-info';
-		return 'progress progress-primary';
+	function barFill(file: TransferFile): string {
+		if (file.status === 'error') return 'bg-destructive';
+		if (file.status === 'cancelled') return 'bg-amber-500';
+		if (file.status === 'done') return 'bg-emerald-500';
+		if (file.status === 'saving') return 'bg-sky-500';
+		return 'bg-primary';
 	}
 </script>
 
 {#if ui.jobs.length}
-	<div class="toast toast-end toast-bottom z-40 max-w-full p-4">
+	<div class="fixed right-4 bottom-4 z-40 flex max-w-full flex-col gap-3">
 		{#each ui.jobs as job (job.id)}
 			<div
-				class="border-base-300 bg-base-100 w-[min(100vw-2rem,24rem)] overflow-hidden rounded-2xl border shadow-xl"
+				class="bg-card text-card-foreground ring-foreground/10 w-[min(100vw-2rem,24rem)] overflow-hidden rounded-2xl shadow-xl ring-1"
 				role="status"
 				aria-label="{jobTitle(job)} {job.progress}%"
 				transition:fly={{ y: 16, duration: 180 }}
@@ -97,32 +98,34 @@
 						class="bg-primary/10 text-primary mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg"
 					>
 						{#if job.kind === 'compress'}
-							<LoaderCircle class="size-4 animate-spin" />
+							<Spinner class="size-4" />
 						{:else}
 							<Upload class="size-4" />
 						{/if}
 					</div>
 					<div class="min-w-0 flex-1">
 						<p class="truncate text-sm font-semibold">{jobTitle(job)}</p>
-						<p class="text-base-content/60 text-xs">{jobSubtitle(job)}</p>
+						<p class="text-muted-foreground text-xs">{jobSubtitle(job)}</p>
 					</div>
 					<div class="flex items-center gap-1">
 						<span class="text-sm font-semibold tabular-nums" aria-live="polite"
 							>{job.progress}%</span
 						>
-						<button
-							class="btn btn-ghost btn-xs btn-square"
+						<Button
+							variant="ghost"
+							size="icon-xs"
 							onclick={() => ui.endTransfer(job.id)}
 							aria-label="Hide transfer progress"
 						>
 							<X class="size-4" />
-						</button>
+						</Button>
 					</div>
 				</div>
 
 				<div class="px-4">
-					<progress class="progress progress-primary h-1.5 w-full" value={job.progress} max="100"
-					></progress>
+					<div class="bg-muted h-1.5 w-full overflow-hidden rounded-full">
+						<div class="bg-primary h-full" style:width="{job.progress}%"></div>
+					</div>
 				</div>
 
 				{#if job.files.length}
@@ -131,25 +134,25 @@
 							<li class="min-w-0">
 								<div class="flex items-center gap-2">
 									{#if file.status === 'done'}
-										<Check class="text-success size-3.5 shrink-0" />
+										<Check class="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
 									{:else if file.status === 'error'}
-										<CircleAlert class="text-error size-3.5 shrink-0" />
+										<CircleAlert class="text-destructive size-3.5 shrink-0" />
 									{:else if file.status === 'cancelled'}
-										<Ban class="text-warning size-3.5 shrink-0" />
+										<Ban class="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
 									{:else if file.kind === 'video'}
-										<Film class="text-base-content/55 size-3.5 shrink-0" />
+										<Film class="text-muted-foreground size-3.5 shrink-0" />
 									{:else}
-										<ImageIcon class="text-base-content/55 size-3.5 shrink-0" />
+										<ImageIcon class="text-muted-foreground size-3.5 shrink-0" />
 									{/if}
 									<span class="min-w-0 flex-1 truncate text-xs" title={file.name}>{file.name}</span>
 									<span
 										class={[
 											'shrink-0 text-[11px] tabular-nums',
-											file.status === 'error' && 'text-error',
-											file.status === 'cancelled' && 'text-warning',
+											file.status === 'error' && 'text-destructive',
+											file.status === 'cancelled' && 'text-amber-600 dark:text-amber-400',
 											file.status !== 'error' &&
 												file.status !== 'cancelled' &&
-												'text-base-content/55'
+												'text-muted-foreground'
 										]}
 									>
 										{file.status === 'uploading' || file.status === 'saving'
@@ -157,38 +160,40 @@
 											: fileMeta(file)}
 									</span>
 								</div>
-								<progress
-									class={[progressClass(file), 'mt-1 h-1 w-full']}
-									value={file.progress}
-									max="100"
-								></progress>
+								<div class="bg-muted mt-1 h-1 w-full overflow-hidden rounded-full">
+									<div class={['h-full', barFill(file)]} style:width="{file.progress}%"></div>
+								</div>
 								{#if file.status === 'uploading' || file.status === 'saving'}
-									<p class="text-base-content/45 mt-0.5 text-[11px]">{fileMeta(file)}</p>
+									<p class="text-muted-foreground mt-0.5 text-[11px]">{fileMeta(file)}</p>
 								{/if}
 							</li>
 						{/each}
 					</ul>
 					{#if job.files.length > 6}
-						<button
-							class="btn btn-ghost btn-xs text-base-content/60 w-full rounded-none"
+						<Button
+							variant="ghost"
+							size="xs"
+							class="text-muted-foreground w-full rounded-none"
 							onclick={() => (expanded = !expanded)}
 						>
 							{expanded ? 'Show less' : `Show all ${job.files.length} files`}
-						</button>
+						</Button>
 					{/if}
 				{:else}
 					<div class="h-3"></div>
 				{/if}
 
 				{#if ui.canCancelTransfer(job)}
-					<div class="border-base-300 border-t px-4 py-2">
-						<button
-							class="btn btn-error btn-outline btn-xs w-full"
+					<div class="border-border border-t px-4 py-2">
+						<Button
+							variant="destructive"
+							size="xs"
+							class="w-full"
 							onclick={() => ui.cancelTransfer(job.id)}
 						>
 							<Ban class="size-3.5" />
 							Cancel upload
-						</button>
+						</Button>
 					</div>
 				{/if}
 			</div>

@@ -119,6 +119,9 @@
 	const openSubmenu = $derived(
 		submenuOpenId ? (items.find((i) => i.id === submenuOpenId)?.children ?? null) : null
 	);
+
+	const itemClass =
+		'hover:bg-accent hover:text-accent-foreground flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm outline-none';
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -133,17 +136,19 @@
 		role="menu"
 		aria-label="Context menu"
 	>
-		<ul class="menu rounded-box border-base-300 bg-base-100 min-w-[11rem] border p-1 shadow-lg">
+		<ul
+			class="bg-popover text-popover-foreground ring-foreground/10 min-w-[11rem] rounded-xl p-1 shadow-lg ring-1"
+		>
 			{#each items as item, i (item.separator ? `sep-${i}` : item.id)}
 				{#if item.separator}
-					<li class="menu-title bg-base-300 my-0.5 h-px p-0"></li>
+					<li class="bg-border my-0.5 h-px p-0"></li>
 				{:else}
 					<li>
 						<button
 							type="button"
 							class={[
-								'flex w-full items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-sm',
-								item.danger && 'text-error',
+								itemClass,
+								item.danger && 'text-destructive focus:bg-destructive/10',
 								item.disabled && 'pointer-events-none opacity-40'
 							]}
 							data-menu-id={item.id}
@@ -168,21 +173,21 @@
 		{#if openSubmenu}
 			<ul
 				data-submenu
-				class="menu rounded-box border-base-300 bg-base-100 fixed z-50 max-h-[min(20rem,70vh)] min-w-[11rem] overflow-y-auto border p-1 shadow-lg"
+				class="bg-popover text-popover-foreground ring-foreground/10 fixed z-50 max-h-[min(20rem,70vh)] min-w-[11rem] overflow-y-auto rounded-xl p-1 shadow-lg ring-1"
 				style:left="{submenuPos.left}px"
 				style:top="{submenuPos.top}px"
 				role="menu"
 			>
 				{#each openSubmenu as child, i (child.separator ? `sub-sep-${i}` : child.id)}
 					{#if child.separator}
-						<li class="menu-title bg-base-300 my-0.5 h-px p-0"></li>
+						<li class="bg-border my-0.5 h-px p-0"></li>
 					{:else}
 						<li>
 							<button
 								type="button"
 								class={[
-									'flex w-full items-center rounded-lg px-3 py-1.5 text-sm',
-									child.danger && 'text-error',
+									itemClass,
+									child.danger && 'text-destructive focus:bg-destructive/10',
 									child.disabled && 'pointer-events-none opacity-40'
 								]}
 								disabled={child.disabled}

@@ -24,6 +24,8 @@
 	import MediaLightbox from '$lib/components/MediaLightbox.svelte';
 	import ContextMenu, { type ContextMenuItem } from '$lib/components/ContextMenu.svelte';
 	import TransferPanel from '$lib/components/TransferPanel.svelte';
+	import { Button } from '$lib/components/ui/button/index.js';
+	import * as Alert from '$lib/components/ui/alert/index.js';
 	import { isInternalDragActive } from '$lib/dragSession';
 	import { asFiniteNumber, asPlainObject, eventTargetHtml, own, ownString } from '$lib/parse';
 	import { fade } from 'svelte/transition';
@@ -872,9 +874,7 @@
 
 		if (duplicateFiles.length) {
 			if (prefs.warnDuplicateUploads) {
-				const choice = await askUploadDuplicates([
-					...new Set(duplicateFiles.map((f) => f.name))
-				]);
+				const choice = await askUploadDuplicates([...new Set(duplicateFiles.map((f) => f.name))]);
 				if (choice == null) return;
 				uploadDupes = choice;
 				if (uploadDupes) filesToUpload = [...uniqueFiles, ...duplicateFiles];
@@ -899,9 +899,7 @@
 		if (!filesToUpload.length) {
 			await library.refresh();
 			if (duplicateFiles.length) {
-				const linked = albumId
-					? existingIdsForDuplicateFiles(duplicateFiles).length
-					: 0;
+				const linked = albumId ? existingIdsForDuplicateFiles(duplicateFiles).length : 0;
 				ui.convertResultMessage =
 					linked > 0
 						? `Skipped ${duplicateFiles.length} duplicate(s); added ${linked} existing item(s) to album.`
@@ -1137,7 +1135,7 @@
 	<ProfileGate profiles={library.profiles} onselect={selectProfile} oncreate={createProfile} />
 {:else}
 	<div
-		class="bg-base-200 text-base-content flex h-screen"
+		class="bg-muted text-foreground flex h-screen"
 		ondragenter={onDragEnter}
 		ondragover={onDragOver}
 		ondragleave={onDragLeave}
@@ -1200,18 +1198,26 @@
 			/>
 
 			{#if ui.errorMessage}
-				<div class="alert alert-error mx-4 mt-3 py-2 text-sm" role="alert">
-					<span>{ui.errorMessage}</span>
-					<button class="btn btn-ghost btn-xs" onclick={() => (ui.errorMessage = '')}
-						>Dismiss</button
-					>
+				<div class="mx-4 mt-3">
+					<Alert.Root variant="destructive">
+						<Alert.Description>{ui.errorMessage}</Alert.Description>
+						<Alert.Action>
+							<Button variant="ghost" size="xs" onclick={() => (ui.errorMessage = '')}
+								>Dismiss</Button
+							>
+						</Alert.Action>
+					</Alert.Root>
 				</div>
 			{:else if ui.convertResultMessage}
-				<div class="alert alert-success mx-4 mt-3 py-2 text-sm" role="status">
-					<span>{ui.convertResultMessage}</span>
-					<button class="btn btn-ghost btn-xs" onclick={() => (ui.convertResultMessage = '')}
-						>Dismiss</button
-					>
+				<div class="mx-4 mt-3">
+					<Alert.Root>
+						<Alert.Description>{ui.convertResultMessage}</Alert.Description>
+						<Alert.Action>
+							<Button variant="ghost" size="xs" onclick={() => (ui.convertResultMessage = '')}
+								>Dismiss</Button
+							>
+						</Alert.Action>
+					</Alert.Root>
 				</div>
 			{/if}
 
@@ -1227,9 +1233,9 @@
 			>
 				{#if library.filteredMedia.length === 0}
 					<div
-						class="text-base-content/60 flex h-full min-h-64 flex-col items-center justify-center text-center"
+						class="text-muted-foreground flex h-full min-h-64 flex-col items-center justify-center text-center"
 					>
-						<p class="text-base-content/80 text-lg font-medium">
+						<p class="text-foreground/80 text-lg font-medium">
 							{prefs.searchQuery.trim()
 								? 'No matching media'
 								: library.activeAlbum === 'trash'
@@ -1291,10 +1297,10 @@
 				transition:fade={{ duration: 120 }}
 			>
 				<div
-					class="border-primary bg-base-100/90 rounded-2xl border-2 border-dashed px-10 py-8 text-center shadow-xl"
+					class="border-primary bg-background/90 rounded-2xl border-2 border-dashed px-10 py-8 text-center shadow-xl"
 				>
 					<p class="text-primary text-xl font-semibold">Drop to upload</p>
-					<p class="text-base-content/60 mt-1 text-sm">Images and videos</p>
+					<p class="text-muted-foreground mt-1 text-sm">Images and videos</p>
 				</div>
 			</div>
 		{/if}

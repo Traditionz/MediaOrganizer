@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { fade, scale } from 'svelte/transition';
+	import { Button } from '$lib/components/ui/button/index.js';
+	import * as Dialog from '$lib/components/ui/dialog/index.js';
+	import { Spinner } from '$lib/components/ui/spinner/index.js';
 
 	interface Props {
 		open: boolean;
@@ -39,54 +41,44 @@
 		if (busy || !open) return;
 		(ondismiss ?? oncancel)();
 	}
-
-	function onkeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') dismiss();
-	}
-
-	function onclick(e: MouseEvent) {
-		if (e.target === e.currentTarget) dismiss();
-	}
 </script>
 
-<svelte:window {onkeydown} />
-
 {#if open}
-	<div
-		class="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
-		transition:fade={{ duration: 120 }}
-		role="dialog"
-		aria-modal="true"
-		aria-label={title}
-		tabindex="-1"
-		{onclick}
-		{onkeydown}
+	<Dialog.Root
+		open={true}
+		onOpenChange={(next) => {
+			if (!next) dismiss();
+		}}
 	>
-		<form
-			class="border-base-300 bg-base-100 w-full max-w-md rounded-2xl border p-5 shadow-2xl"
-			transition:scale={{ duration: 140, start: 0.96 }}
-			onsubmit={submit}
+		<Dialog.Content
+			class="sm:max-w-md"
+			showCloseButton={false}
+			interactOutsideBehavior={busy ? 'ignore' : 'close'}
+			escapeKeydownBehavior={busy ? 'ignore' : 'close'}
 		>
-			<header class="mb-4">
-				<h2 class="text-lg font-semibold">{title}</h2>
-				<p class="text-base-content/60 mt-1 text-sm">{message}</p>
-			</header>
+			<form onsubmit={submit}>
+				<Dialog.Header>
+					<Dialog.Title>{title}</Dialog.Title>
+					<Dialog.Description>{message}</Dialog.Description>
+				</Dialog.Header>
 
-			<footer class="mt-2 flex justify-end gap-2">
-				<button type="button" class="btn btn-ghost btn-sm" disabled={busy} onclick={oncancel}>
-					{cancelLabel}
-				</button>
-				<button
-					type="submit"
-					class={['btn btn-sm', destructive ? 'btn-error' : 'btn-primary']}
-					disabled={busy}
-				>
-					{#if busy}
-						<span class="loading loading-spinner loading-xs"></span>
-					{/if}
-					{confirmLabel}
-				</button>
-			</footer>
-		</form>
-	</div>
+				<Dialog.Footer class="mt-4">
+					<Button type="button" variant="ghost" size="sm" disabled={busy} onclick={oncancel}>
+						{cancelLabel}
+					</Button>
+					<Button
+						type="submit"
+						size="sm"
+						variant={destructive ? 'destructive' : 'default'}
+						disabled={busy}
+					>
+						{#if busy}
+							<Spinner class="size-3" />
+						{/if}
+						{confirmLabel}
+					</Button>
+				</Dialog.Footer>
+			</form>
+		</Dialog.Content>
+	</Dialog.Root>
 {/if}

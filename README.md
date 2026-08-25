@@ -1,6 +1,6 @@
 # Media Organizer
 
-A **local-only** media library for organizing pictures and videos. Built with **SvelteKit**, **DaisyUI**, **Drizzle**, and **SQLite**.
+A **local-only** media library for organizing pictures and videos. Built with **SvelteKit**, **shadcn-svelte**, **Drizzle**, and **SQLite**.
 
 - Metadata (profiles, albums, names) lives in a SQLite database: `data/media.db`
 - Media bytes are stored as files under `data/files/` and streamed on upload/playback
@@ -262,15 +262,16 @@ Uploads are stored as-is. There is **no** background or on-upload recompress.
 | `bun run build`   | Production build              |
 | `bun run preview` | Preview the production build  |
 | `bun run check`   | Typecheck / Svelte check      |
-| `bun run format`  | Format with Oxfmt             |
-| `bun run lint`    | Oxlint (anti-slop + defaults) |
+| `bun run format`    | Format with Oxfmt             |
+| `bun run lint`      | Oxlint (anti-slop + defaults) |
+| `bun run reinstall` | Reinstall deps + sync types   |
 
 ---
 
 ## Tech stack
 
 - **SvelteKit** + **Svelte 5** (runes)
-- **Tailwind CSS** + **DaisyUI**
+- **Tailwind CSS** + **shadcn-svelte**
 - **Drizzle ORM** + **SQLite** (`better-sqlite3`) for metadata
 - **@lucide/svelte** for icons
 - **Oxfmt** for formatting
