@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import type { JsonValue } from '$lib/parse';
 import {
 	parseFileKind,
 	parseFileStatus,
@@ -26,9 +27,9 @@ describe('transfer serialization', () => {
 
 	test('parseTransferFiles skips invalid rows', () => {
 		const files = parseTransferFiles([
-			{ id: '1', name: 'a.jpg', kind: 'image', progress: 50, status: 'done' },
-			{ name: 'missing-id.jpg' },
-			'not-an-object'
+			{ id: '1', name: 'a.jpg', kind: 'image', progress: 50, status: 'done' } as JsonValue,
+			{ name: 'missing-id.jpg' } as JsonValue,
+			'not-an-object' as JsonValue
 		]);
 		expect(files).toHaveLength(1);
 		expect(files[0]?.name).toBe('a.jpg');

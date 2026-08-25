@@ -1,6 +1,9 @@
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
-export const DATA_DIR = join(process.cwd(), 'data');
+/** Override with MEDIA_DATA_DIR for isolated e2e / test runs. */
+export const DATA_DIR = process.env.MEDIA_DATA_DIR
+	? resolve(process.cwd(), process.env.MEDIA_DATA_DIR)
+	: join(process.cwd(), 'data');
 export const FILES_DIR = join(DATA_DIR, 'files');
 
 export function newId(): string {

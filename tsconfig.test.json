@@ -3,7 +3,6 @@
 	"compilerOptions": {
 		"rewriteRelativeImportExtensions": true,
 		"allowJs": true,
-		"checkJs": true,
 		"esModuleInterop": true,
 		"forceConsistentCasingInFileNames": true,
 		"resolveJsonModule": true,
@@ -17,13 +16,8 @@
 		".svelte-kit/env.d.ts",
 		".svelte-kit/non-ambient.d.ts",
 		".svelte-kit/types/**/$types.d.ts",
-		"vite.config.js",
-		"vite.config.ts",
-		"src/**/*.js",
-		"src/**/*.ts",
-		"src/**/*.d.ts",
-		"src/**/*.svelte",
-		"node_modules/svelte/svelte-html.d.ts"
-	],
-	"exclude": ["src/**/*.test.ts", "test/**"]
+		"test/**/*.ts",
+		"test/**/*.d.ts",
+		"src/**/*.test.ts"
+	]
 }

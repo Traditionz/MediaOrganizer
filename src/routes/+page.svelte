@@ -35,6 +35,7 @@
 		isTinyRect,
 		pointerPointInElement
 	} from '$lib/selection/geometry.js';
+	import { applyMarqueeHits, marqueeSelectionAnchor } from '$lib/selection/marquee.js';
 	import { fade } from 'svelte/transition';
 	import { createAppState, setAppState } from '$lib/state';
 
@@ -49,6 +50,8 @@
 
 	let durationBackfilledForProfile: string | null = null;
 	let selectionSurface = $state<HTMLElement | null>(null);
+	let marqueeAdditive = false;
+	let marqueeBaseIds: string[] = [];
 
 	/** Keep marquee hit target at least viewport-tall so empty space below rows is draggable. */
 	$effect(() => {
@@ -1087,10 +1090,34 @@
 
 		e.preventDefault();
 		const point = pointerPointInElement(e, surface);
+		marqueeAdditive = e.ctrlKey || e.metaKey;
+		marqueeBaseIds = marqueeAdditive ? [...selection.selectedIds] : [];
 		selection.selecting = true;
 		selection.selStart = point;
 		selection.selCurrent = point;
 		surface.setPointerCapture(e.pointerId);
+	}
+
+	function syncMarqueeSelection(surface: HTMLElement) {
+		const box = computeSelectionRect(true, selection.selStart, selection.selCurrent);
+		if (!box || isTinyRect(box.w, box.h)) {
+			if (!marqueeAdditive) {
+				selection.selectedIds.clear();
+				selection.selectionAnchor = null;
+				selection.selectMode = false;
+			}
+			return;
+		}
+
+		const hits = cardsInSelectionBox(surface, box);
+		applyMarqueeHits(selection.selectedIds, hits, {
+			additive: marqueeAdditive,
+			baseIds: marqueeBaseIds
+		});
+		if (hits.length > 0 || (marqueeAdditive && marqueeBaseIds.length > 0)) {
+			selection.selectMode = true;
+		}
+		selection.selectionAnchor = marqueeSelectionAnchor(hits, selection.selectionAnchor);
 	}
 
 	function onContentPointerMove(e: PointerEvent) {
@@ -1098,6 +1125,7 @@
 		const surface = e.currentTarget;
 		if (!(surface instanceof HTMLElement)) return;
 		selection.selCurrent = pointerPointInElement(e, surface);
+		syncMarqueeSelection(surface);
 	}
 
 	function finishMarqueeSelection(e: PointerEvent) {
@@ -1120,19 +1148,12 @@
 			if (!(e.ctrlKey || e.metaKey)) {
 				selection.selectedIds.clear();
 				selection.selectionAnchor = null;
+				selection.selectMode = false;
 			}
 			return;
 		}
 
-		const ids = cardsInSelectionBox(surface, box);
-		if (!(e.ctrlKey || e.metaKey)) selection.selectedIds.clear();
-
-		for (const id of ids) {
-			selection.selectedIds.add(id);
-			if (!selection.selectionAnchor) selection.selectionAnchor = id;
-		}
-
-		if (ids.length > 0) selection.selectMode = true;
+		syncMarqueeSelection(surface);
 	}
 
 	function onContentPointerUp(e: PointerEvent) {

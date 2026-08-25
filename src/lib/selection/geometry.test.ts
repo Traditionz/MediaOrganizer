@@ -78,13 +78,13 @@ describe('cardsInSelectionBox', () => {
 		const card = {
 			dataset: { id: 'media-1' },
 			getBoundingClientRect: () => ({ left: 30, top: 40, width: 100, height: 80 })
-		} as HTMLElement;
+		} as unknown as HTMLElement;
 
 		// SAFETY: cardsInSelectionBox only uses querySelectorAll and getBoundingClientRect.
-		const surface: HTMLElement = {
+		const surface = {
 			getBoundingClientRect: () => ({ left: 10, top: 10, width: 500, height: 500 }),
 			querySelectorAll: () => [card]
-		} as HTMLElement;
+		} as unknown as HTMLElement;
 
 		expect(cardsInSelectionBox(surface, { x: 0, y: 0, w: 200, h: 200 })).toEqual(['media-1']);
 		expect(cardsInSelectionBox(surface, { x: 300, y: 300, w: 50, h: 50 })).toEqual([]);

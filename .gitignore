@@ -30,5 +30,12 @@ vite.config.ts.timestamp-*
 # Test coverage
 /coverage
 
+# Playwright
+/e2e-data
+/test-results
+/playwright-report
+/blob-report
+/playwright/.cache
+
 # Local one-off scripts
 scripts/rename_videos_to_album_names.py

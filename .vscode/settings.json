@@ -30,5 +30,6 @@
 	},
 	"[html]": {
 		"editor.defaultFormatter": "oxc.oxc-vscode"
-	}
+	},
+	"typescript.enablePromptUseWorkspaceTsconfig": true
 }
