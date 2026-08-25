@@ -3,61 +3,16 @@
  * User overrides (theme, duplicate warn) still win via localStorage after first change.
  */
 import { env } from '$env/dynamic/public';
-import type { LibraryAlbumFilter, ThemeMode, ViewMode } from '$lib/types';
+import {
+	buildAppDefaults,
+	defaultActiveAlbumFrom,
+	type DefaultAlbumView
+} from '$lib/config/defaultsLogic.js';
 
-export type DefaultAlbumView = 'unassigned' | 'all';
+export type { DefaultAlbumView };
 
-function raw(key: `PUBLIC_${string}`): string | undefined {
-	if (!Object.hasOwn(env, key)) return undefined;
-	const value = env[key];
-	if (value == null) return undefined;
-	const trimmed = value.trim();
-	return trimmed === '' ? undefined : trimmed;
-}
+export const appDefaults = buildAppDefaults(env);
 
-function bool(key: `PUBLIC_${string}`, fallback: boolean): boolean {
-	const value = raw(key);
-	if (value == null) return fallback;
-	return !['0', 'false', 'no', 'off'].includes(value.toLowerCase());
-}
-
-function int(key: `PUBLIC_${string}`, fallback: number, min: number, max: number): number {
-	const value = raw(key);
-	if (value == null) return fallback;
-	const n = Number(value);
-	if (!Number.isFinite(n)) return fallback;
-	return Math.min(max, Math.max(min, Math.round(n)));
-}
-
-function viewMode(fallback: ViewMode): ViewMode {
-	const value = raw('PUBLIC_DEFAULT_VIEW_MODE')?.toLowerCase();
-	if (value === 'grid' || value === 'collage') return value;
-	return fallback;
-}
-
-function theme(fallback: ThemeMode | 'system'): ThemeMode | 'system' {
-	const value = raw('PUBLIC_DEFAULT_THEME')?.toLowerCase();
-	if (value === 'light' || value === 'dark' || value === 'system') return value;
-	return fallback;
-}
-
-function albumView(fallback: DefaultAlbumView): DefaultAlbumView {
-	const value = raw('PUBLIC_DEFAULT_ALBUM_VIEW')?.toLowerCase();
-	if (value === 'unassigned' || value === 'all') return value;
-	return fallback;
-}
-
-export const appDefaults = {
-	viewMode: viewMode('collage'),
-	columns: int('PUBLIC_DEFAULT_COLUMNS', 8, 2, 8),
-	showImages: bool('PUBLIC_DEFAULT_SHOW_IMAGES', true),
-	showVideos: bool('PUBLIC_DEFAULT_SHOW_VIDEOS', true),
-	albumView: albumView('unassigned'),
-	warnDuplicateUploads: bool('PUBLIC_DEFAULT_WARN_DUPLICATE_UPLOADS', true),
-	theme: theme('system'),
-	uploadConcurrency: int('PUBLIC_UPLOAD_CONCURRENCY', 6, 1, 12)
-} as const;
-
-export function defaultActiveAlbum(): LibraryAlbumFilter {
-	return appDefaults.albumView === 'all' ? 'all' : null;
+export function defaultActiveAlbum() {
+	return defaultActiveAlbumFrom(appDefaults.albumView);
 }

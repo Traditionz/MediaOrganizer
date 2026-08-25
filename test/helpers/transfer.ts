@@ -1,4 +1,4 @@
-import type { TransferFile, TransferFileStatus, TransferJob } from '$lib/state/ui.svelte';
+import type { TransferFile, TransferFileStatus, TransferJob } from '$lib/transfer/types.js';
 
 let fileCounter = 0;
 

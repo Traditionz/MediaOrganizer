@@ -15,7 +15,7 @@
 	import { Spinner } from '$lib/components/ui/spinner/index.js';
 	import { cn } from '$lib/cn.js';
 	import { getAppState } from '$lib/state';
-	import type { TransferJob } from '$lib/state/ui.svelte';
+	import type { TransferJob } from '$lib/transfer/types.js';
 	import {
 		FILE_PREVIEW_LIMIT,
 		fileMeta,

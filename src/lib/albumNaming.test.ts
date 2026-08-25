@@ -5,6 +5,7 @@ describe('albumNaming', () => {
 	test('albumNameStem strips trailing duplicate suffix', () => {
 		expect(albumNameStem('Travel (2)')).toBe('Travel');
 		expect(albumNameStem('Travel')).toBe('Travel');
+		expect(albumNameStem(' (2)')).toBe(' (2)');
 	});
 
 	test('nextDuplicateAlbumName finds first free numbered name', () => {

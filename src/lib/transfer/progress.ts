@@ -1,4 +1,4 @@
-import type { TransferFile, TransferJob } from '$lib/state/ui.svelte';
+import type { TransferFile, TransferJob } from '$lib/transfer/types.js';
 
 export function clampProgress(pct: number): number {
 	return Math.min(100, Math.max(0, Math.round(pct)));

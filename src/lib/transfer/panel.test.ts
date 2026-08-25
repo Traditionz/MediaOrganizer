@@ -82,6 +82,31 @@ describe('transfer panel', () => {
 
 		const compress = makeTransferJob({ kind: 'compress', files: [] });
 		expect(jobTitle(compress)).toBe('Compressing');
+
+		const cancelled = makeTransferJob({
+			files: [makeTransferFile({ name: 'a.jpg', status: 'cancelled' })]
+		});
+		expect(jobTitle(cancelled)).toBe('Upload cancelled');
+
+		const singleVideo = makeTransferJob({
+			fileCount: 1,
+			files: [makeTransferFile({ name: 'clip.mp4', kind: 'video', status: 'uploading' })]
+		});
+		expect(jobTitle(singleVideo)).toBe('Uploading video');
+
+		const multiVideo = makeTransferJob({
+			fileCount: 2,
+			files: [
+				makeTransferFile({ name: 'a.mp4', kind: 'video', status: 'uploading' }),
+				makeTransferFile({ name: 'b.mp4', kind: 'video', status: 'queued' })
+			]
+		});
+		expect(jobTitle(multiVideo)).toBe('Uploading 2 videos');
+	});
+
+	test('jobSubtitle covers progress-only state', () => {
+		const job = makeTransferJob({ progress: 42, files: [] });
+		expect(jobSubtitle(job, false)).toBe('42% complete');
 	});
 
 	test('jobSubtitle summarizes done/failed/cancelled', () => {
@@ -117,6 +142,9 @@ describe('transfer panel', () => {
 
 		const failed = makeTransferFile({ name: 'c.jpg', status: 'error', error: 'Network' });
 		expect(fileMeta(failed, formatBytes)).toBe('Network');
+
+		const progressOnly = makeTransferFile({ name: 'd.jpg', status: 'uploading', progress: 25 });
+		expect(fileMeta(progressOnly, formatBytes)).toBe('25%');
 	});
 
 	test('fileProgressClass maps status to indicator color', () => {
@@ -124,5 +152,10 @@ describe('transfer panel', () => {
 			'destructive'
 		);
 		expect(fileProgressClass(makeTransferFile({ name: 'b', status: 'done' }))).toContain('emerald');
+		expect(fileProgressClass(makeTransferFile({ name: 'c', status: 'cancelled' }))).toContain(
+			'amber'
+		);
+		expect(fileProgressClass(makeTransferFile({ name: 'd', status: 'saving' }))).toContain('sky');
+		expect(fileProgressClass(makeTransferFile({ name: 'e', status: 'uploading' }))).toBe('');
 	});
 });

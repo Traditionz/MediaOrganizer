@@ -3,10 +3,14 @@ import {
 	asFiniteNumber,
 	asPlainObject,
 	asString,
+	eventHtml,
+	eventTargetHtml,
+	eventTargetNode,
 	own,
 	ownNumber,
 	ownString,
 	parseJsonText,
+	readJsonObject,
 	stringList,
 	tagOf
 } from '$lib/parse';
@@ -52,5 +56,30 @@ describe('parse', () => {
 
 	test('parseJsonText parses JSON', () => {
 		expect(parseJsonText('{"ok":true}')).toEqual({ ok: true });
+	});
+
+	test('readJsonObject parses request JSON', async () => {
+		const request = new Request('https://example.com', {
+			method: 'POST',
+			body: JSON.stringify({ ok: true })
+		});
+		expect(await readJsonObject(request)).toEqual({ ok: true });
+	});
+
+	test('event helpers narrow event targets', () => {
+		const el = new HTMLElement();
+		// SAFETY: synthetic Event bag for DOM helper unit tests.
+		const htmlEvent = { currentTarget: el, target: el } as Event;
+		expect(eventHtml(htmlEvent)).toBe(el);
+		expect(eventTargetHtml(htmlEvent)).toBe(el);
+		expect(eventTargetNode(htmlEvent)).toBe(el);
+
+		const text = new Node();
+		text.nodeType = 3;
+		// SAFETY: synthetic Event bag for non-HTMLElement target branch.
+		const nodeEvent = { currentTarget: null, target: text } as Event;
+		expect(eventHtml(nodeEvent)).toBeNull();
+		expect(eventTargetHtml(nodeEvent)).toBeNull();
+		expect(eventTargetNode(nodeEvent)).toBe(text);
 	});
 });

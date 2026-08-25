@@ -1,4 +1,4 @@
-import type { TransferFile, TransferJob } from '$lib/state/ui.svelte';
+import type { TransferFile, TransferJob } from '$lib/transfer/types.js';
 
 export const FILE_PREVIEW_LIMIT = 6;
 

@@ -1,15 +1,14 @@
 [test]
 preload = ["./test/setup.ts"]
-
-# Used by `bun run test:coverage:bun` (lines + functions only; no branch metrics)
+coverageReporter = ["text", "lcov"]
+coverageDir = "coverage"
 coveragePathIgnorePatterns = [
 	"test/**",
 	"src/lib/components/**",
 	"src/lib/**/*.svelte.ts",
+	"src/lib/index.ts",
 	"src/lib/utils.ts",
 	"src/lib/dragSession.ts",
-	"src/lib/config/defaults.ts",
-	"src/lib/playbackPosition.ts",
 	"src/lib/server/db.ts",
 	"src/lib/server/schema.ts",
 	"src/lib/server/media.ts",

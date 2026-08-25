@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
 	cardRectInSurface,
+	cardsInSelectionBox,
 	computeSelectionRect,
 	isTinyRect,
 	pointerPointInElement,
@@ -47,9 +48,11 @@ describe('rectsIntersect', () => {
 
 describe('pointerPointInElement', () => {
 	test('maps client coordinates into element space', () => {
+		// SAFETY: geometry helpers only need getBoundingClientRect from elements.
 		const el = {
 			getBoundingClientRect: () => ({ left: 100, top: 50, width: 200, height: 100 })
 		} as HTMLElement;
+		// SAFETY: pointerPointInElement only reads clientX/clientY from the event.
 		const point = pointerPointInElement({ clientX: 130, clientY: 80 } as PointerEvent, el);
 		expect(point).toEqual({ x: 30, y: 30 });
 	});
@@ -57,12 +60,33 @@ describe('pointerPointInElement', () => {
 
 describe('cardRectInSurface', () => {
 	test('expresses card bounds relative to surface', () => {
+		// SAFETY: cardRectInSurface only reads getBoundingClientRect from both nodes.
 		const surface = {
 			getBoundingClientRect: () => ({ left: 10, top: 10, width: 500, height: 500 })
 		} as HTMLElement;
+		// SAFETY: cardRectInSurface only reads getBoundingClientRect from the card node.
 		const card = {
 			getBoundingClientRect: () => ({ left: 30, top: 40, width: 100, height: 80 })
 		} as HTMLElement;
 		expect(cardRectInSurface(card, surface)).toEqual({ x: 20, y: 30, w: 100, h: 80 });
+	});
+});
+
+describe('cardsInSelectionBox', () => {
+	test('returns ids for cards intersecting the box', () => {
+		// SAFETY: cardsInSelectionBox only reads dataset.id and getBoundingClientRect.
+		const card = {
+			dataset: { id: 'media-1' },
+			getBoundingClientRect: () => ({ left: 30, top: 40, width: 100, height: 80 })
+		} as HTMLElement;
+
+		// SAFETY: cardsInSelectionBox only uses querySelectorAll and getBoundingClientRect.
+		const surface: HTMLElement = {
+			getBoundingClientRect: () => ({ left: 10, top: 10, width: 500, height: 500 }),
+			querySelectorAll: () => [card]
+		} as HTMLElement;
+
+		expect(cardsInSelectionBox(surface, { x: 0, y: 0, w: 200, h: 200 })).toEqual(['media-1']);
+		expect(cardsInSelectionBox(surface, { x: 300, y: 300, w: 50, h: 50 })).toEqual([]);
 	});
 });

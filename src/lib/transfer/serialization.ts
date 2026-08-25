@@ -6,7 +6,7 @@ import type {
 	TransferFileStatus,
 	TransferJob,
 	TransferKind
-} from '$lib/state/ui.svelte';
+} from '$lib/transfer/types.js';
 
 export function parseFileStatus(value: string | null): TransferFileStatus {
 	switch (value) {
