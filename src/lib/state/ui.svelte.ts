@@ -1,7 +1,12 @@
 import type { MediaItem, PasscodeModalMode } from '$lib/types';
 import { browser } from '$app/environment';
-import { asFiniteNumber, asPlainObject, own, ownString, parseJsonText } from '$lib/parse';
-import type { JsonValue } from '$lib/parse';
+import {
+	averageFileProgress,
+	applyFileProgress,
+	canCancelTransfer as canCancelTransferJob,
+	clampProgress
+} from '$lib/transfer/progress.js';
+import { restoreTransferJobsFromStorage } from '$lib/transfer/serialization.js';
 
 const UPLOAD_PROGRESS_KEY = 'mo_upload_jobs';
 
@@ -37,65 +42,6 @@ export type ConfirmKind =
 	| 'delete-media-forever'
 	| 'empty-trash'
 	| 'upload-duplicates';
-
-function parseFileStatus(value: string | null): TransferFileStatus {
-	switch (value) {
-		case 'queued':
-		case 'uploading':
-		case 'saving':
-		case 'done':
-		case 'error':
-		case 'cancelled':
-			return value;
-		default:
-			return 'queued';
-	}
-}
-
-function parseFileKind(value: string | null): TransferFileKind {
-	switch (value) {
-		case 'video':
-		case 'image':
-		case 'other':
-			return value;
-		default:
-			return 'other';
-	}
-}
-
-function parseTransferKind(value: string | null): TransferKind | null {
-	if (value === 'upload' || value === 'compress') return value;
-	return null;
-}
-
-function parseTransferFiles(raw: JsonValue[] | undefined): TransferFile[] {
-	if (!Array.isArray(raw)) return [];
-	const files: TransferFile[] = [];
-	for (const item of raw) {
-		const row = asPlainObject(item);
-		if (!row) continue;
-		const id = ownString(row, 'id');
-		const name = ownString(row, 'name');
-		if (!id || !name) continue;
-		const progress = asFiniteNumber(own(row, 'progress'));
-		const loaded = asFiniteNumber(own(row, 'loaded'));
-		const total = asFiniteNumber(own(row, 'total'));
-		files.push({
-			id,
-			name,
-			kind: parseFileKind(ownString(row, 'kind')),
-			progress:
-				progress != null && Number.isFinite(progress)
-					? Math.min(100, Math.max(0, Math.round(progress)))
-					: 0,
-			loaded: loaded != null && Number.isFinite(loaded) ? Math.max(0, loaded) : 0,
-			total: total != null && Number.isFinite(total) ? Math.max(0, total) : 0,
-			status: parseFileStatus(ownString(row, 'status')),
-			error: ownString(row, 'error') ?? undefined
-		});
-	}
-	return files;
-}
 
 export type ProfileModalState = {
 	open: boolean;
@@ -254,49 +200,7 @@ export class UiState {
 		if (!browser) return;
 		try {
 			const raw = sessionStorage.getItem(UPLOAD_PROGRESS_KEY);
-			if (!raw) return;
-			const parsed = parseJsonText(raw);
-			if (!Array.isArray(parsed)) return;
-			const jobs: TransferJob[] = [];
-			for (const item of parsed) {
-				const row = asPlainObject(item);
-				if (!row) continue;
-				const id = ownString(row, 'id');
-				const kind = parseTransferKind(ownString(row, 'kind'));
-				if (!id || !kind) {
-					continue;
-				}
-				const progressRaw = asFiniteNumber(own(row, 'progress'));
-				const progress =
-					progressRaw != null && Number.isFinite(progressRaw)
-						? Math.min(100, Math.max(0, Math.round(progressRaw)))
-						: 0;
-				const filesField = own(row, 'files');
-				const files = parseTransferFiles(Array.isArray(filesField) ? filesField : undefined);
-				const inFlight =
-					files.some(
-						(file) =>
-							file.status === 'queued' || file.status === 'uploading' || file.status === 'saving'
-					) ||
-					(kind === 'compress' && progress < 100) ||
-					(kind === 'upload' && !files.length && progress < 100);
-				// Hard refresh kills XHR — never revive a live series.
-				if (inFlight) continue;
-				if (files.length && files.every((file) => file.status === 'cancelled')) continue;
-				const fileCountRaw = asFiniteNumber(own(row, 'fileCount'));
-				jobs.push({
-					id,
-					kind,
-					label: ownString(row, 'label') ?? 'Transfer',
-					progress,
-					fileCount:
-						fileCountRaw != null && Number.isFinite(fileCountRaw)
-							? Math.max(1, Math.round(fileCountRaw))
-							: 1,
-					files
-				});
-			}
-			this.jobs = jobs;
+			this.jobs = restoreTransferJobsFromStorage(raw);
 			this.flushUploadProgress();
 		} catch {
 			/* ignore */
@@ -326,7 +230,7 @@ export class UiState {
 	setTransferProgress(id: string, pct: number) {
 		const job = this.jobs.find((item) => item.id === id);
 		if (!job) return;
-		job.progress = Math.min(100, Math.max(0, Math.round(pct)));
+		job.progress = clampProgress(pct);
 		this.persistUploadProgress();
 	}
 
@@ -337,23 +241,11 @@ export class UiState {
 	) {
 		const job = this.jobs.find((item) => item.id === jobId);
 		if (!job) return;
-		const file = job.files.find((item) => item.id === fileId);
-		if (!file) return;
-		if (file.status === 'cancelled') return;
-		if (patch.progress != null && Number.isFinite(patch.progress)) {
-			file.progress = Math.min(100, Math.max(0, Math.round(patch.progress)));
-		}
-		if (patch.loaded != null && Number.isFinite(patch.loaded)) {
-			file.loaded = Math.max(0, patch.loaded);
-		}
-		if (patch.total != null && Number.isFinite(patch.total)) {
-			file.total = Math.max(0, patch.total);
-		}
-		if (patch.status) file.status = patch.status;
-		if (patch.error !== undefined) file.error = patch.error;
+		const index = job.files.findIndex((item) => item.id === fileId);
+		if (index < 0) return;
+		job.files[index] = applyFileProgress(job.files[index], patch);
 		if (job.files.length) {
-			const sum = job.files.reduce((acc, item) => acc + item.progress, 0);
-			job.progress = Math.round(sum / job.files.length);
+			job.progress = averageFileProgress(job.files);
 		}
 		this.persistUploadProgress();
 	}
@@ -373,10 +265,7 @@ export class UiState {
 	}
 
 	canCancelTransfer(job: TransferJob): boolean {
-		if (job.kind !== 'upload') return false;
-		return job.files.some(
-			(file) => file.status === 'queued' || file.status === 'uploading' || file.status === 'saving'
-		);
+		return canCancelTransferJob(job);
 	}
 
 	cancelTransfer(id: string) {

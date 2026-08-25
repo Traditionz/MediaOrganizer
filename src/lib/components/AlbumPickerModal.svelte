@@ -5,6 +5,7 @@
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
+	import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
 	import { Spinner } from '$lib/components/ui/spinner/index.js';
 	import type { Album } from '$lib/types';
 
@@ -58,7 +59,7 @@
 	}: Props = $props();
 
 	let query = $state('');
-	let listEl: HTMLDivElement | undefined = $state();
+	let listEl = $state<HTMLElement | null>(null);
 	let activeLetter = $state<string | null>(null);
 	let selectedIds = $state<Set<string>>(new Set());
 	let busy = $state(false);
@@ -90,13 +91,6 @@
 
 	const availableLetters = $derived(new Set<string>(groupedAlbums.map((g) => g.letter)));
 	const selectedCount = $derived(selectedIds.size);
-
-	function attachList(node: HTMLDivElement) {
-		listEl = node;
-		return () => {
-			if (listEl === node) listEl = undefined;
-		};
-	}
 
 	function resetOnOpen(_node: HTMLElement) {
 		query = '';
@@ -175,7 +169,8 @@
 			</header>
 
 			<div class="flex min-h-0 flex-1">
-				<div {@attach attachList} class="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+				<ScrollArea class="min-h-0 flex-1" bind:viewportRef={listEl}>
+					<div class="px-2 py-2">
 					{#if groupedAlbums.length === 0}
 						<p class="text-muted-foreground px-3 py-8 text-center text-sm">
 							{albums.length === 0 ? 'No albums yet.' : 'No albums match your search.'}
@@ -211,7 +206,8 @@
 							</section>
 						{/each}
 					{/if}
-				</div>
+					</div>
+				</ScrollArea>
 
 				<nav
 					class="border-border flex h-full w-7 shrink-0 flex-col justify-between overflow-hidden border-l py-1.5"

@@ -11,6 +11,7 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
+	import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
 	import type { Album, LibraryAlbumFilter, Profile } from '$lib/types';
 	import { endInternalDrag, getInternalDrag, isInternalDragActive } from '$lib/dragSession';
 	import { asString, eventHtml, parseJsonText } from '$lib/parse';
@@ -108,6 +109,14 @@
 			node.select();
 		});
 	}
+
+	let albumNavViewport = $state<HTMLElement | null>(null);
+
+	$effect(() => {
+		const nav = albumNavViewport;
+		if (!nav) return;
+		return attachAlbumNavScroll(nav);
+	});
 
 	/** Edge auto-scroll + wheel scroll while dragging media onto albums. */
 	function attachAlbumNavScroll(nav: HTMLElement) {
@@ -521,7 +530,8 @@
 		</div>
 	</div>
 
-	<nav {@attach attachAlbumNavScroll} class="media-scroll flex-1 overflow-y-auto p-3">
+	<ScrollArea class="min-h-0 flex-1" bind:viewportRef={albumNavViewport}>
+		<nav class="p-3">
 		<Button
 			type="button"
 			variant="ghost"
@@ -701,6 +711,7 @@
 			{/each}
 		</ul>
 	</nav>
+	</ScrollArea>
 </aside>
 <ContextMenu
 	open={contextMenu.open}

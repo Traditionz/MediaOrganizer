@@ -25,9 +25,16 @@
 	import ContextMenu, { type ContextMenuItem } from '$lib/components/ContextMenu.svelte';
 	import TransferPanel from '$lib/components/TransferPanel.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import { isInternalDragActive } from '$lib/dragSession';
 	import { asFiniteNumber, asPlainObject, eventTargetHtml, own, ownString } from '$lib/parse';
+	import {
+		cardsInSelectionBox,
+		computeSelectionRect,
+		isTinyRect,
+		pointerPointInElement
+	} from '$lib/selection/geometry.js';
 	import { fade } from 'svelte/transition';
 	import { createAppState, setAppState } from '$lib/state';
 
@@ -41,6 +48,25 @@
 	const { prefs, library, selection, ui } = app;
 
 	let durationBackfilledForProfile: string | null = null;
+	let selectionSurface = $state<HTMLElement | null>(null);
+
+	/** Keep marquee hit target at least viewport-tall so empty space below rows is draggable. */
+	$effect(() => {
+		const viewport = selection.contentEl;
+		const surface = selectionSurface;
+		if (!viewport || !surface) return;
+
+		const sync = () => {
+			surface.style.minHeight = `${viewport.clientHeight}px`;
+		};
+		sync();
+		const ro = new ResizeObserver(sync);
+		ro.observe(viewport);
+		return () => {
+			ro.disconnect();
+			surface.style.minHeight = '';
+		};
+	});
 
 	$effect(() => {
 		library.sync({
@@ -1054,45 +1080,43 @@
 		const target = eventTargetHtml(e);
 		if (!target) return;
 		if (target.closest('.media-card')) return;
-		if (!selection.contentEl) return;
+		if (target.closest('[data-slot="scroll-area-scrollbar"]')) return;
 
-		const rect = selection.contentEl.getBoundingClientRect();
-		const x = e.clientX - rect.left + selection.contentEl.scrollLeft;
-		const y = e.clientY - rect.top + selection.contentEl.scrollTop;
+		const surface = e.currentTarget;
+		if (!(surface instanceof HTMLElement)) return;
+
+		e.preventDefault();
+		const point = pointerPointInElement(e, surface);
 		selection.selecting = true;
-		selection.selStart = { x, y };
-		selection.selCurrent = { x, y };
-		selection.contentEl.setPointerCapture(e.pointerId);
+		selection.selStart = point;
+		selection.selCurrent = point;
+		surface.setPointerCapture(e.pointerId);
 	}
 
 	function onContentPointerMove(e: PointerEvent) {
-		if (!selection.selecting || !selection.contentEl) return;
-		const rect = selection.contentEl.getBoundingClientRect();
-		selection.selCurrent = {
-			x: e.clientX - rect.left + selection.contentEl.scrollLeft,
-			y: e.clientY - rect.top + selection.contentEl.scrollTop
-		};
+		if (!selection.selecting) return;
+		const surface = e.currentTarget;
+		if (!(surface instanceof HTMLElement)) return;
+		selection.selCurrent = pointerPointInElement(e, surface);
 	}
 
-	function onContentPointerUp(e: PointerEvent) {
-		if (!selection.selecting || !selection.contentEl) return;
+	function finishMarqueeSelection(e: PointerEvent) {
+		if (!selection.selecting) return;
+		const surface = e.currentTarget;
+		if (!(surface instanceof HTMLElement)) return;
 
-		const box = {
-			x: Math.min(selection.selStart.x, selection.selCurrent.x),
-			y: Math.min(selection.selStart.y, selection.selCurrent.y),
-			w: Math.abs(selection.selCurrent.x - selection.selStart.x),
-			h: Math.abs(selection.selCurrent.y - selection.selStart.y)
-		};
-
+		const box = computeSelectionRect(true, selection.selStart, selection.selCurrent);
 		selection.selecting = false;
+
 		try {
-			selection.contentEl.releasePointerCapture(e.pointerId);
+			if (surface.hasPointerCapture(e.pointerId)) {
+				surface.releasePointerCapture(e.pointerId);
+			}
 		} catch {
 			/* ignore */
 		}
 
-		// Tiny movement = empty click → clear selection (unless ctrl additive)
-		if (box.w < 4 || box.h < 4) {
+		if (!box || isTinyRect(box.w, box.h)) {
 			if (!(e.ctrlKey || e.metaKey)) {
 				selection.selectedIds.clear();
 				selection.selectionAnchor = null;
@@ -1100,28 +1124,34 @@
 			return;
 		}
 
-		const cards = selection.contentEl.querySelectorAll<HTMLElement>('.media-card');
-		const contentRect = selection.contentEl.getBoundingClientRect();
+		const ids = cardsInSelectionBox(surface, box);
 		if (!(e.ctrlKey || e.metaKey)) selection.selectedIds.clear();
 
-		let hitCount = 0;
-		for (const card of cards) {
-			const r = card.getBoundingClientRect();
-			const cx = r.left - contentRect.left + selection.contentEl.scrollLeft;
-			const cy = r.top - contentRect.top + selection.contentEl.scrollTop;
-			const intersects =
-				cx < box.x + box.w && cx + r.width > box.x && cy < box.y + box.h && cy + r.height > box.y;
-			if (intersects) {
-				const id = card.dataset.id;
-				if (id) {
-					selection.selectedIds.add(id);
-					hitCount++;
-					if (!selection.selectionAnchor) selection.selectionAnchor = id;
-				}
-			}
+		for (const id of ids) {
+			selection.selectedIds.add(id);
+			if (!selection.selectionAnchor) selection.selectionAnchor = id;
 		}
 
-		if (hitCount > 0) selection.selectMode = true;
+		if (ids.length > 0) selection.selectMode = true;
+	}
+
+	function onContentPointerUp(e: PointerEvent) {
+		finishMarqueeSelection(e);
+	}
+
+	function onContentPointerCancel(e: PointerEvent) {
+		if (!selection.selecting) return;
+		const surface = e.currentTarget;
+		selection.selecting = false;
+		if (surface instanceof HTMLElement) {
+			try {
+				if (surface.hasPointerCapture(e.pointerId)) {
+					surface.releasePointerCapture(e.pointerId);
+				}
+			} catch {
+				/* ignore */
+			}
+		}
 	}
 </script>
 
@@ -1162,7 +1192,7 @@
 			ondeleteProfile={deleteProfile}
 		/>
 
-		<main class="flex min-w-0 flex-1 flex-col">
+		<main class="flex min-h-0 min-w-0 flex-1 flex-col">
 			<Toolbar
 				viewMode={prefs.viewMode}
 				showImages={prefs.showImages}
@@ -1221,16 +1251,19 @@
 				</div>
 			{/if}
 
-			<div
-				{@attach selection.attachContentEl}
-				class="media-scroll relative flex-1 overflow-auto p-4"
-				role="region"
-				aria-label="Media library"
-				onpointerdown={onContentPointerDown}
-				onpointermove={onContentPointerMove}
-				onpointerup={onContentPointerUp}
-				oncontextmenu={openEmptyContextMenu}
-			>
+			<ScrollArea class="relative min-h-0 flex-1" bind:viewportRef={selection.contentEl}>
+				<div
+					bind:this={selectionSurface}
+					class="relative box-border min-h-full w-full p-4"
+					class:select-none={selection.selecting}
+					role="region"
+					aria-label="Media library"
+					onpointerdown={onContentPointerDown}
+					onpointermove={onContentPointerMove}
+					onpointerup={onContentPointerUp}
+					onpointercancel={onContentPointerCancel}
+					oncontextmenu={openEmptyContextMenu}
+				>
 				{#if library.filteredMedia.length === 0}
 					<div
 						class="text-muted-foreground flex h-full min-h-64 flex-col items-center justify-center text-center"
@@ -1288,7 +1321,8 @@
 						style:height="{selection.selectionRect.h}px"
 					></div>
 				{/if}
-			</div>
+				</div>
+			</ScrollArea>
 		</main>
 
 		{#if ui.dragOver}

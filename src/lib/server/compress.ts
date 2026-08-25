@@ -3,6 +3,9 @@ import { existsSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import ffmpegPath from 'ffmpeg-static';
 import sharp from 'sharp';
+import { renameWithExt } from '$lib/compressNaming.js';
+
+export { renameWithExt };
 
 export type CompressResult = {
 	ok: boolean;
@@ -284,9 +287,4 @@ export async function probeImageSize(
 	} catch {
 		return null;
 	}
-}
-
-export function renameWithExt(name: string, ext: string): string {
-	const base = name.replace(/\.[^.]+$/, '');
-	return `${base}${ext}`;
 }

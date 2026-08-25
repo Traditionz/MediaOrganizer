@@ -1,5 +1,7 @@
 import { SvelteSet } from 'svelte/reactivity';
 
+import { computeSelectionRect } from '$lib/selection/geometry.js';
+
 /** Multi-select + rubber-band geometry for the media surface. */
 export class SelectionState {
 	selectMode = $state(false);
@@ -8,21 +10,16 @@ export class SelectionState {
 	selecting = $state(false);
 	selStart = $state({ x: 0, y: 0 });
 	selCurrent = $state({ x: 0, y: 0 });
-	contentEl = $state<HTMLDivElement | undefined>();
+	contentEl = $state<HTMLElement | null>(null);
 
-	readonly selectionRect = $derived.by(() => {
-		if (!this.selecting) return null;
-		const x = Math.min(this.selStart.x, this.selCurrent.x);
-		const y = Math.min(this.selStart.y, this.selCurrent.y);
-		const w = Math.abs(this.selCurrent.x - this.selStart.x);
-		const h = Math.abs(this.selCurrent.y - this.selStart.y);
-		return { x, y, w, h };
-	});
+	readonly selectionRect = $derived.by(() =>
+		computeSelectionRect(this.selecting, this.selStart, this.selCurrent)
+	);
 
-	attachContentEl = (node: HTMLDivElement) => {
+	attachContentEl = (node: HTMLElement) => {
 		this.contentEl = node;
 		return () => {
-			if (this.contentEl === node) this.contentEl = undefined;
+			if (this.contentEl === node) this.contentEl = null;
 		};
 	};
 

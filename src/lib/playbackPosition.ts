@@ -1,13 +1,12 @@
-/** Persist last watch position per media id (browser localStorage). */
-
 import { browser } from '$app/environment';
 import { asFiniteNumber, asPlainObject, own, parseJsonText } from '$lib/parse';
+import {
+	normalizeSavedTime,
+	resumeTimeFromSaved,
+	shouldClearPlaybackPosition
+} from '$lib/playback/logic.js';
 
 const STORAGE_KEY = 'mo_playback_positions';
-/** Don't resume / keep position in the last N seconds (treat as finished). */
-const NEAR_END_SEC = 5;
-/** Ignore tiny scrub / accidental opens. */
-const MIN_SAVE_SEC = 1.5;
 
 function loadPositions(): Map<string, number> {
 	const map = new Map<string, number>();
@@ -51,14 +50,14 @@ export function setPlaybackPosition(mediaId: string, time: number, duration = 0)
 	if (!mediaId || !Number.isFinite(time)) return;
 	const map = loadPositions();
 
-	if (time < MIN_SAVE_SEC || (duration > 0 && time >= Math.max(0, duration - NEAR_END_SEC))) {
+	if (shouldClearPlaybackPosition(time, duration)) {
 		if (!map.has(mediaId)) return;
 		map.delete(mediaId);
 		savePositions(map);
 		return;
 	}
 
-	map.set(mediaId, Math.round(time * 100) / 100);
+	map.set(mediaId, normalizeSavedTime(time));
 	savePositions(map);
 }
 
@@ -74,10 +73,7 @@ export function clearPlaybackPosition(mediaId: string): void {
 export function resumePlaybackPosition(mediaId: string, duration: number): number | null {
 	const saved = getPlaybackPosition(mediaId);
 	if (saved == null) return null;
-	if (!Number.isFinite(duration) || duration <= 0) return saved;
-	if (saved >= Math.max(0, duration - NEAR_END_SEC)) {
-		clearPlaybackPosition(mediaId);
-		return null;
-	}
-	return Math.min(saved, Math.max(0, duration - 0.25));
+	const resume = resumeTimeFromSaved(saved, duration);
+	if (resume == null) clearPlaybackPosition(mediaId);
+	return resume;
 }

@@ -1,5 +1,6 @@
 import type { Album, LibraryAlbumFilter, MediaItem, Profile } from '$lib/types';
 import { defaultActiveAlbum } from '$lib/config/defaults';
+import { filterMediaItems, pasteTargetAlbumId as resolvePasteTargetAlbumId } from '$lib/media/filter.js';
 import type { PreferencesState } from './preferences.svelte';
 
 export type LibraryLoad = {
@@ -50,31 +51,14 @@ export class LibraryState {
 	);
 
 	readonly filteredMedia = $derived.by(() => {
-		const q = this.prefs.searchQuery.trim().toLowerCase();
 		const activeAlbum = this.activeAlbum;
-		const showImages = this.prefs.showImages;
-		const showVideos = this.prefs.showVideos;
-		const dateFrom = this.prefs.dateFrom;
-		const dateTo = this.prefs.dateTo;
 		const source = activeAlbum === 'trash' ? this.trash : this.media;
-
-		return source.filter((item) => {
-			if (activeAlbum !== 'all' && activeAlbum !== 'trash') {
-				if (activeAlbum === null) {
-					if (item.album_ids.length !== 0) return false;
-				} else if (!item.album_ids.includes(activeAlbum)) {
-					return false;
-				}
-			}
-			if (item.media_type === 'image' && !showImages) return false;
-			if (item.media_type === 'video' && !showVideos) return false;
-			if (dateFrom || dateTo) {
-				const day = item.created_at.slice(0, 10);
-				if (dateFrom && day < dateFrom) return false;
-				if (dateTo && day > dateTo) return false;
-			}
-			if (q && !item.original_name.toLowerCase().includes(q)) return false;
-			return true;
+		return filterMediaItems(source, activeAlbum, {
+			searchQuery: this.prefs.searchQuery,
+			showImages: this.prefs.showImages,
+			showVideos: this.prefs.showVideos,
+			dateFrom: this.prefs.dateFrom,
+			dateTo: this.prefs.dateTo
 		});
 	});
 
@@ -82,12 +66,8 @@ export class LibraryState {
 		this.activeAlbum = id;
 	}
 
-	/** Target album for upload / paste when a concrete album is selected. */
 	pasteTargetAlbumId(): string | null {
-		if (this.activeAlbum === 'all' || this.activeAlbum === null || this.activeAlbum === 'trash') {
-			return null;
-		}
-		return this.activeAlbum;
+		return resolvePasteTargetAlbumId(this.activeAlbum);
 	}
 
 	markHasThumbnail(id: string) {

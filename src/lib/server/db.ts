@@ -4,9 +4,12 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import * as schema from './schema';
 import { asPlainObject, type JsonObject, type JsonValue } from '$lib/parse';
+import {
+	DATA_DIR,
+	FILES_DIR
+} from './dbUtil';
 
-export const DATA_DIR = join(process.cwd(), 'data');
-export const FILES_DIR = join(DATA_DIR, 'files');
+export { DATA_DIR, FILES_DIR, filePathForKey, isUniqueConstraintError, newId } from './dbUtil';
 
 mkdirSync(DATA_DIR, { recursive: true });
 mkdirSync(FILES_DIR, { recursive: true });
@@ -113,18 +116,6 @@ function createSchema() {
 }
 
 export const PROFILE_COOKIE = 'mo_profile';
-
-export function newId(): string {
-	return crypto.randomUUID();
-}
-
-export function filePathForKey(storageKey: string): string {
-	return join(FILES_DIR, storageKey);
-}
-
-export function isUniqueConstraintError(err: Error): boolean {
-	return err.message.includes('UNIQUE');
-}
 
 export default db;
 export { sqlite };

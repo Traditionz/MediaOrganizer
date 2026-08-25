@@ -1,5 +1,6 @@
 import { browser } from '$app/environment';
 import { appDefaults } from '$lib/config/defaults';
+import { clampColumnCount } from '$lib/preferences/columns.js';
 import type { ThemeMode, ViewMode } from '$lib/types';
 
 const THEME_KEY = 'theme';
@@ -51,7 +52,7 @@ export class PreferencesState {
 	}
 
 	setColumns(n: number) {
-		this.columns = Math.min(8, Math.max(2, Math.round(n)));
+		this.columns = clampColumnCount(n);
 	}
 
 	setShowImages(value: boolean) {

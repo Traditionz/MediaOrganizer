@@ -134,8 +134,3 @@ body {
 	height: 100%;
 	overflow: hidden;
 }
-
-.media-scroll {
-	scrollbar-width: thin;
-	scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent;
-}
