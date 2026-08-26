@@ -28,6 +28,13 @@
 	import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import { isInternalDragActive } from '$lib/dragSession';
+	import {
+		applyOsFileDragLeave,
+		nextOsFileDragEnterDepth,
+		resetOsFileDragDepth,
+		shouldShowOsFileDragOverlay,
+		type DragZoneHost
+	} from '$lib/dragUpload';
 	import { asFiniteNumber, asPlainObject, eventTargetHtml, own, ownString } from '$lib/parse';
 	import {
 		cardsInSelectionBox,
@@ -1044,18 +1051,34 @@
 		}
 	}
 
+	let osFileDragDepth = 0;
+
+	function clearOsFileDragOverlay() {
+		osFileDragDepth = resetOsFileDragDepth();
+		ui.dragOver = false;
+	}
+
+	function dragZoneHost(target: EventTarget | null): DragZoneHost | null {
+		if (target instanceof Node) {
+			return target;
+		}
+		return null;
+	}
+
 	function onDragEnter(e: DragEvent) {
 		if (hasInternalDrag(e.dataTransfer)) {
-			ui.dragOver = false;
+			clearOsFileDragOverlay();
 			return;
 		}
 		e.preventDefault();
-		if (e.dataTransfer?.types.includes('Files')) ui.dragOver = true;
+		if (!e.dataTransfer?.types.includes('Files')) return;
+		osFileDragDepth = nextOsFileDragEnterDepth(osFileDragDepth);
+		ui.dragOver = shouldShowOsFileDragOverlay(osFileDragDepth);
 	}
 
 	function onDragOver(e: DragEvent) {
 		if (hasInternalDrag(e.dataTransfer)) {
-			ui.dragOver = false;
+			clearOsFileDragOverlay();
 			return;
 		}
 		e.preventDefault();
@@ -1063,19 +1086,34 @@
 	}
 
 	function onDragLeave(e: DragEvent) {
-		if (e.currentTarget === e.target) ui.dragOver = false;
+		if (hasInternalDrag(e.dataTransfer)) return;
+		const result = applyOsFileDragLeave(
+			osFileDragDepth,
+			dragZoneHost(e.currentTarget),
+			e.relatedTarget
+		);
+		osFileDragDepth = result.depth;
+		if (result.clear) ui.dragOver = false;
 	}
 
 	async function onDrop(e: DragEvent) {
 		if (hasInternalDrag(e.dataTransfer)) {
-			ui.dragOver = false;
+			clearOsFileDragOverlay();
 			return;
 		}
 		e.preventDefault();
-		ui.dragOver = false;
+		clearOsFileDragOverlay();
 		if (e.dataTransfer?.files?.length) {
 			await uploadFiles(e.dataTransfer.files);
 		}
+	}
+
+	function onWindowDragEnd() {
+		clearOsFileDragOverlay();
+	}
+
+	function onDocumentDrop() {
+		clearOsFileDragOverlay();
 	}
 
 	function onContentPointerDown(e: PointerEvent) {
@@ -1180,7 +1218,8 @@
 	<title>Media Organizer</title>
 </svelte:head>
 
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} ondragend={onWindowDragEnd} />
+<svelte:document ondrop={onDocumentDrop} />
 
 {#if !library.activeProfile}
 	<ProfileGate profiles={library.profiles} onselect={selectProfile} oncreate={createProfile} />
@@ -1221,6 +1260,8 @@
 				dateFrom={prefs.dateFrom}
 				dateTo={prefs.dateTo}
 				searchQuery={prefs.searchQuery}
+				sortBy={prefs.sortBy}
+				sortDir={prefs.sortDir}
 				columns={prefs.columns}
 				selectMode={selection.selectMode}
 				selectedCount={selection.selectedIds.size}
@@ -1235,6 +1276,8 @@
 				ondateFrom={(v) => prefs.setDateFrom(v)}
 				ondateTo={(v) => prefs.setDateTo(v)}
 				onsearchQuery={(v) => prefs.setSearchQuery(v)}
+				onsortBy={(v) => prefs.setSortBy(v)}
+				ontoggleSortDir={() => prefs.toggleSortDir()}
 				oncolumns={(v) => prefs.setColumns(v)}
 				onwarnDuplicateUploads={(v) => prefs.setWarnDuplicateUploads(v)}
 				ontoggleSelect={() => selection.toggleSelectMode()}

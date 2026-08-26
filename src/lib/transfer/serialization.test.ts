@@ -78,4 +78,36 @@ describe('transfer serialization', () => {
 		expect(restoreTransferJobsFromStorage(null)).toEqual([]);
 		expect(restoreTransferJobsFromStorage('not-json')).toEqual([]);
 	});
+
+	test('restoreTransferJobsFromStorage drops unfinished compress and empty uploads', () => {
+		const payload = JSON.stringify([
+			{
+				id: 'compress-active',
+				kind: 'compress',
+				label: 'Compress',
+				progress: 40,
+				fileCount: 1,
+				files: [{ id: 'f1', name: 'a.mp4', kind: 'video', progress: 40, status: 'uploading' }]
+			},
+			{
+				id: 'upload-empty',
+				kind: 'upload',
+				label: 'Upload',
+				progress: 10,
+				fileCount: 0,
+				files: []
+			},
+			{
+				id: 'compress-done',
+				kind: 'compress',
+				label: 'Compress',
+				progress: 100,
+				fileCount: 1,
+				files: [{ id: 'f2', name: 'b.mp4', kind: 'video', progress: 100, status: 'done' }]
+			}
+		]);
+		const jobs = restoreTransferJobsFromStorage(payload);
+		expect(jobs).toHaveLength(1);
+		expect(jobs[0]?.id).toBe('compress-done');
+	});
 });

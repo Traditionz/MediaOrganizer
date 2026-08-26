@@ -1,10 +1,13 @@
 import { browser } from '$app/environment';
 import { appDefaults } from '$lib/config/defaults';
 import { clampColumnCount } from '$lib/preferences/columns.js';
+import type { MediaSortBy, MediaSortDir } from '$lib/media/sort';
 import type { ThemeMode, ViewMode } from '$lib/types';
 
 const THEME_KEY = 'theme';
 const WARN_DUPES_KEY = 'mo_warn_dupes';
+const SORT_BY_KEY = 'mo_sort_by';
+const SORT_DIR_KEY = 'mo_sort_dir';
 
 function readStoredTheme(fallback: ThemeMode | 'system'): ThemeMode {
 	if (!browser) {
@@ -35,6 +38,30 @@ function readStoredFlag(key: string, fallback: boolean): boolean {
 	return fallback;
 }
 
+function readStoredSortBy(): MediaSortBy {
+	if (!browser) return 'date';
+	try {
+		const stored = localStorage.getItem(SORT_BY_KEY);
+		if (stored === 'date' || stored === 'name' || stored === 'duration' || stored === 'size') {
+			return stored;
+		}
+	} catch {
+		/* ignore */
+	}
+	return 'date';
+}
+
+function readStoredSortDir(): MediaSortDir {
+	if (!browser) return 'desc';
+	try {
+		const stored = localStorage.getItem(SORT_DIR_KEY);
+		if (stored === 'asc' || stored === 'desc') return stored;
+	} catch {
+		/* ignore */
+	}
+	return 'desc';
+}
+
 /** View prefs, filters, theme — seeded from PUBLIC_* env, with local overrides. */
 export class PreferencesState {
 	viewMode = $state<ViewMode>(appDefaults.viewMode);
@@ -44,6 +71,8 @@ export class PreferencesState {
 	dateFrom = $state('');
 	dateTo = $state('');
 	searchQuery = $state('');
+	sortBy = $state<MediaSortBy>(readStoredSortBy());
+	sortDir = $state<MediaSortDir>(readStoredSortDir());
 	warnDuplicateUploads = $state(readStoredFlag(WARN_DUPES_KEY, appDefaults.warnDuplicateUploads));
 	theme = $state<ThemeMode>(readStoredTheme(appDefaults.theme));
 
@@ -73,6 +102,30 @@ export class PreferencesState {
 
 	setSearchQuery(value: string) {
 		this.searchQuery = value;
+	}
+
+	setSortBy(value: MediaSortBy) {
+		this.sortBy = value;
+		if (!browser) return;
+		try {
+			localStorage.setItem(SORT_BY_KEY, value);
+		} catch {
+			/* ignore */
+		}
+	}
+
+	setSortDir(value: MediaSortDir) {
+		this.sortDir = value;
+		if (!browser) return;
+		try {
+			localStorage.setItem(SORT_DIR_KEY, value);
+		} catch {
+			/* ignore */
+		}
+	}
+
+	toggleSortDir() {
+		this.setSortDir(this.sortDir === 'asc' ? 'desc' : 'asc');
 	}
 
 	setWarnDuplicateUploads(value: boolean) {

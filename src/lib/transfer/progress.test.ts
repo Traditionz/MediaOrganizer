@@ -38,16 +38,38 @@ describe('transfer progress', () => {
 		});
 		expect(canCancelTransfer(uploadDone)).toBe(false);
 
+		const uploadQueued = makeTransferJob({
+			kind: 'upload',
+			files: [makeTransferFile({ name: 'a', status: 'queued' })]
+		});
+		expect(canCancelTransfer(uploadQueued)).toBe(true);
+
+		const uploadSaving = makeTransferJob({
+			kind: 'upload',
+			files: [makeTransferFile({ name: 'a', status: 'saving' })]
+		});
+		expect(canCancelTransfer(uploadSaving)).toBe(true);
+
 		const compress = makeTransferJob({ kind: 'compress', files: [] });
 		expect(canCancelTransfer(compress)).toBe(false);
 	});
 
 	test('applyFileProgress merges patch and ignores cancelled files', () => {
 		const file = makeTransferFile({ name: 'a', status: 'uploading', progress: 10 });
-		const updated = applyFileProgress(file, { progress: 55, loaded: 100, total: 200 });
+		const updated = applyFileProgress(file, {
+			progress: 55,
+			loaded: 100,
+			total: 200,
+			status: 'saving'
+		});
 		expect(updated.progress).toBe(55);
 		expect(updated.loaded).toBe(100);
 		expect(updated.total).toBe(200);
+		expect(updated.status).toBe('saving');
+
+		const withError = applyFileProgress(file, { status: 'error', error: 'boom' });
+		expect(withError.status).toBe('error');
+		expect(withError.error).toBe('boom');
 
 		const cancelled = makeTransferFile({ name: 'b', status: 'cancelled', progress: 0 });
 		expect(applyFileProgress(cancelled, { progress: 99 }).progress).toBe(0);

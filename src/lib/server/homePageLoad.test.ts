@@ -71,7 +71,8 @@ describe('loadHomePageData', () => {
 			}
 		});
 
-		expect(purgedFor).toBe('p1');
+		expect(purgedFor).not.toBeNull();
+		expect(String(purgedFor)).toBe('p1');
 		expect(data.activeProfile).toBe(profile);
 		expect(data.albums).toEqual([album]);
 		expect(data.media).toEqual([media]);

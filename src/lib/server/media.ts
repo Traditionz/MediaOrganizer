@@ -15,6 +15,21 @@ import db, { filePathForKey, newId } from './db';
 import { albumMedia, albums, media } from './schema';
 import type { MediaRow } from './schema';
 import { listAlbums } from './albums';
+import {
+	copyFileName,
+	formatMediaBytes,
+	normalizeCreated,
+	normalizeDuration,
+	parseContentLength
+} from './mediaUtil';
+
+export {
+	copyFileName,
+	formatMediaBytes,
+	normalizeCreated,
+	normalizeDuration,
+	parseContentLength
+} from './mediaUtil';
 
 /** Reject near-empty / black-frame JPEGs from failed captures. */
 const MIN_THUMB_BYTES = 3000;
@@ -29,10 +44,6 @@ export interface MediaQuery {
 	dateTo?: string;
 	/** When true, only trashed items; when false/omitted, only active. */
 	trash?: boolean;
-}
-
-function normalizeCreated(iso: string): string {
-	return iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`;
 }
 
 function loadAlbumMembership(
@@ -89,12 +100,6 @@ function clearInvalidThumbnail(profileId: string, id: string, thumbnailKey: stri
 		.set({ thumbnailKey: null })
 		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
 		.run();
-}
-
-function normalizeDuration(value: number | null | undefined): number | null {
-	if (value == null) return null;
-	const n = Number(value);
-	return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 function mapRow(row: MediaRow, albumIds: string[], albumNames: string[]): MediaItem {
@@ -236,18 +241,6 @@ async function fillImageDimensions(profileId: string, id: string, path: string):
 	}
 }
 
-function formatBytes(n: number): string {
-	if (n < 1024) return `${n} B`;
-	if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-	if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-	return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-function parseContentLength(value: number | null | undefined): number | null {
-	if (value == null) return null;
-	return Number.isFinite(value) && value > 0 ? value : null;
-}
-
 /** Throttled per-file lines for the Vite / Node terminal. */
 function createVideoUploadProgress(name: string, totalBytes: number | null) {
 	let loaded = 0;
@@ -270,7 +263,7 @@ function createVideoUploadProgress(name: string, totalBytes: number | null) {
 		lastAt = now;
 		if (pct != null) lastPctLogged = pct;
 		const sizePart =
-			total != null ? `${formatBytes(loaded)} / ${formatBytes(total)}` : formatBytes(loaded);
+			total != null ? `${formatMediaBytes(loaded)} / ${formatMediaBytes(total)}` : formatMediaBytes(loaded);
 		const pctPart = pct != null ? `${String(pct).padStart(3, ' ')}%` : '  ?%';
 		console.info(
 			`[media-organizer] video upload "${name}" ${pctPart}  ${sizePart}${done ? '  done' : ''}`
@@ -605,12 +598,6 @@ export function renameMedia(profileId: string, id: string, name: string): MediaI
 	const meta = getMediaMeta(profileId, id);
 	if (!meta) throw new Error('Media not found');
 	return meta;
-}
-
-function copyFileName(name: string): string {
-	const dot = name.lastIndexOf('.');
-	if (dot <= 0) return `${name} copy`;
-	return `${name.slice(0, dot)} copy${name.slice(dot)}`;
 }
 
 export function duplicateMedia(

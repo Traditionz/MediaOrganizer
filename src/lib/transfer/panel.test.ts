@@ -145,6 +145,15 @@ describe('transfer panel', () => {
 
 		const progressOnly = makeTransferFile({ name: 'd.jpg', status: 'uploading', progress: 25 });
 		expect(fileMeta(progressOnly, formatBytes)).toBe('25%');
+
+		expect(fileMeta(makeTransferFile({ name: 'e', status: 'saving' }), formatBytes)).toBe(
+			'Saving…'
+		);
+		expect(fileMeta(makeTransferFile({ name: 'f', status: 'done' }), formatBytes)).toBe('Done');
+		expect(fileMeta(makeTransferFile({ name: 'g', status: 'cancelled' }), formatBytes)).toBe(
+			'Cancelled'
+		);
+		expect(fileMeta(makeTransferFile({ name: 'h', status: 'error' }), formatBytes)).toBe('Failed');
 	});
 
 	test('fileProgressClass maps status to indicator color', () => {

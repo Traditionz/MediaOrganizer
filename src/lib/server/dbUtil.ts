@@ -6,6 +6,8 @@ export const DATA_DIR = process.env.MEDIA_DATA_DIR
 	: join(process.cwd(), 'data');
 export const FILES_DIR = join(DATA_DIR, 'files');
 
+export const PROFILE_COOKIE = 'mo_profile';
+
 export function newId(): string {
 	return crypto.randomUUID();
 }

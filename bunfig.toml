@@ -7,7 +7,6 @@ coveragePathIgnorePatterns = [
 	"src/lib/components/**",
 	"src/lib/**/*.svelte.ts",
 	"src/lib/index.ts",
-	"src/lib/utils.ts",
 	"src/lib/dragSession.ts",
 	"src/lib/server/db.ts",
 	"src/lib/server/schema.ts",

@@ -9,7 +9,14 @@ import {
 	FILES_DIR
 } from './dbUtil';
 
-export { DATA_DIR, FILES_DIR, filePathForKey, isUniqueConstraintError, newId } from './dbUtil';
+export {
+	DATA_DIR,
+	FILES_DIR,
+	filePathForKey,
+	isUniqueConstraintError,
+	newId,
+	PROFILE_COOKIE
+} from './dbUtil';
 
 mkdirSync(DATA_DIR, { recursive: true });
 mkdirSync(FILES_DIR, { recursive: true });
@@ -114,8 +121,6 @@ function createSchema() {
 		sqlite.exec('ALTER TABLE profiles ADD COLUMN passcode_hash TEXT');
 	}
 }
-
-export const PROFILE_COOKIE = 'mo_profile';
 
 export default db;
 export { sqlite };
