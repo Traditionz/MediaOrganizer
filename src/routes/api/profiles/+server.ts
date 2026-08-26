@@ -30,7 +30,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
 	try {
 		const profile = createProfile(name, passcode);
-		setProfileCookie(cookies, profile.id);
+		setProfileCookie(cookies, profile);
 		return json(profile, { status: 201 });
 	} catch (err) {
 		const message = err instanceof Error ? err.message : 'Failed to create profile';

@@ -15,7 +15,8 @@ export {
 	filePathForKey,
 	isUniqueConstraintError,
 	newId,
-	PROFILE_COOKIE
+	PROFILE_COOKIE,
+	PROFILE_UNLOCK_COOKIE
 } from './dbUtil';
 
 mkdirSync(DATA_DIR, { recursive: true });

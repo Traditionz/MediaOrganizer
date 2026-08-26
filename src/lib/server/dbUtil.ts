@@ -7,6 +7,8 @@ export const DATA_DIR = process.env.MEDIA_DATA_DIR
 export const FILES_DIR = join(DATA_DIR, 'files');
 
 export const PROFILE_COOKIE = 'mo_profile';
+/** Set only after a successful passcode unlock; session-scoped with PROFILE_COOKIE. */
+export const PROFILE_UNLOCK_COOKIE = 'mo_profile_unlock';
 
 export function newId(): string {
 	return crypto.randomUUID();

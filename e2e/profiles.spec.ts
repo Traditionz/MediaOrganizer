@@ -70,6 +70,18 @@ test.describe('profiles', () => {
 		await unlockProfile(page, name, passcode);
 	});
 
+	test('locked profile requires passcode again after reload', async ({ page }) => {
+		await openProfileGate(page);
+		const name = uniqueName('Relock');
+		const passcode = 'relock42';
+		await createProfile(page, name, { passcode });
+		await expect(library(page)).toBeVisible();
+
+		await page.reload();
+		await expect(page.getByText('Choose a profile to continue')).toBeVisible();
+		await expect(library(page)).toHaveCount(0);
+		await unlockProfile(page, name, passcode);
+	});
 	test('wrong passcode stays on unlock form', async ({ page }) => {
 		await openProfileGate(page);
 		const name = uniqueName('WrongPass');

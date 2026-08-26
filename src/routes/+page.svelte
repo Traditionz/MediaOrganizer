@@ -109,6 +109,23 @@
 		}
 	});
 
+	$effect(() => {
+		if (!library.activeProfile?.has_passcode) return;
+		const lock = () => {
+			void fetch('/api/profiles/lock', {
+				method: 'POST',
+				keepalive: true,
+				credentials: 'same-origin'
+			});
+		};
+		window.addEventListener('pagehide', lock);
+		window.addEventListener('beforeunload', lock);
+		return () => {
+			window.removeEventListener('pagehide', lock);
+			window.removeEventListener('beforeunload', lock);
+		};
+	});
+
 	async function selectProfile(id: string, passcode = '') {
 		const res = await fetch('/api/profiles/select', {
 			method: 'POST',

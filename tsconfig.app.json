@@ -23,10 +23,7 @@
 		"src/**/*.ts",
 		"src/**/*.d.ts",
 		"src/**/*.svelte",
-		"src/**/*.test.ts",
-		"test/**/*.ts",
-		"test/**/*.d.ts",
 		"node_modules/svelte/svelte-html.d.ts"
 	],
-	"exclude": ["e2e/**"]
+	"exclude": ["src/**/*.test.ts", "test/**", "e2e/**"]
 }

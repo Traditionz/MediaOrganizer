@@ -171,7 +171,13 @@
 				{#if mode === 'create'}
 					<div class="mt-3 grid gap-2">
 						<Label class="text-muted-foreground text-xs">Name</Label>
-						<Input placeholder="Profile name" bind:value={name} disabled={busy} required />
+						<Input
+							placeholder="Profile name"
+							bind:value={name}
+							disabled={busy}
+							required
+							autocomplete="off"
+						/>
 					</div>
 
 					<label class="mt-3 flex cursor-pointer items-center gap-2 text-sm">
@@ -216,7 +222,7 @@
 							disabled={busy}
 							required
 							minlength={4}
-							autocomplete={mode === 'create' ? 'new-password' : 'current-password'}
+							autocomplete="off"
 						/>
 					</div>
 
@@ -230,7 +236,7 @@
 								disabled={busy}
 								required
 								minlength={4}
-								autocomplete="new-password"
+								autocomplete="off"
 							/>
 						</div>
 					{/if}

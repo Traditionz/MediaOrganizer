@@ -3,23 +3,32 @@ import { getProfile } from './profiles';
 import {
 	clearProfileCookie as clearCookie,
 	resolveProfileFromCookies as resolveWithLookup,
-	setProfileCookie as setCookie
+	setProfileCookie as setCookie,
+	type ResolveProfileOptions
 } from './profileCookies';
+import type { Profile } from '$lib/types';
 
-export type { ProfileLookup } from './profileCookies';
+export type { ProfileLookup, ResolveProfileOptions } from './profileCookies';
 export {
 	clearProfileCookie as clearProfileCookiePure,
 	resolveProfileFromCookies as resolveProfileFromCookiesWithLookup,
-	setProfileCookie as setProfileCookiePure
+	setProfileCookie as setProfileCookiePure,
+	PROFILE_SESSION_COOKIE_OPTS
 } from './profileCookies';
 
-/** Cookie → profile row (uses SQLite getProfile). */
-export function resolveProfileFromCookies(cookies: Cookies) {
-	return resolveWithLookup(cookies, getProfile);
+/** Cookie → profile row (uses SQLite getProfile). Locked profiles need unlock cookie. */
+export function resolveProfileFromCookies(
+	cookies: Cookies,
+	options: ResolveProfileOptions = {}
+) {
+	return resolveWithLookup(cookies, getProfile, options);
 }
 
-export function setProfileCookie(cookies: Cookies, profileId: string): void {
-	setCookie(cookies, profileId);
+export function setProfileCookie(
+	cookies: Cookies,
+	profile: Pick<Profile, 'id' | 'has_passcode'>
+): void {
+	setCookie(cookies, profile);
 }
 
 export function clearProfileCookie(cookies: Cookies): void {

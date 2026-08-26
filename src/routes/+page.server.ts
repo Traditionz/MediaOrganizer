@@ -5,10 +5,14 @@ import { listAlbums } from '$lib/server/albums';
 import { countAllMedia, listMedia, purgeExpiredTrash } from '$lib/server/media';
 import { loadHomePageData } from '$lib/server/homePageLoad';
 
-export const load: PageServerLoad = async ({ cookies }) => {
+export const load: PageServerLoad = async ({ cookies, isDataRequest }) => {
 	return loadHomePageData({
 		listProfiles,
-		resolveActiveProfile: () => resolveProfileFromCookies(cookies),
+		resolveActiveProfile: () =>
+			resolveProfileFromCookies(cookies, {
+				// Full document loads always require a fresh passcode for locked profiles.
+				allowPasscodeUnlock: isDataRequest
+			}),
 		listAlbums,
 		listMedia,
 		countAllMedia,
