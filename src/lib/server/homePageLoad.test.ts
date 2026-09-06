@@ -22,6 +22,7 @@ const media: MediaItem = {
 	width: 800,
 	height: 600,
 	duration: null,
+	view_count: 0,
 	created_at: '2026-01-01'
 };
 

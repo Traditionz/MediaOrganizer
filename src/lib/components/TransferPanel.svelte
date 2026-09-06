@@ -125,9 +125,7 @@
 										<li class="min-w-0">
 											<div class="flex items-center gap-2">
 												{#if file.status === 'done'}
-													<Check
-														class="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400"
-													/>
+													<Check class="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
 												{:else if file.status === 'error'}
 													<CircleAlert class="text-destructive size-3.5 shrink-0" />
 												{:else if file.status === 'cancelled'}
@@ -144,8 +142,7 @@
 													class={cn(
 														'shrink-0 text-[11px] tabular-nums',
 														file.status === 'error' && 'text-destructive',
-														file.status === 'cancelled' &&
-															'text-amber-600 dark:text-amber-400',
+														file.status === 'cancelled' && 'text-amber-600 dark:text-amber-400',
 														file.status !== 'error' &&
 															file.status !== 'cancelled' &&
 															'text-muted-foreground'
@@ -180,9 +177,7 @@
 								onclick={() => toggleFiles(job.id)}
 								aria-expanded={showAllFiles}
 							>
-								{showAllFiles
-									? 'Show less'
-									: `Show all ${job.files.length} files`}
+								{showAllFiles ? 'Show less' : `Show all ${job.files.length} files`}
 							</Button>
 						{/if}
 					{/if}

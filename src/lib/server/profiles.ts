@@ -4,11 +4,7 @@ import type { Profile } from '$lib/types';
 import db, { filePathForKey, isUniqueConstraintError, newId } from './db';
 import { media, profiles } from './schema';
 import type { ProfileRow } from './schema';
-import {
-	assertPasscodeFormat,
-	hashPasscode,
-	verifyPasscode
-} from './passcode';
+import { assertPasscodeFormat, hashPasscode, verifyPasscode } from './passcode';
 
 export { assertPasscodeFormat, hashPasscode, verifyPasscode } from './passcode';
 

@@ -1,10 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-	durationSortValue,
-	isMediaSortBy,
-	isMediaSortDir,
-	sortMediaItems
-} from '$lib/media/sort';
+import { durationSortValue, isMediaSortBy, isMediaSortDir, sortMediaItems } from '$lib/media/sort';
 import { makeMediaItem, resetMediaHelpers } from '../../../test/helpers/media';
 
 describe('durationSortValue', () => {

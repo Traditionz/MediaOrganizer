@@ -5,6 +5,7 @@
 		resumePlaybackPosition,
 		setPlaybackPosition
 	} from '$lib/playbackPosition';
+	import { accumulateWatchDelta } from '$lib/media/views';
 	import Maximize from '@lucide/svelte/icons/maximize';
 	import Pause from '@lucide/svelte/icons/pause';
 	import Play from '@lucide/svelte/icons/play';
@@ -18,6 +19,7 @@
 		/** Media id — used to resume where playback left off */
 		mediaId?: string;
 		onmetadata?: (meta: { w: number; h: number; duration: number }) => void;
+		onwatchprogress?: (watchedSeconds: number, durationSeconds: number) => void;
 	}
 
 	const SPEED_OPTIONS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
@@ -25,7 +27,7 @@
 	const PREVIEW_MAX_W_REM = 17.875;
 	const SAVE_INTERVAL_MS = 2500;
 
-	let { src, mediaId = '', onmetadata }: Props = $props();
+	let { src, mediaId = '', onmetadata, onwatchprogress }: Props = $props();
 
 	let videoEl: HTMLVideoElement | undefined = $state();
 	let playerEl: HTMLDivElement | undefined = $state();
@@ -53,6 +55,8 @@
 	let queuedPreview = -1;
 	let resumeApplied = false;
 	let lastSaveAt = 0;
+	let watchedSeconds = 0;
+	let lastMediaTime = NaN;
 
 	const progress = $derived(duration > 0 ? current / duration : 0);
 	const bufferPct = $derived(duration > 0 ? Math.min(1, buffered / duration) : 0);
@@ -164,6 +168,14 @@
 
 	function tick() {
 		syncTime();
+		if (pendingSeek != null || scrubbing) {
+			lastMediaTime = NaN;
+		} else if (playing && videoEl) {
+			const t = videoEl.currentTime;
+			watchedSeconds += accumulateWatchDelta(lastMediaTime, t);
+			lastMediaTime = t;
+			onwatchprogress?.(watchedSeconds, duration || videoEl.duration || 0);
+		}
 		if (playing && !scrubbing) savePosition(false);
 		rafId = playing && !scrubbing ? requestAnimationFrame(tick) : 0;
 	}
@@ -183,6 +195,8 @@
 		videoEl = node;
 		resumeApplied = false;
 		lastSaveAt = 0;
+		watchedSeconds = 0;
+		lastMediaTime = NaN;
 		node.playbackRate = playbackRate;
 		node.volume = volume;
 		node.muted = muted;
@@ -321,6 +335,7 @@
 		if (!videoEl || duration <= 0) return;
 		const t = Math.min(duration, Math.max(0, current));
 		pendingSeek = t;
+		lastMediaTime = NaN;
 		videoEl.currentTime = t;
 		savePosition(true);
 	}
@@ -330,6 +345,7 @@
 		if (!track) return;
 		scrubbing = true;
 		pendingSeek = null;
+		lastMediaTime = NaN;
 		showControls = true;
 		stopTick();
 		track.setPointerCapture(e.pointerId);
@@ -513,6 +529,7 @@
 		}}
 		onseeked={() => {
 			pendingSeek = null;
+			lastMediaTime = NaN;
 			syncTime();
 			readBuffer();
 			savePosition(true);

@@ -9,6 +9,7 @@ import {
 	isVideoFile,
 	layoutCollage,
 	mapWithConcurrency,
+	requestServerThumbnail,
 	thumbnailSeekTime
 } from '$lib/utils';
 
@@ -74,9 +75,30 @@ describe('utils', () => {
 		expect(isVideoFile(image)).toBe(false);
 	});
 
-	test('isAbortError', () => {
-		expect(isAbortError(new DOMException('x', 'AbortError'))).toBe(true);
-		expect(isAbortError(new Error('x'))).toBe(false);
+	test('requestServerThumbnail POSTs thumbnail route', async () => {
+		const calls: { url: string; method: string }[] = [];
+		const original = globalThis.fetch;
+		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+			calls.push({ url, method: init?.method ?? 'GET' });
+			return new Response(null, { status: 204 });
+		}) as typeof fetch;
+		try {
+			expect(await requestServerThumbnail('abc')).toBe(true);
+			expect(calls).toEqual([{ url: '/api/media/abc/thumbnail', method: 'POST' }]);
+		} finally {
+			globalThis.fetch = original;
+		}
+	});
+
+	test('requestServerThumbnail is false when POST fails', async () => {
+		const original = globalThis.fetch;
+		globalThis.fetch = (async () => new Response('nope', { status: 422 })) as typeof fetch;
+		try {
+			expect(await requestServerThumbnail('abc')).toBe(false);
+		} finally {
+			globalThis.fetch = original;
+		}
 	});
 
 	test('mapWithConcurrency runs workers in order', async () => {

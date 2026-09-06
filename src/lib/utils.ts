@@ -1,5 +1,8 @@
 import { appDefaults } from '$lib/config/defaults';
+import { isThumbnailByteSizeOk, thumbnailSeekCandidates } from '$lib/media/thumbnail';
 import { asPlainObject, ownString } from '$lib/parse';
+
+export { thumbnailSeekTime } from '$lib/media/thumbnail';
 
 /** Format bytes for display */
 export function formatBytes(bytes: number): string {
@@ -107,12 +110,90 @@ export function isImageFile(file: File): boolean {
 
 const PROBE_SIZE_LIMIT = 50 * 1024 * 1024; // skip heavy probe above 50MB
 
-/** Seek time for preview frames: 3% of the video's full duration. */
-export function thumbnailSeekTime(duration: number): number {
-	if (!Number.isFinite(duration) || duration <= 0) return 0;
-	const at = duration * 0.03;
-	// Stay slightly before the end for very short clips
-	return Math.min(at, Math.max(0, duration - 0.05));
+function jpegBlobFromVideoFrame(video: HTMLVideoElement, maxEdge: number): Promise<Blob | null> {
+	return new Promise((resolve) => {
+		try {
+			const w = video.videoWidth;
+			const h = video.videoHeight;
+			if (!w || !h) {
+				resolve(null);
+				return;
+			}
+			const scale = Math.min(1, maxEdge / Math.max(w, h));
+			const canvas = document.createElement('canvas');
+			canvas.width = Math.max(1, Math.round(w * scale));
+			canvas.height = Math.max(1, Math.round(h * scale));
+			const ctx = canvas.getContext('2d');
+			if (!ctx) {
+				resolve(null);
+				return;
+			}
+			ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+			canvas.toBlob(
+				(blob) => {
+					if (!blob || !isThumbnailByteSizeOk(blob.size)) {
+						resolve(null);
+						return;
+					}
+					resolve(blob);
+				},
+				'image/jpeg',
+				0.85
+			);
+		} catch {
+			resolve(null);
+		}
+	});
+}
+
+function seekVideoElement(video: HTMLVideoElement, time: number): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const target = Math.max(0, time);
+		if (Number.isFinite(video.currentTime) && Math.abs(video.currentTime - target) < 0.05) {
+			resolve();
+			return;
+		}
+		const onSeeked = () => done();
+		const onError = () => fail();
+		const timer = setTimeout(() => fail(), 4000);
+		const done = () => {
+			clearTimeout(timer);
+			video.removeEventListener('seeked', onSeeked);
+			video.removeEventListener('error', onError);
+			resolve();
+		};
+		const fail = () => {
+			clearTimeout(timer);
+			video.removeEventListener('seeked', onSeeked);
+			video.removeEventListener('error', onError);
+			reject(new Error('seek failed'));
+		};
+		video.addEventListener('seeked', onSeeked);
+		video.addEventListener('error', onError);
+		try {
+			video.currentTime = target;
+		} catch {
+			fail();
+		}
+	});
+}
+
+async function captureFromSeekCandidates(
+	video: HTMLVideoElement,
+	maxEdge: number
+): Promise<Blob | null> {
+	const times = thumbnailSeekCandidates(video.duration);
+	for (const time of times) {
+		try {
+			await seekVideoElement(video, time);
+			await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+			const blob = await jpegBlobFromVideoFrame(video, maxEdge);
+			if (blob) return blob;
+		} catch {
+			/* next seek */
+		}
+	}
+	return null;
 }
 
 export function probeImageDimensions(
@@ -232,55 +313,17 @@ export function captureVideoThumbnail(file: File, maxEdge = 480): Promise<Blob |
 		const finish = (blob: Blob | null) => {
 			if (settled) return;
 			settled = true;
+			clearTimeout(timer);
 			URL.revokeObjectURL(url);
 			resolve(blob);
 		};
 
-		const timer = setTimeout(() => finish(null), 8000);
-
-		const draw = () => {
-			try {
-				const w = video.videoWidth;
-				const h = video.videoHeight;
-				if (!w || !h) {
-					finish(null);
-					return;
-				}
-				const scale = Math.min(1, maxEdge / Math.max(w, h));
-				const canvas = document.createElement('canvas');
-				canvas.width = Math.max(1, Math.round(w * scale));
-				canvas.height = Math.max(1, Math.round(h * scale));
-				const ctx = canvas.getContext('2d');
-				if (!ctx) {
-					finish(null);
-					return;
-				}
-				ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-				canvas.toBlob((blob) => finish(blob), 'image/jpeg', 0.82);
-			} catch {
-				finish(null);
-			}
-		};
+		const timer = setTimeout(() => finish(null), 12000);
 
 		video.onloadeddata = () => {
-			const seekTo = thumbnailSeekTime(video.duration) || 0.1;
-			const onSeeked = () => {
-				clearTimeout(timer);
-				video.removeEventListener('seeked', onSeeked);
-				draw();
-			};
-			video.addEventListener('seeked', onSeeked);
-			try {
-				video.currentTime = seekTo;
-			} catch {
-				clearTimeout(timer);
-				draw();
-			}
+			void captureFromSeekCandidates(video, maxEdge).then(finish);
 		};
-		video.onerror = () => {
-			clearTimeout(timer);
-			finish(null);
-		};
+		video.onerror = () => finish(null);
 		video.src = url;
 	});
 }
@@ -309,61 +352,15 @@ export function captureVideoThumbnailFromUrl(
 
 		const timer = setTimeout(() => finish(null), timeoutMs);
 
-		const draw = () => {
-			try {
-				const w = video.videoWidth;
-				const h = video.videoHeight;
-				if (!w || !h) {
-					finish(null);
-					return;
-				}
-				const scale = Math.min(1, maxEdge / Math.max(w, h));
-				const canvas = document.createElement('canvas');
-				canvas.width = Math.max(1, Math.round(w * scale));
-				canvas.height = Math.max(1, Math.round(h * scale));
-				const ctx = canvas.getContext('2d');
-				if (!ctx) {
-					finish(null);
-					return;
-				}
-				ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-				canvas.toBlob(
-					(blob) => {
-						// Reject near-empty / solid-color captures (bad seek)
-						if (!blob || blob.size < 3000) {
-							finish(null);
-							return;
-						}
-						finish(blob);
-					},
-					'image/jpeg',
-					0.85
-				);
-			} catch {
-				finish(null);
-			}
-		};
-
-		const seekAndCapture = () => {
-			const seekTo = Math.max(0.25, thumbnailSeekTime(video.duration) || 0.5);
-			const onSeeked = () => {
-				video.removeEventListener('seeked', onSeeked);
-				requestAnimationFrame(() => requestAnimationFrame(draw));
-			};
-			video.addEventListener('seeked', onSeeked);
-			try {
-				video.currentTime = Math.min(seekTo, Math.max(0, (video.duration || seekTo) - 0.05));
-			} catch {
-				video.removeEventListener('seeked', onSeeked);
-				draw();
-			}
+		const run = () => {
+			void captureFromSeekCandidates(video, maxEdge).then(finish);
 		};
 
 		video.addEventListener(
 			'loadeddata',
 			() => {
-				if (video.readyState >= 2) seekAndCapture();
-				else video.addEventListener('canplay', seekAndCapture, { once: true });
+				if (video.readyState >= 2) run();
+				else video.addEventListener('canplay', run, { once: true });
 			},
 			{ once: true }
 		);
@@ -377,29 +374,7 @@ export function captureThumbnailFromVideoEl(
 	video: HTMLVideoElement,
 	maxEdge = 480
 ): Promise<Blob | null> {
-	return new Promise((resolve) => {
-		try {
-			const w = video.videoWidth;
-			const h = video.videoHeight;
-			if (!w || !h) {
-				resolve(null);
-				return;
-			}
-			const scale = Math.min(1, maxEdge / Math.max(w, h));
-			const canvas = document.createElement('canvas');
-			canvas.width = Math.max(1, Math.round(w * scale));
-			canvas.height = Math.max(1, Math.round(h * scale));
-			const ctx = canvas.getContext('2d');
-			if (!ctx) {
-				resolve(null);
-				return;
-			}
-			ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-			canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.82);
-		} catch {
-			resolve(null);
-		}
-	});
+	return jpegBlobFromVideoFrame(video, maxEdge);
 }
 
 export async function uploadVideoThumbnail(mediaId: string, blob: Blob): Promise<boolean> {
@@ -408,6 +383,12 @@ export async function uploadVideoThumbnail(mediaId: string, blob: Blob): Promise
 		headers: { 'Content-Type': 'image/jpeg' },
 		body: blob
 	});
+	return res.ok;
+}
+
+/** Ask the server to extract a JPEG with ffmpeg when the browser cannot decode the file. */
+export async function requestServerThumbnail(mediaId: string): Promise<boolean> {
+	const res = await fetch(`/api/media/${mediaId}/thumbnail`, { method: 'POST' });
 	return res.ok;
 }
 

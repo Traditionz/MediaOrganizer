@@ -17,10 +17,7 @@ export {
 } from './profileCookies';
 
 /** Cookie → profile row (uses SQLite getProfile). Locked profiles need unlock cookie. */
-export function resolveProfileFromCookies(
-	cookies: Cookies,
-	options: ResolveProfileOptions = {}
-) {
+export function resolveProfileFromCookies(cookies: Cookies, options: ResolveProfileOptions = {}) {
 	return resolveWithLookup(cookies, getProfile, options);
 }
 

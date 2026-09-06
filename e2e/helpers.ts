@@ -80,12 +80,13 @@ export async function clickMenuItem(page: Page, name: string | RegExp): Promise<
 }
 
 export async function createAlbum(page: Page, name: string): Promise<void> {
-	await page.getByRole('button', { name: 'New album' }).click();
-	const input = page.getByPlaceholder('Album name');
+	const input = page.getByRole('textbox', { name: 'New album name' });
 	await expect(input).toBeVisible();
 	await input.fill(name);
 	await input.press('Enter');
-	await expect(page.getByRole('button', { name: new RegExp(`^${escapeRegExp(name)}`) })).toBeVisible({
+	await expect(
+		page.getByRole('button', { name: new RegExp(`^${escapeRegExp(name)}`) })
+	).toBeVisible({
 		timeout: 10_000
 	});
 }

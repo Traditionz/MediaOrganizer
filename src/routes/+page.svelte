@@ -5,6 +5,7 @@
 		isSupportedMediaFile,
 		captureVideoThumbnail,
 		isVideoFile,
+		requestServerThumbnail,
 		uploadMediaFile,
 		uploadVideoThumbnail,
 		mapWithConcurrency,
@@ -150,6 +151,17 @@
 			throw new Error(body.message || 'Failed to create profile');
 		}
 		await invalidateAll();
+	}
+
+	function openMedia(item: MediaItem) {
+		ui.preview = item;
+	}
+
+	function applyRecordedView(id: string, count: number) {
+		library.setViewCount(id, count);
+		if (ui.preview?.id === id) {
+			ui.preview = { ...ui.preview, view_count: count };
+		}
 	}
 
 	function openUnlockModal(profile: { id: string; name: string; has_passcode: boolean }) {
@@ -1012,6 +1024,7 @@
 							void (async () => {
 								const thumb = await captureVideoThumbnail(file);
 								if (thumb) await uploadVideoThumbnail(mediaId, thumb);
+								else await requestServerThumbnail(mediaId);
 							})().catch(() => {
 								/* thumbnail backfill is optional */
 							});
@@ -1345,63 +1358,63 @@
 					onpointercancel={onContentPointerCancel}
 					oncontextmenu={openEmptyContextMenu}
 				>
-				{#if library.filteredMedia.length === 0}
-					<div
-						class="text-muted-foreground flex h-full min-h-64 flex-col items-center justify-center text-center"
-					>
-						<p class="text-foreground/80 text-lg font-medium">
-							{prefs.searchQuery.trim()
-								? 'No matching media'
-								: library.activeAlbum === 'trash'
-									? 'Trash is empty'
-									: library.activeAlbum === null
-										? 'No unassigned media'
-										: 'No media yet'}
-						</p>
-						<p class="mt-1 max-w-sm text-sm">
-							{#if prefs.searchQuery.trim()}
-								Try a different search, or clear the search box.
-							{:else if library.activeAlbum === 'trash'}
-								Deleted items stay here for 30 days, then are removed forever on page load.
-							{:else if library.activeAlbum === null}
-								Upload files here, or remove items from albums to see them in Unassigned.
-							{:else}
-								Drag and drop pictures or videos here, or use Upload. Double-click an item to expand
-								it.
-							{/if}
-						</p>
-					</div>
-				{:else if prefs.viewMode === 'grid'}
-					<MediaGrid
-						items={library.filteredMedia}
-						selectedIds={selection.selectedIds}
-						selectMode={selection.selectMode}
-						columns={prefs.columns}
-						onselect={handleSelect}
-						onopen={(item) => (ui.preview = item)}
-						oncontextmenu={openMediaContextMenu}
-					/>
-				{:else}
-					<MediaCollage
-						items={library.filteredMedia}
-						selectedIds={selection.selectedIds}
-						selectMode={selection.selectMode}
-						columns={prefs.columns}
-						onselect={handleSelect}
-						onopen={(item) => (ui.preview = item)}
-						oncontextmenu={openMediaContextMenu}
-					/>
-				{/if}
+					{#if library.filteredMedia.length === 0}
+						<div
+							class="text-muted-foreground flex h-full min-h-64 flex-col items-center justify-center text-center"
+						>
+							<p class="text-foreground/80 text-lg font-medium">
+								{prefs.searchQuery.trim()
+									? 'No matching media'
+									: library.activeAlbum === 'trash'
+										? 'Trash is empty'
+										: library.activeAlbum === null
+											? 'No unassigned media'
+											: 'No media yet'}
+							</p>
+							<p class="mt-1 max-w-sm text-sm">
+								{#if prefs.searchQuery.trim()}
+									Try a different search, or clear the search box.
+								{:else if library.activeAlbum === 'trash'}
+									Deleted items stay here for 30 days, then are removed forever on page load.
+								{:else if library.activeAlbum === null}
+									Upload files here, or remove items from albums to see them in Unassigned.
+								{:else}
+									Drag and drop pictures or videos here, or use Upload. Double-click an item to
+									expand it.
+								{/if}
+							</p>
+						</div>
+					{:else if prefs.viewMode === 'grid'}
+						<MediaGrid
+							items={library.filteredMedia}
+							selectedIds={selection.selectedIds}
+							selectMode={selection.selectMode}
+							columns={prefs.columns}
+							onselect={handleSelect}
+							onopen={openMedia}
+							oncontextmenu={openMediaContextMenu}
+						/>
+					{:else}
+						<MediaCollage
+							items={library.filteredMedia}
+							selectedIds={selection.selectedIds}
+							selectMode={selection.selectMode}
+							columns={prefs.columns}
+							onselect={handleSelect}
+							onopen={openMedia}
+							oncontextmenu={openMediaContextMenu}
+						/>
+					{/if}
 
-				{#if selection.selectionRect && selection.selecting}
-					<div
-						class="border-primary bg-primary/15 pointer-events-none absolute z-20 border"
-						style:left="{selection.selectionRect.x}px"
-						style:top="{selection.selectionRect.y}px"
-						style:width="{selection.selectionRect.w}px"
-						style:height="{selection.selectionRect.h}px"
-					></div>
-				{/if}
+					{#if selection.selectionRect && selection.selecting}
+						<div
+							class="border-primary bg-primary/15 pointer-events-none absolute z-20 border"
+							style:left="{selection.selectionRect.x}px"
+							style:top="{selection.selectionRect.y}px"
+							style:width="{selection.selectionRect.w}px"
+							style:height="{selection.selectionRect.h}px"
+						></div>
+					{/if}
 				</div>
 			</ScrollArea>
 		</main>
@@ -1436,7 +1449,11 @@
 
 	{#if ui.preview}
 		{#key ui.preview.id}
-			<MediaLightbox item={ui.preview} onclose={() => (ui.preview = null)} />
+			<MediaLightbox
+				item={ui.preview}
+				onclose={() => (ui.preview = null)}
+				onview={applyRecordedView}
+			/>
 		{/key}
 	{/if}
 

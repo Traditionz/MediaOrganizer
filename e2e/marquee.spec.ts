@@ -100,9 +100,7 @@ test.describe('marquee selection', () => {
 			steps: 10
 		});
 
-		await expect(library(page).locator('.pointer-events-none.absolute.z-20.border')).toHaveCount(
-			0
-		);
+		await expect(library(page).locator('.pointer-events-none.absolute.z-20.border')).toHaveCount(0);
 		await page.mouse.up();
 	});
 

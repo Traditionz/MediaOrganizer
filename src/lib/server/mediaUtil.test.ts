@@ -4,6 +4,7 @@ import {
 	formatMediaBytes,
 	normalizeCreated,
 	normalizeDuration,
+	normalizeViewCount,
 	parseContentLength
 } from '$lib/server/mediaUtil';
 
@@ -19,6 +20,15 @@ describe('mediaUtil', () => {
 		expect(normalizeDuration(-1)).toBeNull();
 		expect(normalizeDuration(null)).toBeNull();
 		expect(normalizeDuration(Number.NaN)).toBeNull();
+	});
+
+	test('normalizeViewCount floors non-negative integers', () => {
+		expect(normalizeViewCount(3)).toBe(3);
+		expect(normalizeViewCount(3.9)).toBe(3);
+		expect(normalizeViewCount(0)).toBe(0);
+		expect(normalizeViewCount(-4)).toBe(0);
+		expect(normalizeViewCount(null)).toBe(0);
+		expect(normalizeViewCount(Number.NaN)).toBe(0);
 	});
 
 	test('parseContentLength keeps positive lengths', () => {

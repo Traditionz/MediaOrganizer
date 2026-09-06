@@ -30,6 +30,8 @@ export interface MediaItem {
 	height: number | null;
 	/** Video duration in seconds when known */
 	duration: number | null;
+	/** Times this item was opened in the lightbox */
+	view_count: number;
 	created_at: string;
 	/** Soft-delete time; null/undefined = active */
 	deleted_at?: string | null;

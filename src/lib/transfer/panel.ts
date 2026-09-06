@@ -28,9 +28,7 @@ export function visibleFiles(
 }
 
 export function activeFile(job: TransferJob): TransferFile | undefined {
-	return orderedFiles(job).find(
-		(file) => file.status === 'uploading' || file.status === 'saving'
-	);
+	return orderedFiles(job).find((file) => file.status === 'uploading' || file.status === 'saving');
 }
 
 export function jobTitle(job: TransferJob): string {

@@ -63,7 +63,9 @@ test.describe('media library', () => {
 		await waitForUploadIdle(page);
 		await enterSelectMode(page);
 		await mediaCards(page).nth(0).click();
-		await mediaCards(page).nth(1).click({ modifiers: ['ControlOrMeta'] });
+		await mediaCards(page)
+			.nth(1)
+			.click({ modifiers: ['ControlOrMeta'] });
 		await expect(page.getByText('2 selected')).toBeVisible();
 		await page.getByRole('button', { name: 'Clear' }).click();
 		await expect(page.getByText(/\d+ selected/)).toHaveCount(0);
@@ -123,9 +125,36 @@ test.describe('media library', () => {
 		await mediaCards(page).first().dblclick();
 		const dialog = page.getByRole('dialog');
 		await expect(dialog).toBeVisible();
+		await expect(dialog.getByText(/0 views/)).toBeVisible();
+		await expect(dialog.getByText(/1 view/)).toBeVisible({ timeout: 15_000 });
 		await dialog.getByRole('button', { name: 'Close' }).click();
 		await expect(dialog).toBeHidden();
 		await expect(library(page)).toBeVisible();
+		await expect(mediaCards(page).first().getByLabel('1 view')).toBeVisible();
+	});
+
+	test('counts another view on reopen after threshold', async ({ page }) => {
+		await uploadFiles(page, fixtures.photoA);
+		await waitForUploadIdle(page);
+		await mediaCards(page).first().dblclick();
+		await expect(page.getByRole('dialog').getByText(/1 view/)).toBeVisible({ timeout: 15_000 });
+		await page.keyboard.press('Escape');
+		await mediaCards(page).first().dblclick();
+		await expect(page.getByRole('dialog').getByText(/1 view/)).toBeVisible();
+		await expect(page.getByRole('dialog').getByText(/2 views/)).toBeVisible({ timeout: 15_000 });
+		await page.keyboard.press('Escape');
+		await expect(mediaCards(page).first().getByLabel('2 views')).toBeVisible();
+	});
+
+	test('closing before 5% dwell does not count a view', async ({ page }) => {
+		await uploadFiles(page, fixtures.photoA);
+		await waitForUploadIdle(page);
+		await mediaCards(page).first().dblclick();
+		const dialog = page.getByRole('dialog');
+		await expect(dialog).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(dialog).toBeHidden();
+		await expect(mediaCards(page).first().getByLabel('0 views')).toBeVisible();
 	});
 
 	test('closes lightbox with Escape', async ({ page }) => {

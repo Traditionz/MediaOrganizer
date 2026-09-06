@@ -2,7 +2,12 @@ import { error } from '@sveltejs/kit';
 import { statSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import type { RequestHandler } from './$types';
-import { getThumbnailPath, openFileReadStream, saveThumbnail } from '$lib/server/media';
+import {
+	ensureVideoThumbnail,
+	getThumbnailPath,
+	openFileReadStream,
+	saveThumbnail
+} from '$lib/server/media';
 import { resolveProfileFromCookies } from '$lib/server/profileContext';
 
 export const GET: RequestHandler = async ({ params, cookies }) => {
@@ -13,7 +18,12 @@ export const GET: RequestHandler = async ({ params, cookies }) => {
 	if (!id) throw error(400, 'Invalid media id');
 
 	const thumb = getThumbnailPath(profile.id, id);
-	if (!thumb) throw error(404, 'Thumbnail not found');
+	if (!thumb) {
+		return new Response('Thumbnail not found', {
+			status: 404,
+			headers: { 'Cache-Control': 'no-store' }
+		});
+	}
 
 	const size = statSync(thumb.path).size;
 	const nodeStream = openFileReadStream(thumb.path);
@@ -28,6 +38,19 @@ export const GET: RequestHandler = async ({ params, cookies }) => {
 			'Cache-Control': 'private, max-age=86400'
 		}
 	});
+};
+
+export const POST: RequestHandler = async ({ params, cookies }) => {
+	const profile = resolveProfileFromCookies(cookies);
+	if (!profile) throw error(401, 'Select a profile first');
+
+	const id = params.id;
+	if (!id) throw error(400, 'Invalid media id');
+
+	const ok = await ensureVideoThumbnail(profile.id, id);
+	if (!ok) throw error(422, 'Could not generate thumbnail');
+
+	return new Response(null, { status: 204 });
 };
 
 export const PUT: RequestHandler = async ({ params, request, cookies }) => {

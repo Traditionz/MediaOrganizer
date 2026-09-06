@@ -27,7 +27,11 @@ function tieBreak(a: MediaItem, b: MediaItem): number {
 	return a.id.localeCompare(b.id);
 }
 
-function compareMedia(a: MediaItem, b: MediaItem, sortBy: Exclude<MediaSortBy, 'duration'>): number {
+function compareMedia(
+	a: MediaItem,
+	b: MediaItem,
+	sortBy: Exclude<MediaSortBy, 'duration'>
+): number {
 	switch (sortBy) {
 		case 'name':
 			return cmpStrings(a.original_name, b.original_name) || tieBreak(a, b);

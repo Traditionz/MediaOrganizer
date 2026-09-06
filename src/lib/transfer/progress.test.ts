@@ -5,7 +5,11 @@ import {
 	canCancelTransfer,
 	clampProgress
 } from '$lib/transfer/progress';
-import { makeTransferFile, makeTransferJob, resetTransferHelpers } from '../../../test/helpers/transfer';
+import {
+	makeTransferFile,
+	makeTransferJob,
+	resetTransferHelpers
+} from '../../../test/helpers/transfer';
 
 describe('transfer progress', () => {
 	beforeEach(() => resetTransferHelpers());

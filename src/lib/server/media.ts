@@ -12,14 +12,16 @@ import { Readable, Transform } from 'node:stream';
 import { and, count, eq, exists, inArray, isNotNull, isNull, notExists, sql } from 'drizzle-orm';
 import type { MediaItem, MediaType } from '$lib/types';
 import db, { filePathForKey, newId } from './db';
+import { listAlbums } from './albums';
 import { albumMedia, albums, media } from './schema';
 import type { MediaRow } from './schema';
-import { listAlbums } from './albums';
+import { isThumbnailByteSizeOk, thumbnailSeekCandidates } from '$lib/media/thumbnail';
 import {
 	copyFileName,
 	formatMediaBytes,
 	normalizeCreated,
 	normalizeDuration,
+	normalizeViewCount,
 	parseContentLength
 } from './mediaUtil';
 
@@ -28,11 +30,9 @@ export {
 	formatMediaBytes,
 	normalizeCreated,
 	normalizeDuration,
+	normalizeViewCount,
 	parseContentLength
 } from './mediaUtil';
-
-/** Reject near-empty / black-frame JPEGs from failed captures. */
-const MIN_THUMB_BYTES = 3000;
 
 /** Soft-deleted items older than this are purged on page load. */
 export const TRASH_RETENTION_DAYS = 30;
@@ -82,7 +82,7 @@ function isValidThumbnail(thumbnailKey: string | null | undefined): boolean {
 	const path = filePathForKey(thumbnailKey);
 	if (!existsSync(path)) return false;
 	try {
-		return statSync(path).size >= MIN_THUMB_BYTES;
+		return isThumbnailByteSizeOk(statSync(path).size);
 	} catch {
 		return false;
 	}
@@ -114,6 +114,7 @@ function mapRow(row: MediaRow, albumIds: string[], albumNames: string[]): MediaI
 		width: row.width,
 		height: row.height,
 		duration: normalizeDuration(row.duration),
+		view_count: normalizeViewCount(row.viewCount),
 		created_at: normalizeCreated(row.createdAt),
 		deleted_at: row.deletedAt ? normalizeCreated(row.deletedAt) : null,
 		has_thumbnail: isValidThumbnail(row.thumbnailKey)
@@ -263,7 +264,9 @@ function createVideoUploadProgress(name: string, totalBytes: number | null) {
 		lastAt = now;
 		if (pct != null) lastPctLogged = pct;
 		const sizePart =
-			total != null ? `${formatMediaBytes(loaded)} / ${formatMediaBytes(total)}` : formatMediaBytes(loaded);
+			total != null
+				? `${formatMediaBytes(loaded)} / ${formatMediaBytes(total)}`
+				: formatMediaBytes(loaded);
 		const pctPart = pct != null ? `${String(pct).padStart(3, ' ')}%` : '  ?%';
 		console.info(
 			`[media-organizer] video upload "${name}" ${pctPart}  ${sizePart}${done ? '  done' : ''}`
@@ -380,6 +383,7 @@ export async function insertMediaFromStream(
 		width: input.width,
 		height: input.height,
 		duration,
+		view_count: 0,
 		created_at: new Date().toISOString(),
 		has_thumbnail: false
 	};
@@ -397,6 +401,20 @@ export function updateMediaDuration(
 	const result = db
 		.update(media)
 		.set({ duration })
+		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+		.run();
+	if (result.changes === 0) throw new Error('Media not found');
+
+	const meta = getMediaMeta(profileId, id);
+	if (!meta) throw new Error('Media not found');
+	return meta;
+}
+
+/** Count a lightbox open for this media row. Returns the updated item. */
+export function recordMediaView(profileId: string, id: string): MediaItem {
+	const result = db
+		.update(media)
+		.set({ viewCount: sql`${media.viewCount} + 1` })
 		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
 		.run();
 	if (result.changes === 0) throw new Error('Media not found');
@@ -705,9 +723,7 @@ export function softDeleteMedia(profileId: string, ids: string[]): void {
 	if (!ids.length) return;
 	db.update(media)
 		.set({ deletedAt: sql`(datetime('now'))` })
-		.where(
-			and(eq(media.profileId, profileId), inArray(media.id, ids), isNull(media.deletedAt))
-		)
+		.where(and(eq(media.profileId, profileId), inArray(media.id, ids), isNull(media.deletedAt)))
 		.run();
 }
 
@@ -716,9 +732,7 @@ export function restoreMedia(profileId: string, ids: string[]): void {
 	if (!ids.length) return;
 	db.update(media)
 		.set({ deletedAt: null })
-		.where(
-			and(eq(media.profileId, profileId), inArray(media.id, ids), isNotNull(media.deletedAt))
-		)
+		.where(and(eq(media.profileId, profileId), inArray(media.id, ids), isNotNull(media.deletedAt)))
 		.run();
 }
 
@@ -726,10 +740,7 @@ export function restoreMedia(profileId: string, ids: string[]): void {
  * Permanently delete trash items older than `days` (default 30).
  * Call on page load.
  */
-export function purgeExpiredTrash(
-	profileId: string,
-	days: number = TRASH_RETENTION_DAYS
-): number {
+export function purgeExpiredTrash(profileId: string, days: number = TRASH_RETENTION_DAYS): number {
 	const retention = Math.max(1, Math.floor(days));
 	const rows = db
 		.select({ id: media.id })
@@ -792,7 +803,7 @@ export async function saveThumbnail(
 	await pipeline(nodeStream, createWriteStream(tmp));
 
 	const size = statSync(tmp).size;
-	if (size === 0 || size > 5 * 1024 * 1024) {
+	if (!isThumbnailByteSizeOk(size)) {
 		try {
 			unlinkSync(tmp);
 		} catch {
@@ -817,6 +828,61 @@ export async function saveThumbnail(
 		.set({ thumbnailKey: thumbKey })
 		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
 		.run();
+}
+
+/** Build a JPEG poster with ffmpeg when the browser cannot decode the file. */
+export async function ensureVideoThumbnail(profileId: string, id: string): Promise<boolean> {
+	if (getThumbnailPath(profileId, id)) return true;
+
+	const row = db
+		.select({
+			id: media.id,
+			storageKey: media.storageKey,
+			mediaType: media.mediaType,
+			duration: media.duration
+		})
+		.from(media)
+		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+		.get();
+	if (!row || row.mediaType !== 'video') return false;
+
+	const input = filePathForKey(row.storageKey);
+	if (!existsSync(input)) return false;
+
+	const { probeVideoDuration } = await import('./compress');
+	const { extractJpegFrame } = await import('./videoThumb');
+	const duration = normalizeDuration(row.duration) ?? (await probeVideoDuration(input)) ?? 0;
+	const thumbKey = `${id}-thumb`;
+	const dest = filePathForKey(thumbKey);
+	const tmp = `${dest}.tmp`;
+
+	for (const seek of thumbnailSeekCandidates(duration)) {
+		try {
+			await extractJpegFrame(input, tmp, seek);
+			if (!existsSync(tmp) || !isThumbnailByteSizeOk(statSync(tmp).size)) {
+				try {
+					if (existsSync(tmp)) unlinkSync(tmp);
+				} catch {
+					/* ignore */
+				}
+				continue;
+			}
+			if (existsSync(dest)) unlinkSync(dest);
+			renameSync(tmp, dest);
+			db.update(media)
+				.set({ thumbnailKey: thumbKey })
+				.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+				.run();
+			return true;
+		} catch {
+			try {
+				if (existsSync(tmp)) unlinkSync(tmp);
+			} catch {
+				/* ignore */
+			}
+		}
+	}
+	return false;
 }
 
 export function countAllMedia(profileId: string): number {

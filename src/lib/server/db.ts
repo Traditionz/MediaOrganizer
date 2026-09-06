@@ -4,10 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import * as schema from './schema';
 import { asPlainObject, type JsonObject, type JsonValue } from '$lib/parse';
-import {
-	DATA_DIR,
-	FILES_DIR
-} from './dbUtil';
+import { DATA_DIR, FILES_DIR } from './dbUtil';
 
 export {
 	DATA_DIR,
@@ -83,6 +80,7 @@ function createSchema() {
 			storage_key TEXT NOT NULL UNIQUE,
 			thumbnail_key TEXT,
 			duration REAL,
+			view_count INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		);
 
@@ -113,9 +111,10 @@ function createSchema() {
 	if (mediaCols.size > 0 && !mediaCols.has('deleted_at')) {
 		sqlite.exec('ALTER TABLE media ADD COLUMN deleted_at TEXT');
 	}
-	sqlite.exec(
-		'CREATE INDEX IF NOT EXISTS idx_media_deleted ON media(profile_id, deleted_at)'
-	);
+	if (mediaCols.size > 0 && !mediaCols.has('view_count')) {
+		sqlite.exec('ALTER TABLE media ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0');
+	}
+	sqlite.exec('CREATE INDEX IF NOT EXISTS idx_media_deleted ON media(profile_id, deleted_at)');
 
 	const profileCols = tableColumns('profiles');
 	if (profileCols.size > 0 && !profileCols.has('passcode_hash')) {

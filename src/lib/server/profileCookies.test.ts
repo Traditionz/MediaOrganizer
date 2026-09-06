@@ -10,8 +10,10 @@ import type { Profile } from '$lib/types';
 
 function fakeCookies(initial: Record<string, string> = {}) {
 	const store = new Map(Object.entries(initial));
-	const ops: { set: { name: string; value: string; opts: unknown }[]; delete: { name: string; opts: unknown }[] } =
-		{ set: [], delete: [] };
+	const ops: {
+		set: { name: string; value: string; opts: unknown }[];
+		delete: { name: string; opts: unknown }[];
+	} = { set: [], delete: [] };
 	const cookies = {
 		get(name: string) {
 			return store.get(name);
@@ -50,9 +52,9 @@ describe('profileCookies', () => {
 
 	test('open profile resolves from profile cookie alone', () => {
 		const { cookies } = fakeCookies({ [PROFILE_COOKIE]: 'p1' });
-		expect(
-			resolveProfileFromCookies(cookies, (id) => (id === 'p1' ? openProfile : null))
-		).toEqual(openProfile);
+		expect(resolveProfileFromCookies(cookies, (id) => (id === 'p1' ? openProfile : null))).toEqual(
+			openProfile
+		);
 	});
 
 	test('locked profile requires unlock cookie', () => {

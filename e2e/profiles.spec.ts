@@ -115,7 +115,9 @@ test.describe('profiles', () => {
 
 		await openProfileMenu(page, first);
 		await clickMenuItem(page, 'New profile…');
-		const nameInput = page.locator('[data-slot="dropdown-menu-content"] input, [role="menu"] input').first();
+		const nameInput = page
+			.locator('[data-slot="dropdown-menu-content"] input, [role="menu"] input')
+			.first();
 		await nameInput.fill(second);
 		await nameInput.press('Enter');
 

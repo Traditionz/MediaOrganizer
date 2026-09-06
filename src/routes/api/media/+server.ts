@@ -13,6 +13,7 @@ import {
 	removeMediaFromAlbum,
 	renameMedia,
 	restoreMedia,
+	recordMediaView,
 	softDeleteMedia,
 	updateMediaDuration
 } from '$lib/server/media';
@@ -239,6 +240,19 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 			const message = err instanceof Error ? err.message : 'Failed to set duration';
 			if (message.includes('not found')) throw error(404, message);
 			if (message.includes('Duration')) throw error(400, message);
+			throw error(500, message);
+		}
+	}
+
+	if (action === 'record-view') {
+		const id = body ? (ownString(body, 'id') ?? '') : '';
+		if (!id) throw error(400, 'Media id is required');
+		try {
+			const item = recordMediaView(profile.id, id);
+			return json({ ok: true, id: item.id, view_count: item.view_count });
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'Failed to record view';
+			if (message.includes('not found')) throw error(404, message);
 			throw error(500, message);
 		}
 	}

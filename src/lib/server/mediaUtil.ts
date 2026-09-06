@@ -10,6 +10,12 @@ export function normalizeDuration(value: number | null | undefined): number | nu
 	return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+export function normalizeViewCount(value: number | null | undefined): number {
+	const n = Number(value);
+	if (!Number.isFinite(n) || n < 0) return 0;
+	return Math.floor(n);
+}
+
 export function parseContentLength(value: number | null | undefined): number | null {
 	if (value == null) return null;
 	return Number.isFinite(value) && value > 0 ? value : null;

@@ -4,9 +4,7 @@ import { filePathForKey, isUniqueConstraintError, newId } from '$lib/server/dbUt
 describe('server db helpers', () => {
 	test('newId returns uuid strings', () => {
 		const id = newId();
-		expect(id).toMatch(
-			/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-		);
+		expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 		expect(newId()).not.toBe(id);
 	});
 

@@ -52,6 +52,7 @@ export const media = sqliteTable(
 		storageKey: text('storage_key').notNull().unique(),
 		thumbnailKey: text('thumbnail_key'),
 		duration: real('duration'),
+		viewCount: integer('view_count').notNull().default(0),
 		createdAt: text('created_at')
 			.notNull()
 			.default(sql`(datetime('now'))`),

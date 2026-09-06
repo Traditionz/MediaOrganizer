@@ -21,10 +21,7 @@ export type FileProgressPatch = Partial<
 	Pick<TransferFile, 'progress' | 'loaded' | 'total' | 'status' | 'error'>
 >;
 
-export function applyFileProgress(
-	file: TransferFile,
-	patch: FileProgressPatch
-): TransferFile {
+export function applyFileProgress(file: TransferFile, patch: FileProgressPatch): TransferFile {
 	if (file.status === 'cancelled') return file;
 	const next = { ...file };
 	if (patch.progress != null && Number.isFinite(patch.progress)) {

@@ -1,6 +1,9 @@
 import type { Album, LibraryAlbumFilter, MediaItem, Profile } from '$lib/types';
 import { defaultActiveAlbum } from '$lib/config/defaults';
-import { filterMediaItems, pasteTargetAlbumId as resolvePasteTargetAlbumId } from '$lib/media/filter.js';
+import {
+	filterMediaItems,
+	pasteTargetAlbumId as resolvePasteTargetAlbumId
+} from '$lib/media/filter.js';
 import { sortMediaItems } from '$lib/media/sort.js';
 import type { PreferencesState } from './preferences.svelte';
 
@@ -86,6 +89,13 @@ export class LibraryState {
 		if (!Number.isFinite(duration) || duration <= 0) return;
 		this.media = this.media.map((item) => (item.id === id ? { ...item, duration } : item));
 		this.trash = this.trash.map((item) => (item.id === id ? { ...item, duration } : item));
+	}
+
+	setViewCount(id: string, viewCount: number) {
+		if (!Number.isFinite(viewCount) || viewCount < 0) return;
+		const view_count = Math.floor(viewCount);
+		this.media = this.media.map((item) => (item.id === id ? { ...item, view_count } : item));
+		this.trash = this.trash.map((item) => (item.id === id ? { ...item, view_count } : item));
 	}
 
 	async refresh() {

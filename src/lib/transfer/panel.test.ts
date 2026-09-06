@@ -10,7 +10,11 @@ import {
 	visibleFiles
 } from '$lib/transfer/panel';
 import { formatBytes } from '$lib/utils';
-import { makeTransferFile, makeTransferJob, resetTransferHelpers } from '../../../test/helpers/transfer';
+import {
+	makeTransferFile,
+	makeTransferJob,
+	resetTransferHelpers
+} from '../../../test/helpers/transfer';
 
 describe('transfer panel', () => {
 	beforeEach(() => resetTransferHelpers());

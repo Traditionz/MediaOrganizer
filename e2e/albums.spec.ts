@@ -23,6 +23,9 @@ test.describe('albums', () => {
 
 	test('shows empty albums state', async ({ page }) => {
 		await expect(page.getByText('No albums yet.')).toBeVisible();
+		await expect(page.getByRole('textbox', { name: 'New album name' })).toBeVisible();
+		await expect(page.getByRole('searchbox', { name: 'Search albums' })).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Add album' })).toBeVisible();
 	});
 
 	test('creates album and selects it', async ({ page }) => {
@@ -35,11 +38,10 @@ test.describe('albums', () => {
 	});
 
 	test('cancels album create with Escape', async ({ page }) => {
-		await page.getByRole('button', { name: 'New album' }).click();
-		const input = page.getByPlaceholder('Album name');
+		const input = page.getByRole('textbox', { name: 'New album name' });
 		await input.fill('WillCancel');
 		await input.press('Escape');
-		await expect(input).toBeHidden();
+		await expect(input).toHaveValue('');
 		await expect(page.getByRole('button', { name: /^WillCancel/ })).toHaveCount(0);
 	});
 
@@ -52,6 +54,24 @@ test.describe('albums', () => {
 		await expect(page.getByRole('button', { name: /Beta/ })).toHaveCount(0);
 		await search.fill('zzzz-no-match');
 		await expect(page.getByText('No albums match your search.')).toBeVisible();
+	});
+
+	test('new album name filters list and warns on exact duplicate', async ({ page }) => {
+		const album = uniqueName('Vacation');
+		await createAlbum(page, album);
+		const input = page.getByRole('textbox', { name: 'New album name' });
+		await expect(input).toBeVisible();
+		await expect(page.getByRole('searchbox', { name: 'Search albums' })).toBeVisible();
+
+		const stem = album.slice(0, 4);
+		await input.fill(stem);
+		await expect(page.getByRole('button', { name: new RegExp(`^${album}`) })).toBeVisible();
+
+		await input.fill(album);
+		await expect(page.getByText(`“${album}” already exists.`)).toBeVisible();
+		await input.press('Enter');
+		await expect(input).toBeVisible();
+		await expect(page.getByRole('button', { name: new RegExp(`^${album}`) })).toHaveCount(1);
 	});
 
 	test('renames album from context menu', async ({ page }) => {

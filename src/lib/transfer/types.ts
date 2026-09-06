@@ -1,12 +1,6 @@
 export type TransferKind = 'upload' | 'compress';
 
-export type TransferFileStatus =
-	| 'queued'
-	| 'uploading'
-	| 'saving'
-	| 'done'
-	| 'error'
-	| 'cancelled';
+export type TransferFileStatus = 'queued' | 'uploading' | 'saving' | 'done' | 'error' | 'cancelled';
 
 export type TransferFileKind = 'video' | 'image' | 'other';
 

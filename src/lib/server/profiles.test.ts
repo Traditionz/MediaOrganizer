@@ -1,9 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-	assertPasscodeFormat,
-	hashPasscode,
-	verifyPasscode
-} from '$lib/server/passcode';
+import { assertPasscodeFormat, hashPasscode, verifyPasscode } from '$lib/server/passcode';
 
 describe('profile passcode helpers', () => {
 	test('hashPasscode and verifyPasscode round-trip', () => {
