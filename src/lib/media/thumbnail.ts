@@ -5,10 +5,10 @@ export function isThumbnailByteSizeOk(size: number): boolean {
 	return Number.isFinite(size) && size >= MIN_THUMBNAIL_BYTES && size <= MAX_THUMBNAIL_BYTES;
 }
 
-/** Seek time for preview frames: 3% of the video's full duration. */
+/** Seek time for preview frames: 4% of the video's full duration. */
 export function thumbnailSeekTime(duration: number): number {
 	if (!Number.isFinite(duration) || duration <= 0) return 0;
-	const at = duration * 0.03;
+	const at = duration * 0.04;
 	return Math.min(at, Math.max(0, duration - 0.05));
 }
 

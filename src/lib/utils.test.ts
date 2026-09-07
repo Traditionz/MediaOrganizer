@@ -53,10 +53,10 @@ describe('utils', () => {
 		expect(clamped.layouts).toHaveLength(1);
 	});
 
-	test('thumbnailSeekTime uses 3% of duration and clamps short clips', () => {
-		expect(thumbnailSeekTime(100)).toBe(3);
+	test('thumbnailSeekTime uses 4% of duration and clamps short clips', () => {
+		expect(thumbnailSeekTime(100)).toBe(4);
 		expect(thumbnailSeekTime(0)).toBe(0);
-		expect(thumbnailSeekTime(1)).toBe(0.03);
+		expect(thumbnailSeekTime(1)).toBe(0.04);
 		expect(thumbnailSeekTime(0.04)).toBe(0);
 	});
 
