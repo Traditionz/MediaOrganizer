@@ -1,10 +1,12 @@
 <script lang="ts">
 	import type { MediaItem } from '$lib/types';
+	import Eye from '@lucide/svelte/icons/eye';
 	import Play from '@lucide/svelte/icons/play';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Spinner } from '$lib/components/ui/spinner/index.js';
 	import { beginMediaDrag, endInternalDrag, setCompactMediaDragImage } from '$lib/dragSession';
+	import { formatViewCount } from '$lib/media/views';
 	import { getAppState } from '$lib/state';
 	import { enqueueThumbnailJob } from '$lib/thumbnailQueue';
 	import {
@@ -13,6 +15,7 @@
 		formatDuration,
 		persistMediaDuration,
 		probeVideoDurationFromUrl,
+		requestServerThumbnail,
 		uploadVideoThumbnail
 	} from '$lib/utils';
 
@@ -43,7 +46,8 @@
 	}: Props = $props();
 
 	const src = $derived(`/api/media/${item.id}`);
-	const thumbSrc = $derived(`/api/media/${item.id}/thumbnail`);
+	let thumbEpoch = $state(0);
+	const thumbSrc = $derived(`/api/media/${item.id}/thumbnail?v=${thumbEpoch}`);
 	const albumLabel = $derived.by(() => {
 		const names = item.album_names;
 		if (!names?.length) return null;
@@ -67,6 +71,8 @@
 	let generatingThumbnail = $state(false);
 	let thumbStarted = false;
 	let durationStarted = false;
+	let posterErrors = 0;
+	const MAX_POSTER_ERRORS = 2;
 
 	const showPoster = $derived(Boolean(item.has_thumbnail) || localThumb);
 
@@ -103,10 +109,12 @@
 		enqueueThumbnailJob(async () => {
 			try {
 				const blob = await captureVideoThumbnailFromUrl(`/api/media/${mediaId}`);
-				if (!blob) return;
-				const ok = await uploadVideoThumbnail(mediaId, blob);
+				let ok = false;
+				if (blob) ok = await uploadVideoThumbnail(mediaId, blob);
+				if (!ok) ok = await requestServerThumbnail(mediaId);
 				if (!ok) return;
 				localThumb = true;
+				thumbEpoch += 1;
 				try {
 					getAppState().library.markHasThumbnail(mediaId);
 				} catch {
@@ -145,8 +153,11 @@
 	}
 
 	function onPosterError() {
+		if (posterErrors >= MAX_POSTER_ERRORS) return;
+		posterErrors += 1;
 		localThumb = false;
 		thumbStarted = false;
+		thumbEpoch += 1;
 		startLazyThumbnail(true);
 	}
 
@@ -266,6 +277,15 @@
 			</div>
 		</div>
 	{/if}
+
+	<span
+		class="pointer-events-none absolute top-2 right-2 z-10 flex items-center gap-0.5 rounded bg-black/75 px-1.5 py-0.5 text-[11px] leading-none font-medium text-white tabular-nums"
+		title={formatViewCount(item.view_count)}
+		aria-label={formatViewCount(item.view_count)}
+	>
+		<Eye class="size-3" />
+		{formatViewCount(item.view_count)}
+	</span>
 
 	{#if showCheckbox}
 		<div class="absolute top-2 left-2 z-10">

@@ -1,18 +1,28 @@
 import { describe, expect, test } from 'bun:test';
-import { filePathForKey, isUniqueConstraintError, newId } from '$lib/server/dbUtil';
+import {
+	filePathForKey,
+	isUniqueConstraintError,
+	newId,
+	profileFilesDir,
+	tmpPathForKey
+} from '$lib/server/dbUtil';
 
 describe('server db helpers', () => {
 	test('newId returns uuid strings', () => {
 		const id = newId();
-		expect(id).toMatch(
-			/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-		);
+		expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 		expect(newId()).not.toBe(id);
 	});
 
-	test('filePathForKey joins files dir', () => {
-		expect(filePathForKey('abc.jpg')).toContain('abc.jpg');
-		expect(filePathForKey('abc.jpg')).toContain('files');
+	test('filePathForKey joins profile files dir', () => {
+		const path = filePathForKey('pid', 'Vacation.mp4');
+		expect(path).toContain('Vacation.mp4');
+		expect(path).toContain(profileFilesDir('pid'));
+	});
+
+	test('tmpPathForKey joins profile tmp dir', () => {
+		expect(tmpPathForKey('pid', 'x.tmp')).toContain('tmp');
+		expect(tmpPathForKey('pid', 'x.tmp')).toContain('x.tmp');
 	});
 
 	test('isUniqueConstraintError detects UNIQUE in message', () => {

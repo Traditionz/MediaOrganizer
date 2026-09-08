@@ -3,31 +3,19 @@ import { listProfiles } from '$lib/server/profiles';
 import { resolveProfileFromCookies } from '$lib/server/profileContext';
 import { listAlbums } from '$lib/server/albums';
 import { countAllMedia, listMedia, purgeExpiredTrash } from '$lib/server/media';
+import { loadHomePageData } from '$lib/server/homePageLoad';
 
-export const load: PageServerLoad = async ({ cookies }) => {
-	const profiles = listProfiles();
-	const activeProfile = resolveProfileFromCookies(cookies);
-
-	if (!activeProfile) {
-		return {
-			profiles,
-			activeProfile: null,
-			albums: [],
-			media: [],
-			trash: [],
-			totalCount: 0
-		};
-	}
-
-	// Permanently remove trash items older than 30 days on page load
-	purgeExpiredTrash(activeProfile.id);
-
-	return {
-		profiles,
-		activeProfile,
-		albums: listAlbums(activeProfile.id),
-		media: listMedia(activeProfile.id),
-		trash: listMedia(activeProfile.id, { trash: true }),
-		totalCount: countAllMedia(activeProfile.id)
-	};
+export const load: PageServerLoad = async ({ cookies, isDataRequest }) => {
+	return loadHomePageData({
+		listProfiles,
+		resolveActiveProfile: () =>
+			resolveProfileFromCookies(cookies, {
+				// Full document loads always require a fresh passcode for locked profiles.
+				allowPasscodeUnlock: isDataRequest
+			}),
+		listAlbums,
+		listMedia,
+		countAllMedia,
+		purgeExpiredTrash
+	});
 };

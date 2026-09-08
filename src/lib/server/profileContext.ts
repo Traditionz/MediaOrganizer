@@ -1,24 +1,33 @@
 import type { Cookies } from '@sveltejs/kit';
-import { PROFILE_COOKIE } from './db';
 import { getProfile } from './profiles';
+import {
+	clearProfileCookie as clearCookie,
+	resolveProfileFromCookies as resolveWithLookup,
+	setProfileCookie as setCookie,
+	type ResolveProfileOptions
+} from './profileCookies';
 import type { Profile } from '$lib/types';
 
-export function resolveProfileFromCookies(cookies: Cookies): Profile | null {
-	const id = cookies.get(PROFILE_COOKIE);
-	if (!id) return null;
-	return getProfile(id);
+export type { ProfileLookup, ResolveProfileOptions } from './profileCookies';
+export {
+	clearProfileCookie as clearProfileCookiePure,
+	resolveProfileFromCookies as resolveProfileFromCookiesWithLookup,
+	setProfileCookie as setProfileCookiePure,
+	PROFILE_SESSION_COOKIE_OPTS
+} from './profileCookies';
+
+/** Cookie → profile row (uses SQLite getProfile). Locked profiles need unlock cookie. */
+export function resolveProfileFromCookies(cookies: Cookies, options: ResolveProfileOptions = {}) {
+	return resolveWithLookup(cookies, getProfile, options);
 }
 
-export function setProfileCookie(cookies: Cookies, profileId: string): void {
-	cookies.set(PROFILE_COOKIE, profileId, {
-		path: '/',
-		httpOnly: true,
-		sameSite: 'lax',
-		secure: false,
-		maxAge: 60 * 60 * 24 * 365
-	});
+export function setProfileCookie(
+	cookies: Cookies,
+	profile: Pick<Profile, 'id' | 'has_passcode'>
+): void {
+	setCookie(cookies, profile);
 }
 
 export function clearProfileCookie(cookies: Cookies): void {
-	cookies.delete(PROFILE_COOKIE, { path: '/' });
+	clearCookie(cookies);
 }

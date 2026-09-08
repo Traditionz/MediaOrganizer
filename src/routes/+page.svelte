@@ -5,6 +5,7 @@
 		isSupportedMediaFile,
 		captureVideoThumbnail,
 		isVideoFile,
+		requestServerThumbnail,
 		uploadMediaFile,
 		uploadVideoThumbnail,
 		mapWithConcurrency,
@@ -28,6 +29,13 @@
 	import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import { isInternalDragActive } from '$lib/dragSession';
+	import {
+		applyOsFileDragLeave,
+		nextOsFileDragEnterDepth,
+		resetOsFileDragDepth,
+		shouldShowOsFileDragOverlay,
+		type DragZoneHost
+	} from '$lib/dragUpload';
 	import { asFiniteNumber, asPlainObject, eventTargetHtml, own, ownString } from '$lib/parse';
 	import {
 		cardsInSelectionBox,
@@ -35,6 +43,7 @@
 		isTinyRect,
 		pointerPointInElement
 	} from '$lib/selection/geometry.js';
+	import { applyMarqueeHits, marqueeSelectionAnchor } from '$lib/selection/marquee.js';
 	import { fade } from 'svelte/transition';
 	import { createAppState, setAppState } from '$lib/state';
 
@@ -49,6 +58,8 @@
 
 	let durationBackfilledForProfile: string | null = null;
 	let selectionSurface = $state<HTMLElement | null>(null);
+	let marqueeAdditive = false;
+	let marqueeBaseIds: string[] = [];
 
 	/** Keep marquee hit target at least viewport-tall so empty space below rows is draggable. */
 	$effect(() => {
@@ -99,6 +110,23 @@
 		}
 	});
 
+	$effect(() => {
+		if (!library.activeProfile?.has_passcode) return;
+		const lock = () => {
+			void fetch('/api/profiles/lock', {
+				method: 'POST',
+				keepalive: true,
+				credentials: 'same-origin'
+			});
+		};
+		window.addEventListener('pagehide', lock);
+		window.addEventListener('beforeunload', lock);
+		return () => {
+			window.removeEventListener('pagehide', lock);
+			window.removeEventListener('beforeunload', lock);
+		};
+	});
+
 	async function selectProfile(id: string, passcode = '') {
 		const res = await fetch('/api/profiles/select', {
 			method: 'POST',
@@ -123,6 +151,17 @@
 			throw new Error(body.message || 'Failed to create profile');
 		}
 		await invalidateAll();
+	}
+
+	function openMedia(item: MediaItem) {
+		ui.preview = item;
+	}
+
+	function applyRecordedView(id: string, count: number) {
+		library.setViewCount(id, count);
+		if (ui.preview?.id === id) {
+			ui.preview = { ...ui.preview, view_count: count };
+		}
 	}
 
 	function openUnlockModal(profile: { id: string; name: string; has_passcode: boolean }) {
@@ -985,6 +1024,7 @@
 							void (async () => {
 								const thumb = await captureVideoThumbnail(file);
 								if (thumb) await uploadVideoThumbnail(mediaId, thumb);
+								else await requestServerThumbnail(mediaId);
 							})().catch(() => {
 								/* thumbnail backfill is optional */
 							});
@@ -1041,18 +1081,34 @@
 		}
 	}
 
+	let osFileDragDepth = 0;
+
+	function clearOsFileDragOverlay() {
+		osFileDragDepth = resetOsFileDragDepth();
+		ui.dragOver = false;
+	}
+
+	function dragZoneHost(target: EventTarget | null): DragZoneHost | null {
+		if (target instanceof Node) {
+			return target;
+		}
+		return null;
+	}
+
 	function onDragEnter(e: DragEvent) {
 		if (hasInternalDrag(e.dataTransfer)) {
-			ui.dragOver = false;
+			clearOsFileDragOverlay();
 			return;
 		}
 		e.preventDefault();
-		if (e.dataTransfer?.types.includes('Files')) ui.dragOver = true;
+		if (!e.dataTransfer?.types.includes('Files')) return;
+		osFileDragDepth = nextOsFileDragEnterDepth(osFileDragDepth);
+		ui.dragOver = shouldShowOsFileDragOverlay(osFileDragDepth);
 	}
 
 	function onDragOver(e: DragEvent) {
 		if (hasInternalDrag(e.dataTransfer)) {
-			ui.dragOver = false;
+			clearOsFileDragOverlay();
 			return;
 		}
 		e.preventDefault();
@@ -1060,19 +1116,34 @@
 	}
 
 	function onDragLeave(e: DragEvent) {
-		if (e.currentTarget === e.target) ui.dragOver = false;
+		if (hasInternalDrag(e.dataTransfer)) return;
+		const result = applyOsFileDragLeave(
+			osFileDragDepth,
+			dragZoneHost(e.currentTarget),
+			e.relatedTarget
+		);
+		osFileDragDepth = result.depth;
+		if (result.clear) ui.dragOver = false;
 	}
 
 	async function onDrop(e: DragEvent) {
 		if (hasInternalDrag(e.dataTransfer)) {
-			ui.dragOver = false;
+			clearOsFileDragOverlay();
 			return;
 		}
 		e.preventDefault();
-		ui.dragOver = false;
+		clearOsFileDragOverlay();
 		if (e.dataTransfer?.files?.length) {
 			await uploadFiles(e.dataTransfer.files);
 		}
+	}
+
+	function onWindowDragEnd() {
+		clearOsFileDragOverlay();
+	}
+
+	function onDocumentDrop() {
+		clearOsFileDragOverlay();
 	}
 
 	function onContentPointerDown(e: PointerEvent) {
@@ -1087,10 +1158,34 @@
 
 		e.preventDefault();
 		const point = pointerPointInElement(e, surface);
+		marqueeAdditive = e.ctrlKey || e.metaKey;
+		marqueeBaseIds = marqueeAdditive ? [...selection.selectedIds] : [];
 		selection.selecting = true;
 		selection.selStart = point;
 		selection.selCurrent = point;
 		surface.setPointerCapture(e.pointerId);
+	}
+
+	function syncMarqueeSelection(surface: HTMLElement) {
+		const box = computeSelectionRect(true, selection.selStart, selection.selCurrent);
+		if (!box || isTinyRect(box.w, box.h)) {
+			if (!marqueeAdditive) {
+				selection.selectedIds.clear();
+				selection.selectionAnchor = null;
+				selection.selectMode = false;
+			}
+			return;
+		}
+
+		const hits = cardsInSelectionBox(surface, box);
+		applyMarqueeHits(selection.selectedIds, hits, {
+			additive: marqueeAdditive,
+			baseIds: marqueeBaseIds
+		});
+		if (hits.length > 0 || (marqueeAdditive && marqueeBaseIds.length > 0)) {
+			selection.selectMode = true;
+		}
+		selection.selectionAnchor = marqueeSelectionAnchor(hits, selection.selectionAnchor);
 	}
 
 	function onContentPointerMove(e: PointerEvent) {
@@ -1098,6 +1193,7 @@
 		const surface = e.currentTarget;
 		if (!(surface instanceof HTMLElement)) return;
 		selection.selCurrent = pointerPointInElement(e, surface);
+		syncMarqueeSelection(surface);
 	}
 
 	function finishMarqueeSelection(e: PointerEvent) {
@@ -1120,19 +1216,12 @@
 			if (!(e.ctrlKey || e.metaKey)) {
 				selection.selectedIds.clear();
 				selection.selectionAnchor = null;
+				selection.selectMode = false;
 			}
 			return;
 		}
 
-		const ids = cardsInSelectionBox(surface, box);
-		if (!(e.ctrlKey || e.metaKey)) selection.selectedIds.clear();
-
-		for (const id of ids) {
-			selection.selectedIds.add(id);
-			if (!selection.selectionAnchor) selection.selectionAnchor = id;
-		}
-
-		if (ids.length > 0) selection.selectMode = true;
+		syncMarqueeSelection(surface);
 	}
 
 	function onContentPointerUp(e: PointerEvent) {
@@ -1159,7 +1248,8 @@
 	<title>Media Organizer</title>
 </svelte:head>
 
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} ondragend={onWindowDragEnd} />
+<svelte:document ondrop={onDocumentDrop} />
 
 {#if !library.activeProfile}
 	<ProfileGate profiles={library.profiles} onselect={selectProfile} oncreate={createProfile} />
@@ -1200,6 +1290,8 @@
 				dateFrom={prefs.dateFrom}
 				dateTo={prefs.dateTo}
 				searchQuery={prefs.searchQuery}
+				sortBy={prefs.sortBy}
+				sortDir={prefs.sortDir}
 				columns={prefs.columns}
 				selectMode={selection.selectMode}
 				selectedCount={selection.selectedIds.size}
@@ -1214,6 +1306,8 @@
 				ondateFrom={(v) => prefs.setDateFrom(v)}
 				ondateTo={(v) => prefs.setDateTo(v)}
 				onsearchQuery={(v) => prefs.setSearchQuery(v)}
+				onsortBy={(v) => prefs.setSortBy(v)}
+				ontoggleSortDir={() => prefs.toggleSortDir()}
 				oncolumns={(v) => prefs.setColumns(v)}
 				onwarnDuplicateUploads={(v) => prefs.setWarnDuplicateUploads(v)}
 				ontoggleSelect={() => selection.toggleSelectMode()}
@@ -1264,63 +1358,63 @@
 					onpointercancel={onContentPointerCancel}
 					oncontextmenu={openEmptyContextMenu}
 				>
-				{#if library.filteredMedia.length === 0}
-					<div
-						class="text-muted-foreground flex h-full min-h-64 flex-col items-center justify-center text-center"
-					>
-						<p class="text-foreground/80 text-lg font-medium">
-							{prefs.searchQuery.trim()
-								? 'No matching media'
-								: library.activeAlbum === 'trash'
-									? 'Trash is empty'
-									: library.activeAlbum === null
-										? 'No unassigned media'
-										: 'No media yet'}
-						</p>
-						<p class="mt-1 max-w-sm text-sm">
-							{#if prefs.searchQuery.trim()}
-								Try a different search, or clear the search box.
-							{:else if library.activeAlbum === 'trash'}
-								Deleted items stay here for 30 days, then are removed forever on page load.
-							{:else if library.activeAlbum === null}
-								Upload files here, or remove items from albums to see them in Unassigned.
-							{:else}
-								Drag and drop pictures or videos here, or use Upload. Double-click an item to expand
-								it.
-							{/if}
-						</p>
-					</div>
-				{:else if prefs.viewMode === 'grid'}
-					<MediaGrid
-						items={library.filteredMedia}
-						selectedIds={selection.selectedIds}
-						selectMode={selection.selectMode}
-						columns={prefs.columns}
-						onselect={handleSelect}
-						onopen={(item) => (ui.preview = item)}
-						oncontextmenu={openMediaContextMenu}
-					/>
-				{:else}
-					<MediaCollage
-						items={library.filteredMedia}
-						selectedIds={selection.selectedIds}
-						selectMode={selection.selectMode}
-						columns={prefs.columns}
-						onselect={handleSelect}
-						onopen={(item) => (ui.preview = item)}
-						oncontextmenu={openMediaContextMenu}
-					/>
-				{/if}
+					{#if library.filteredMedia.length === 0}
+						<div
+							class="text-muted-foreground flex h-full min-h-64 flex-col items-center justify-center text-center"
+						>
+							<p class="text-foreground/80 text-lg font-medium">
+								{prefs.searchQuery.trim()
+									? 'No matching media'
+									: library.activeAlbum === 'trash'
+										? 'Trash is empty'
+										: library.activeAlbum === null
+											? 'No unassigned media'
+											: 'No media yet'}
+							</p>
+							<p class="mt-1 max-w-sm text-sm">
+								{#if prefs.searchQuery.trim()}
+									Try a different search, or clear the search box.
+								{:else if library.activeAlbum === 'trash'}
+									Deleted items stay here for 30 days, then are removed forever on page load.
+								{:else if library.activeAlbum === null}
+									Upload files here, or remove items from albums to see them in Unassigned.
+								{:else}
+									Drag and drop pictures or videos here, or use Upload. Double-click an item to
+									expand it.
+								{/if}
+							</p>
+						</div>
+					{:else if prefs.viewMode === 'grid'}
+						<MediaGrid
+							items={library.filteredMedia}
+							selectedIds={selection.selectedIds}
+							selectMode={selection.selectMode}
+							columns={prefs.columns}
+							onselect={handleSelect}
+							onopen={openMedia}
+							oncontextmenu={openMediaContextMenu}
+						/>
+					{:else}
+						<MediaCollage
+							items={library.filteredMedia}
+							selectedIds={selection.selectedIds}
+							selectMode={selection.selectMode}
+							columns={prefs.columns}
+							onselect={handleSelect}
+							onopen={openMedia}
+							oncontextmenu={openMediaContextMenu}
+						/>
+					{/if}
 
-				{#if selection.selectionRect && selection.selecting}
-					<div
-						class="border-primary bg-primary/15 pointer-events-none absolute z-20 border"
-						style:left="{selection.selectionRect.x}px"
-						style:top="{selection.selectionRect.y}px"
-						style:width="{selection.selectionRect.w}px"
-						style:height="{selection.selectionRect.h}px"
-					></div>
-				{/if}
+					{#if selection.selectionRect && selection.selecting}
+						<div
+							class="border-primary bg-primary/15 pointer-events-none absolute z-20 border"
+							style:left="{selection.selectionRect.x}px"
+							style:top="{selection.selectionRect.y}px"
+							style:width="{selection.selectionRect.w}px"
+							style:height="{selection.selectionRect.h}px"
+						></div>
+					{/if}
 				</div>
 			</ScrollArea>
 		</main>
@@ -1355,7 +1449,11 @@
 
 	{#if ui.preview}
 		{#key ui.preview.id}
-			<MediaLightbox item={ui.preview} onclose={() => (ui.preview = null)} />
+			<MediaLightbox
+				item={ui.preview}
+				onclose={() => (ui.preview = null)}
+				onview={applyRecordedView}
+			/>
 		{/key}
 	{/if}
 

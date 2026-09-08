@@ -1,6 +1,10 @@
 import type { Album, LibraryAlbumFilter, MediaItem, Profile } from '$lib/types';
 import { defaultActiveAlbum } from '$lib/config/defaults';
-import { filterMediaItems, pasteTargetAlbumId as resolvePasteTargetAlbumId } from '$lib/media/filter.js';
+import {
+	filterMediaItems,
+	pasteTargetAlbumId as resolvePasteTargetAlbumId
+} from '$lib/media/filter.js';
+import { sortMediaItems } from '$lib/media/sort.js';
 import type { PreferencesState } from './preferences.svelte';
 
 export type LibraryLoad = {
@@ -53,13 +57,14 @@ export class LibraryState {
 	readonly filteredMedia = $derived.by(() => {
 		const activeAlbum = this.activeAlbum;
 		const source = activeAlbum === 'trash' ? this.trash : this.media;
-		return filterMediaItems(source, activeAlbum, {
+		const filtered = filterMediaItems(source, activeAlbum, {
 			searchQuery: this.prefs.searchQuery,
 			showImages: this.prefs.showImages,
 			showVideos: this.prefs.showVideos,
 			dateFrom: this.prefs.dateFrom,
 			dateTo: this.prefs.dateTo
 		});
+		return sortMediaItems(filtered, this.prefs.sortBy, this.prefs.sortDir);
 	});
 
 	setActiveAlbum(id: LibraryAlbumFilter) {
@@ -84,6 +89,13 @@ export class LibraryState {
 		if (!Number.isFinite(duration) || duration <= 0) return;
 		this.media = this.media.map((item) => (item.id === id ? { ...item, duration } : item));
 		this.trash = this.trash.map((item) => (item.id === id ? { ...item, duration } : item));
+	}
+
+	setViewCount(id: string, viewCount: number) {
+		if (!Number.isFinite(viewCount) || viewCount < 0) return;
+		const view_count = Math.floor(viewCount);
+		this.media = this.media.map((item) => (item.id === id ? { ...item, view_count } : item));
+		this.trash = this.trash.map((item) => (item.id === id ? { ...item, view_count } : item));
 	}
 
 	async refresh() {

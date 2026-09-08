@@ -1,9 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-	assertPasscodeFormat,
-	hashPasscode,
-	verifyPasscode
-} from '$lib/server/passcode';
+import { assertPasscodeFormat, hashPasscode, verifyPasscode } from '$lib/server/passcode';
 
 describe('profile passcode helpers', () => {
 	test('hashPasscode and verifyPasscode round-trip', () => {
@@ -16,6 +12,7 @@ describe('profile passcode helpers', () => {
 	test('verifyPasscode rejects invalid stored format', () => {
 		expect(verifyPasscode(null, 'x')).toBe(false);
 		expect(verifyPasscode('bad-format', 'x')).toBe(false);
+		expect(verifyPasscode('scrypt::00', 'x')).toBe(false);
 	});
 
 	test('assertPasscodeFormat enforces minimum length', () => {

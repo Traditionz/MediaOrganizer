@@ -1,4 +1,6 @@
 <script lang="ts">
+	import ArrowDownWideNarrow from '@lucide/svelte/icons/arrow-down-wide-narrow';
+	import ArrowUpNarrowWide from '@lucide/svelte/icons/arrow-up-narrow-wide';
 	import Moon from '@lucide/svelte/icons/moon';
 	import Search from '@lucide/svelte/icons/search';
 	import Sun from '@lucide/svelte/icons/sun';
@@ -9,6 +11,12 @@
 	import { Slider } from '$lib/components/ui/slider/index.js';
 	import { Spinner } from '$lib/components/ui/spinner/index.js';
 	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
+	import {
+		MEDIA_SORT_OPTIONS,
+		isMediaSortBy,
+		type MediaSortBy,
+		type MediaSortDir
+	} from '$lib/media/sort';
 	import type { ThemeMode, ViewMode } from '$lib/types';
 
 	interface Props {
@@ -18,6 +26,8 @@
 		dateFrom: string;
 		dateTo: string;
 		searchQuery: string;
+		sortBy: MediaSortBy;
+		sortDir: MediaSortDir;
 		columns: number;
 		selectMode: boolean;
 		selectedCount: number;
@@ -30,6 +40,8 @@
 		ondateFrom: (value: string) => void;
 		ondateTo: (value: string) => void;
 		onsearchQuery: (value: string) => void;
+		onsortBy: (value: MediaSortBy) => void;
+		ontoggleSortDir: () => void;
 		oncolumns: (value: number) => void;
 		onwarnDuplicateUploads: (value: boolean) => void;
 		ontoggleSelect: () => void;
@@ -52,6 +64,8 @@
 		dateFrom,
 		dateTo,
 		searchQuery,
+		sortBy,
+		sortDir,
 		columns,
 		selectMode,
 		selectedCount,
@@ -64,6 +78,8 @@
 		ondateFrom,
 		ondateTo,
 		onsearchQuery,
+		onsortBy,
+		ontoggleSortDir,
 		oncolumns,
 		onwarnDuplicateUploads,
 		ontoggleSelect,
@@ -80,9 +96,15 @@
 	}: Props = $props();
 
 	const showSelectionActions = $derived(selectMode || selectedCount > 0);
+	const sortDirLabel = $derived(sortDir === 'asc' ? 'Ascending' : 'Descending');
 
 	function asBool(v: boolean | 'indeterminate'): boolean {
 		return v === true;
+	}
+
+	function onSortSelect(e: Event) {
+		const value = (e.currentTarget as HTMLSelectElement).value;
+		if (isMediaSortBy(value)) onsortBy(value);
 	}
 </script>
 
@@ -176,6 +198,35 @@
 			oninput={(e) => onsearchQuery(e.currentTarget.value)}
 			aria-label="Search media"
 		/>
+	</div>
+
+	<div class="flex items-center gap-1" role="group" aria-label="Sort media">
+		<label class="text-muted-foreground flex items-center gap-1.5 text-sm">
+			<span class="hidden sm:inline">Sort</span>
+			<select
+				class="border-input bg-background h-8 rounded-lg border px-2 text-sm"
+				value={sortBy}
+				onchange={onSortSelect}
+				aria-label="Sort by"
+			>
+				{#each MEDIA_SORT_OPTIONS as option (option.value)}
+					<option value={option.value}>{option.label}</option>
+				{/each}
+			</select>
+		</label>
+		<Button
+			variant="outline"
+			size="icon-sm"
+			onclick={ontoggleSortDir}
+			aria-label="Sort direction: {sortDirLabel}"
+			title={sortDirLabel}
+		>
+			{#if sortDir === 'asc'}
+				<ArrowUpNarrowWide class="size-4" />
+			{:else}
+				<ArrowDownWideNarrow class="size-4" />
+			{/if}
+		</Button>
 	</div>
 
 	<div class="flex items-center gap-3 px-1">

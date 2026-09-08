@@ -232,8 +232,8 @@ Empty area: **Paste**, **Upload…** (in Trash: **Empty trash**)
 
 The toolbar **Upload settings** group (separate from filters) has:
 
-| Setting             | Default | Effect                                                                                                                                                                                                 |
-| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Setting             | Default | Effect                                                                                                                                                                                            |
+| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Warn duplicates** | on      | If a file name already exists, ask: **Skip duplicates** (default) or **Upload as duplicates**. Skipping into an album links the existing library item. Off = skip silently (Amazon Photos–style). |
 
 ### Compression
@@ -244,24 +244,24 @@ Uploads are stored as-is. There is **no** background or on-upload recompress.
 
 ### Keyboard shortcuts
 
-| Shortcut     | Action                               |
-| ------------ | ------------------------------------ |
-| Ctrl/Cmd + C | Copy                                 |
-| Ctrl/Cmd + X | Cut                                  |
-| Ctrl/Cmd + V | Paste (copy → duplicate, cut → move) |
-| F2           | Rename                               |
+| Shortcut     | Action                                               |
+| ------------ | ---------------------------------------------------- |
+| Ctrl/Cmd + C | Copy                                                 |
+| Ctrl/Cmd + X | Cut                                                  |
+| Ctrl/Cmd + V | Paste (copy → duplicate, cut → move)                 |
+| F2           | Rename                                               |
 | Delete       | Move selection to trash (or delete forever in Trash) |
 
 ---
 
 ## Project scripts
 
-| Command           | Description                   |
-| ----------------- | ----------------------------- |
-| `bun run dev`     | Dev server with HMR           |
-| `bun run build`   | Production build              |
-| `bun run preview` | Preview the production build  |
-| `bun run check`   | Typecheck / Svelte check      |
+| Command             | Description                   |
+| ------------------- | ----------------------------- |
+| `bun run dev`       | Dev server with HMR           |
+| `bun run build`     | Production build              |
+| `bun run preview`   | Preview the production build  |
+| `bun run check`     | Typecheck / Svelte check      |
 | `bun run format`    | Format with Oxfmt             |
 | `bun run lint`      | Oxlint (anti-slop + defaults) |
 | `bun run reinstall` | Reinstall deps + sync types   |

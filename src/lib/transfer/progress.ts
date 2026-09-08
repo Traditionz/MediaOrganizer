@@ -1,4 +1,4 @@
-import type { TransferFile, TransferJob } from '$lib/state/ui.svelte';
+import type { TransferFile, TransferJob } from '$lib/transfer/types.js';
 
 export function clampProgress(pct: number): number {
 	return Math.min(100, Math.max(0, Math.round(pct)));
@@ -21,10 +21,7 @@ export type FileProgressPatch = Partial<
 	Pick<TransferFile, 'progress' | 'loaded' | 'total' | 'status' | 'error'>
 >;
 
-export function applyFileProgress(
-	file: TransferFile,
-	patch: FileProgressPatch
-): TransferFile {
+export function applyFileProgress(file: TransferFile, patch: FileProgressPatch): TransferFile {
 	if (file.status === 'cancelled') return file;
 	const next = { ...file };
 	if (patch.progress != null && Number.isFinite(patch.progress)) {

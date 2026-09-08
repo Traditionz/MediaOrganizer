@@ -6,8 +6,7 @@ let active = 0;
 
 function pump() {
 	while (active < MAX_CONCURRENT && queue.length > 0) {
-		const job = queue.shift();
-		if (!job) return;
+		const job = queue.shift()!;
 		active += 1;
 		void job().finally(() => {
 			active -= 1;

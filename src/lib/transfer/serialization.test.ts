@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import type { JsonValue } from '$lib/parse';
 import {
 	parseFileKind,
 	parseFileStatus,
@@ -26,9 +27,9 @@ describe('transfer serialization', () => {
 
 	test('parseTransferFiles skips invalid rows', () => {
 		const files = parseTransferFiles([
-			{ id: '1', name: 'a.jpg', kind: 'image', progress: 50, status: 'done' },
-			{ name: 'missing-id.jpg' },
-			'not-an-object'
+			{ id: '1', name: 'a.jpg', kind: 'image', progress: 50, status: 'done' } as JsonValue,
+			{ name: 'missing-id.jpg' } as JsonValue,
+			'not-an-object' as JsonValue
 		]);
 		expect(files).toHaveLength(1);
 		expect(files[0]?.name).toBe('a.jpg');
@@ -76,5 +77,37 @@ describe('transfer serialization', () => {
 	test('restoreTransferJobsFromStorage handles corrupt input', () => {
 		expect(restoreTransferJobsFromStorage(null)).toEqual([]);
 		expect(restoreTransferJobsFromStorage('not-json')).toEqual([]);
+	});
+
+	test('restoreTransferJobsFromStorage drops unfinished compress and empty uploads', () => {
+		const payload = JSON.stringify([
+			{
+				id: 'compress-active',
+				kind: 'compress',
+				label: 'Compress',
+				progress: 40,
+				fileCount: 1,
+				files: [{ id: 'f1', name: 'a.mp4', kind: 'video', progress: 40, status: 'uploading' }]
+			},
+			{
+				id: 'upload-empty',
+				kind: 'upload',
+				label: 'Upload',
+				progress: 10,
+				fileCount: 0,
+				files: []
+			},
+			{
+				id: 'compress-done',
+				kind: 'compress',
+				label: 'Compress',
+				progress: 100,
+				fileCount: 1,
+				files: [{ id: 'f2', name: 'b.mp4', kind: 'video', progress: 100, status: 'done' }]
+			}
+		]);
+		const jobs = restoreTransferJobsFromStorage(payload);
+		expect(jobs).toHaveLength(1);
+		expect(jobs[0]?.id).toBe('compress-done');
 	});
 });

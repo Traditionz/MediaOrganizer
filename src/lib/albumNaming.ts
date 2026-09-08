@@ -11,3 +11,36 @@ export function nextDuplicateAlbumName(sourceName: string, existingNames: string
 	while (taken.has(`${stem} (${n})`.toLowerCase())) n += 1;
 	return `${stem} (${n})`;
 }
+
+export function normalizeAlbumQuery(query: string): string {
+	return query.trim().toLowerCase();
+}
+
+export function albumNameMatchesQuery(name: string, queryNorm: string): boolean {
+	if (!queryNorm) return true;
+	return name.toLowerCase().includes(queryNorm);
+}
+
+/** Case-insensitive exact name, or null. */
+export function exactAlbumNameMatch(
+	existingNames: readonly string[],
+	query: string
+): string | null {
+	const q = normalizeAlbumQuery(query);
+	if (!q) return null;
+	for (const name of existingNames) {
+		if (name.toLowerCase() === q) return name;
+	}
+	return null;
+}
+
+export type AlbumListFilterSource = 'add' | 'search';
+
+/** Active field drives list filter so add-as-you-type can show dupes. */
+export function albumListQueryNorm(
+	addName: string,
+	searchQuery: string,
+	source: AlbumListFilterSource
+): string {
+	return source === 'add' ? normalizeAlbumQuery(addName) : normalizeAlbumQuery(searchQuery);
+}

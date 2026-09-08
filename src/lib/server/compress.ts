@@ -1,11 +1,21 @@
 import { spawn } from 'node:child_process';
-import { existsSync, renameSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import ffmpegPath from 'ffmpeg-static';
 import sharp from 'sharp';
 import { renameWithExt } from '$lib/compressNaming.js';
+import { parseFfmpegDurationSeconds } from './ffmpegParse';
 
 export { renameWithExt };
+export { parseFfmpegDurationSeconds } from './ffmpegParse';
+
+/** Prefer profile `tmp/` beside `files/`; else local `tmp/` under the input dir. */
+function compressTempPath(inputPath: string, suffix: string): string {
+	const parent = dirname(inputPath);
+	const tmpDir = basename(parent) === 'files' ? join(dirname(parent), 'tmp') : join(parent, 'tmp');
+	mkdirSync(tmpDir, { recursive: true });
+	return join(tmpDir, `${basename(inputPath)}${suffix}`);
+}
 
 export type CompressResult = {
 	ok: boolean;
@@ -70,17 +80,6 @@ export function isAv1Cancelled(): boolean {
 	return av1Cancelled;
 }
 
-function parseFfmpegDurationSeconds(stderr: string): number | null {
-	const match = stderr.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
-	if (!match) return null;
-	const hours = Number(match[1]);
-	const minutes = Number(match[2]);
-	const seconds = Number(match[3]);
-	if (![hours, minutes, seconds].every(Number.isFinite)) return null;
-	const total = hours * 3600 + minutes * 60 + seconds;
-	return total > 0 ? total : null;
-}
-
 function probeVideo(
 	path: string
 ): Promise<{ codec: string; width: number; height: number; duration: number | null } | null> {
@@ -141,7 +140,7 @@ export async function compressVideoToAv1(inputPath: string): Promise<CompressRes
 		};
 	}
 
-	const outPath = join(dirname(inputPath), `${basename(inputPath)}.av1.tmp.mp4`);
+	const outPath = compressTempPath(inputPath, '.av1.tmp.mp4');
 
 	try {
 		await runFfmpeg([
@@ -231,7 +230,7 @@ export async function compressImageToAvif(inputPath: string): Promise<CompressRe
 		};
 	}
 
-	const outPath = join(dirname(inputPath), `${basename(inputPath)}.avif.tmp`);
+	const outPath = compressTempPath(inputPath, '.avif.tmp');
 
 	try {
 		await sharp(inputPath, { failOn: 'none' })

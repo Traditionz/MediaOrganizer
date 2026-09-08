@@ -7,6 +7,8 @@
 	import Search from '@lucide/svelte/icons/search';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import User from '@lucide/svelte/icons/user';
+	import { albumListQueryNorm, albumNameMatchesQuery, exactAlbumNameMatch } from '$lib/albumNaming';
+	import * as Alert from '$lib/components/ui/alert/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
@@ -59,7 +61,6 @@
 		ondeleteProfile
 	}: Props = $props();
 
-	let creating = $state(false);
 	let newName = $state('');
 	let busy = $state(false);
 	let dropTarget = $state<string | null>(null);
@@ -70,6 +71,7 @@
 	let renamingId = $state<string | null>(null);
 	let renameName = $state('');
 	let albumQuery = $state('');
+	let listFilterSource = $state<'add' | 'search'>('search');
 	let contextMenu = $state<{
 		open: boolean;
 		x: number;
@@ -81,11 +83,15 @@
 	const isBusy = $derived(profileBusy || profileBusyProp);
 
 	const sortedAlbums = $derived([...albums].sort((a, b) => a.name.localeCompare(b.name)));
-	const albumQueryNorm = $derived(albumQuery.trim().toLowerCase());
+	const listQueryNorm = $derived(albumListQueryNorm(newName, albumQuery, listFilterSource));
 	const visibleAlbums = $derived(
-		albumQueryNorm
-			? sortedAlbums.filter((album) => album.name.toLowerCase().includes(albumQueryNorm))
-			: sortedAlbums
+		sortedAlbums.filter((album) => albumNameMatchesQuery(album.name, listQueryNorm))
+	);
+	const exactName = $derived(
+		exactAlbumNameMatch(
+			albums.map((a) => a.name),
+			newName
+		)
 	);
 
 	const contextAlbum = $derived(
@@ -215,19 +221,12 @@
 		};
 	}
 
-	function startCreate() {
-		renamingId = null;
-		creating = true;
-		newName = '';
-	}
-
 	function cancelCreate() {
-		creating = false;
 		newName = '';
+		listFilterSource = 'search';
 	}
 
 	function startRename(album: Album) {
-		creating = false;
 		renamingId = album.id;
 		renameName = album.name;
 	}
@@ -258,7 +257,7 @@
 
 	async function submitCreate() {
 		const name = newName.trim();
-		if (!name || busy) return;
+		if (!name || busy || exactName) return;
 		busy = true;
 		try {
 			await oncreate(name);
@@ -532,185 +531,203 @@
 
 	<ScrollArea class="min-h-0 flex-1" bind:viewportRef={albumNavViewport}>
 		<nav class="p-3">
-		<Button
-			type="button"
-			variant="ghost"
-			class={[
-				'w-full justify-start gap-2 font-medium',
-				activeAlbum === 'all' && 'bg-accent text-accent-foreground'
-			]}
-			onclick={() => onselect('all')}
-		>
-			<Images class="h-5 w-5" />
-			All media
-			<Badge variant="secondary" class="ml-auto">{totalCount}</Badge>
-		</Button>
-
-		<Button
-			type="button"
-			variant="ghost"
-			class={[
-				'mt-1 w-full justify-start gap-2 font-medium',
-				activeAlbum === null && 'bg-accent text-accent-foreground'
-			]}
-			onclick={() => onselect(null)}
-		>
-			<Inbox class="h-5 w-5" />
-			Unassigned
-			<Badge variant="secondary" class="ml-auto">{unassignedCount}</Badge>
-		</Button>
-
-		<Button
-			type="button"
-			variant="ghost"
-			class={[
-				'mt-1 w-full justify-start gap-2 font-medium',
-				activeAlbum === 'trash' && 'bg-accent text-accent-foreground'
-			]}
-			onclick={() => onselect('trash')}
-		>
-			<Trash2 class="h-5 w-5" />
-			Trash
-			<Badge variant="secondary" class="ml-auto">{trashCount}</Badge>
-		</Button>
-
-		<div class="mt-4 mb-2 flex items-center justify-between rounded-lg px-2 py-1">
-			<span class="text-muted-foreground text-xs font-semibold tracking-wide uppercase">Albums</span
-			>
 			<Button
 				type="button"
 				variant="ghost"
-				size="icon-xs"
-				onclick={startCreate}
-				aria-label="New album"
-				title="New album"
+				class={[
+					'w-full justify-start gap-2 font-medium',
+					activeAlbum === 'all' && 'bg-accent text-accent-foreground'
+				]}
+				onclick={() => onselect('all')}
 			>
-				<Plus class="h-4 w-4" />
+				<Images class="h-5 w-5" />
+				All media
+				<Badge variant="secondary" class="ml-auto">{totalCount}</Badge>
 			</Button>
-		</div>
 
-		<div class="relative mb-2">
-			<Search
-				class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
-				aria-hidden="true"
-			/>
-			<Input
-				type="search"
-				class="pl-8"
-				placeholder="Search albums…"
-				bind:value={albumQuery}
-				aria-label="Search albums"
-			/>
-		</div>
+			<Button
+				type="button"
+				variant="ghost"
+				class={[
+					'mt-1 w-full justify-start gap-2 font-medium',
+					activeAlbum === null && 'bg-accent text-accent-foreground'
+				]}
+				onclick={() => onselect(null)}
+			>
+				<Inbox class="h-5 w-5" />
+				Unassigned
+				<Badge variant="secondary" class="ml-auto">{unassignedCount}</Badge>
+			</Button>
 
-		{#if creating}
+			<Button
+				type="button"
+				variant="ghost"
+				class={[
+					'mt-1 w-full justify-start gap-2 font-medium',
+					activeAlbum === 'trash' && 'bg-accent text-accent-foreground'
+				]}
+				onclick={() => onselect('trash')}
+			>
+				<Trash2 class="h-5 w-5" />
+				Trash
+				<Badge variant="secondary" class="ml-auto">{trashCount}</Badge>
+			</Button>
+
+			<div class="mt-4 mb-2 rounded-lg px-2 py-1">
+				<span class="text-muted-foreground text-xs font-semibold tracking-wide uppercase"
+					>Albums</span
+				>
+			</div>
+
 			<form
-				class="mb-2 px-1"
+				class="mb-2"
 				onsubmit={(e) => {
 					e.preventDefault();
 					submitCreate();
 				}}
 			>
+				<div class="relative">
+					<Input
+						class="pr-8"
+						placeholder="Album name"
+						aria-label="New album name"
+						bind:value={newName}
+						disabled={busy}
+						oninput={() => {
+							listFilterSource = 'add';
+						}}
+						onkeydown={(e) => {
+							if (e.key === 'Escape') {
+								e.preventDefault();
+								cancelCreate();
+							}
+						}}
+					/>
+					<Button
+						type="submit"
+						variant="ghost"
+						size="icon-xs"
+						class="absolute top-1/2 right-1 -translate-y-1/2"
+						aria-label="Add album"
+						disabled={busy || !newName.trim() || Boolean(exactName)}
+					>
+						<Plus class="h-4 w-4" />
+					</Button>
+				</div>
+				{#if exactName}
+					<Alert.Root variant="destructive" class="mt-2">
+						<Alert.Description>“{exactName}” already exists.</Alert.Description>
+					</Alert.Root>
+				{/if}
+			</form>
+
+			<div class="relative mb-2">
+				<Search
+					class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+					aria-hidden="true"
+				/>
 				<Input
-					{@attach autofocusCreate}
-					class="min-w-0"
-					placeholder="Album name"
-					bind:value={newName}
-					disabled={busy}
-					onkeydown={(e) => {
-						if (e.key === 'Escape') {
-							e.preventDefault();
-							cancelCreate();
-						}
+					type="search"
+					class="pl-8"
+					placeholder="Search albums…"
+					bind:value={albumQuery}
+					aria-label="Search albums"
+					oninput={() => {
+						listFilterSource = 'search';
 					}}
 				/>
-			</form>
-		{/if}
+			</div>
 
-		<ul class="flex w-full flex-col gap-0.5 p-0">
-			{#each visibleAlbums as album (album.id)}
-				<li>
-					<div
-						class={[
-							'album-drop-row group flex items-center gap-0.5 rounded-lg',
-							activeAlbum === album.id && 'bg-accent text-accent-foreground',
-							dropHighlight(album.id)
-						]}
-						ondragenter={(e) => onDragOverTarget(e, album.id)}
-						ondragover={(e) => onDragOverTarget(e, album.id)}
-						ondragleave={(e) => onDragLeaveTarget(e, album.id)}
-						ondrop={(e) => onDropTarget(e, album.id)}
-						oncontextmenu={(e) => openAlbumContextMenu(e, album)}
-						role="presentation"
-					>
-						{#if renamingId === album.id}
-							<form
-								class="min-w-0 flex-1 px-1 py-0.5"
-								onsubmit={(e) => {
-									e.preventDefault();
-									submitRename();
-								}}
-							>
-								<Input
-									{@attach autofocusCreate}
-									class="h-7 min-w-0 text-xs"
-									bind:value={renameName}
-									disabled={busy}
-									onclick={(e) => e.stopPropagation()}
+			<ul class="flex w-full flex-col gap-0.5 p-0">
+				{#each visibleAlbums as album (album.id)}
+					<li>
+						<div
+							class={[
+								'album-drop-row group flex items-center gap-0.5 rounded-lg',
+								activeAlbum === album.id && 'bg-accent text-accent-foreground',
+								dropHighlight(album.id)
+							]}
+							ondragenter={(e) => onDragOverTarget(e, album.id)}
+							ondragover={(e) => onDragOverTarget(e, album.id)}
+							ondragleave={(e) => onDragLeaveTarget(e, album.id)}
+							ondrop={(e) => onDropTarget(e, album.id)}
+							oncontextmenu={(e) => openAlbumContextMenu(e, album)}
+							role="presentation"
+						>
+							{#if renamingId === album.id}
+								<form
+									class="min-w-0 flex-1 px-1 py-0.5"
+									onsubmit={(e) => {
+										e.preventDefault();
+										submitRename();
+									}}
+								>
+									<Input
+										{@attach autofocusCreate}
+										class="h-7 min-w-0 text-xs"
+										bind:value={renameName}
+										disabled={busy}
+										onclick={(e) => e.stopPropagation()}
+										onkeydown={(e) => {
+											if (e.key === 'Escape') {
+												e.preventDefault();
+												cancelRename();
+											}
+										}}
+										onblur={() => {
+											if (renamingId === album.id) submitRename();
+										}}
+									/>
+								</form>
+							{:else}
+								<div
+									class="album-drop-hit flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 px-1 py-1.5 text-left"
+									role="button"
+									tabindex="0"
+									title={album.name}
+									onclick={() => onselect(album.id)}
 									onkeydown={(e) => {
-										if (e.key === 'Escape') {
+										if (e.key === 'Enter' || e.key === ' ') {
 											e.preventDefault();
-											cancelRename();
+											onselect(album.id);
 										}
 									}}
-									onblur={() => {
-										if (renamingId === album.id) submitRename();
-									}}
-								/>
-							</form>
-						{:else}
-							<div
-								class="album-drop-hit flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 px-1 py-1.5 text-left"
-								role="button"
-								tabindex="0"
-								title={album.name}
-								onclick={() => onselect(album.id)}
-								onkeydown={(e) => {
-									if (e.key === 'Enter' || e.key === ' ') {
-										e.preventDefault();
-										onselect(album.id);
-									}
+								>
+									<Folder class="h-4 w-4 shrink-0" />
+									<span class="truncate">{album.name}</span>
+									<Badge variant="secondary" class="ml-auto shrink-0"
+										>{album.media_count ?? 0}</Badge
+									>
+								</div>
+							{/if}
+
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon-xs"
+								class="album-drop-hit opacity-0 group-hover:opacity-100"
+								aria-label="Delete album"
+								title="Delete album"
+								onclick={(e) => {
+									e.stopPropagation();
+									ondelete(album.id);
 								}}
 							>
-								<Folder class="h-4 w-4 shrink-0" />
-								<span class="truncate">{album.name}</span>
-								<Badge variant="secondary" class="ml-auto shrink-0">{album.media_count ?? 0}</Badge>
-							</div>
-						{/if}
-
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon-xs"
-							class="album-drop-hit opacity-0 group-hover:opacity-100"
-							aria-label="Delete album"
-							title="Delete album"
-							onclick={(e) => {
-								e.stopPropagation();
-								ondelete(album.id);
-							}}
-						>
-							<Trash2 class="h-4 w-4" />
-						</Button>
-					</div>
-				</li>
-			{:else}
-				<li class="text-muted-foreground px-2 py-6 text-center text-sm">
-					{albums.length === 0 ? 'No albums yet.' : 'No albums match your search.'}
-				</li>
-			{/each}
-		</ul>
-	</nav>
+								<Trash2 class="h-4 w-4" />
+							</Button>
+						</div>
+					</li>
+				{:else}
+					<li class="text-muted-foreground px-2 py-6 text-center text-sm">
+						{albums.length === 0
+							? 'No albums yet.'
+							: listFilterSource === 'add' && newName.trim()
+								? 'No albums match this name.'
+								: 'No albums match your search.'}
+					</li>
+				{/each}
+			</ul>
+		</nav>
 	</ScrollArea>
 </aside>
 <ContextMenu

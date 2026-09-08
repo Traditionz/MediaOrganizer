@@ -171,41 +171,41 @@
 			<div class="flex min-h-0 flex-1">
 				<ScrollArea class="min-h-0 flex-1" bind:viewportRef={listEl}>
 					<div class="px-2 py-2">
-					{#if groupedAlbums.length === 0}
-						<p class="text-muted-foreground px-3 py-8 text-center text-sm">
-							{albums.length === 0 ? 'No albums yet.' : 'No albums match your search.'}
-						</p>
-					{:else}
-						{#each groupedAlbums as group (group.letter)}
-							<section class="mb-2" data-letter={group.letter}>
-								<h3
-									class="bg-popover/95 text-muted-foreground sticky top-0 z-10 px-3 py-1.5 text-xs font-semibold tracking-wide backdrop-blur"
-								>
-									{group.letter}
-								</h3>
-								<ul class="flex w-full flex-col p-0">
-									{#each group.albums as album (album.id)}
-										<li>
-											<label
-												class="hover:bg-muted flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2"
-											>
-												<Checkbox
-													checked={selectedIds.has(album.id)}
-													onCheckedChange={() => toggleAlbum(album.id)}
-												/>
-												<span class="min-w-0 flex-1 truncate">{album.name}</span>
-												{#if album.media_count != null}
-													<Badge variant="secondary" class="shrink-0">
-														{album.media_count}
-													</Badge>
-												{/if}
-											</label>
-										</li>
-									{/each}
-								</ul>
-							</section>
-						{/each}
-					{/if}
+						{#if groupedAlbums.length === 0}
+							<p class="text-muted-foreground px-3 py-8 text-center text-sm">
+								{albums.length === 0 ? 'No albums yet.' : 'No albums match your search.'}
+							</p>
+						{:else}
+							{#each groupedAlbums as group (group.letter)}
+								<section class="mb-2" data-letter={group.letter}>
+									<h3
+										class="bg-popover/95 text-muted-foreground sticky top-0 z-10 px-3 py-1.5 text-xs font-semibold tracking-wide backdrop-blur"
+									>
+										{group.letter}
+									</h3>
+									<ul class="flex w-full flex-col p-0">
+										{#each group.albums as album (album.id)}
+											<li>
+												<label
+													class="hover:bg-muted flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2"
+												>
+													<Checkbox
+														checked={selectedIds.has(album.id)}
+														onCheckedChange={() => toggleAlbum(album.id)}
+													/>
+													<span class="min-w-0 flex-1 truncate">{album.name}</span>
+													{#if album.media_count != null}
+														<Badge variant="secondary" class="shrink-0">
+															{album.media_count}
+														</Badge>
+													{/if}
+												</label>
+											</li>
+										{/each}
+									</ul>
+								</section>
+							{/each}
+						{/if}
 					</div>
 				</ScrollArea>
 

@@ -1,6 +1,12 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import type { MediaItem } from '$lib/types';
+	import {
+		formatViewCount,
+		IMAGE_VIEW_DURATION_SECONDS,
+		qualifiesAsView,
+		recordMediaView
+	} from '$lib/media/views';
 	import { formatBytes, formatDate } from '$lib/utils';
 	import { fade, scale } from 'svelte/transition';
 	import MoveDiagonal2 from '@lucide/svelte/icons/move-diagonal-2';
@@ -11,9 +17,38 @@
 	interface Props {
 		item: MediaItem | null;
 		onclose: () => void;
+		onview?: (id: string, count: number) => void;
 	}
 
-	let { item, onclose }: Props = $props();
+	let { item, onclose, onview }: Props = $props();
+
+	let recorded = false;
+
+	function maybeQualify(watched: number, total: number) {
+		if (recorded || !item) return;
+		if (!qualifiesAsView(watched, total)) return;
+		recorded = true;
+		const id = item.id;
+		void recordMediaView(id).then((count) => {
+			if (count != null) onview?.(id, count);
+		});
+	}
+
+	function attachImageDwell(_node: HTMLElement) {
+		let last = performance.now();
+		let watched = 0;
+		const id = setInterval(() => {
+			const now = performance.now();
+			const elapsed = (now - last) / 1000;
+			last = now;
+			if (document.visibilityState !== 'visible') return;
+			watched += elapsed;
+			void maybeQualify(watched, IMAGE_VIEW_DURATION_SECONDS);
+		}, 100);
+		return () => {
+			clearInterval(id);
+		};
+	}
 
 	const MIN_W = 280;
 
@@ -112,7 +147,9 @@
 				<div class="min-w-0 flex-1">
 					<h2 class="truncate text-base font-semibold">{item.original_name}</h2>
 					<p class="text-muted-foreground mt-0.5 truncate text-xs">
-						{albumSummary} · {formatDate(item.created_at)} · {formatBytes(item.size)}
+						{albumSummary} · {formatDate(item.created_at)} · {formatBytes(item.size)} · {formatViewCount(
+							item.view_count
+						)}
 					</p>
 				</div>
 				<Button
@@ -135,6 +172,7 @@
 			>
 				{#if item.media_type === 'image'}
 					<img
+						{@attach attachImageDwell}
 						src={`/api/media/${item.id}`}
 						alt={item.original_name}
 						class="max-h-[70vh] max-w-full rounded-lg object-contain"
@@ -151,6 +189,9 @@
 							mediaId={item.id}
 							onmetadata={(meta) => {
 								intrinsic = { w: meta.w, h: meta.h };
+							}}
+							onwatchprogress={(watched, total) => {
+								void maybeQualify(watched, total);
 							}}
 						/>
 						<button

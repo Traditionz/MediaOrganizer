@@ -58,6 +58,24 @@ describe('media filter', () => {
 		expect(filterMediaItems(items, 'all', prefs)).toHaveLength(1);
 	});
 
+	test('filterMediaItems in trash still applies type and search', () => {
+		resetMediaHelpers();
+		const items = [
+			makeMediaItem({ original_name: 'keep.jpg', media_type: 'image' }),
+			makeMediaItem({ original_name: 'skip.mp4', media_type: 'video', mime_type: 'video/mp4' })
+		];
+		const prefs = {
+			searchQuery: 'keep',
+			showImages: true,
+			showVideos: false,
+			dateFrom: '',
+			dateTo: ''
+		};
+		expect(filterMediaItems(items, 'trash', prefs).map((i) => i.original_name)).toEqual([
+			'keep.jpg'
+		]);
+	});
+
 	test('pasteTargetAlbumId returns album id or null', () => {
 		expect(pasteTargetAlbumId('album-1')).toBe('album-1');
 		expect(pasteTargetAlbumId('all')).toBeNull();

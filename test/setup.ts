@@ -36,6 +36,16 @@ const localStorageMock: Storage = {
 
 globalThis.localStorage = localStorageMock;
 
+// SAFETY: bun preload stubs DOM Node for instanceof checks in unit tests.
+globalThis.Node = class Node {
+	nodeType = 1;
+} as unknown as typeof Node;
+
+// SAFETY: bun preload stubs DOM HTMLElement for instanceof checks in unit tests.
+const NodeCtor = globalThis.Node as typeof Node;
+// SAFETY: HTMLElement stub extends the Node stub for DOM helper tests.
+globalThis.HTMLElement = class HTMLElement extends NodeCtor {} as unknown as typeof HTMLElement;
+
 const htmlClassList = {
 	add: () => {},
 	remove: () => {}
@@ -45,4 +55,4 @@ const htmlClassList = {
 globalThis.document = {
 	documentElement: { classList: htmlClassList },
 	body: { appendChild: () => {} }
-} as Document;
+} as unknown as Document;

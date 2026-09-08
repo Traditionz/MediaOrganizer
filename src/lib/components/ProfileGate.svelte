@@ -129,7 +129,7 @@
 						disabled={busy}
 						required
 						minlength={4}
-						autocomplete="current-password"
+						autocomplete="off"
 					/>
 					<div class="flex gap-2">
 						<Button type="button" variant="ghost" size="sm" disabled={busy} onclick={cancelUnlock}>
@@ -199,7 +199,7 @@
 							disabled={busy}
 							required
 							minlength={4}
-							autocomplete="new-password"
+							autocomplete="off"
 						/>
 						<Input
 							class="mb-3"
@@ -209,7 +209,7 @@
 							disabled={busy}
 							required
 							minlength={4}
-							autocomplete="new-password"
+							autocomplete="off"
 						/>
 					{/if}
 					<Button class="w-full" size="sm" type="submit" disabled={busy || !newName.trim()}>

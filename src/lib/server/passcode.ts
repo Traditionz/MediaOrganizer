@@ -12,13 +12,9 @@ export function verifyPasscode(stored: string | null | undefined, passcode: stri
 	if (!stored) return false;
 	const [algo, saltHex, hashHex] = stored.split(':');
 	if (algo !== 'scrypt' || !saltHex || !hashHex) return false;
-	try {
-		const expected = Buffer.from(hashHex, 'hex');
-		const actual = scryptSync(passcode, Buffer.from(saltHex, 'hex'), expected.length);
-		return expected.length === actual.length && timingSafeEqual(expected, actual);
-	} catch {
-		return false;
-	}
+	const expected = Buffer.from(hashHex, 'hex');
+	const actual = scryptSync(passcode, Buffer.from(saltHex, 'hex'), expected.length);
+	return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
 export function assertPasscodeFormat(passcode: string): string {

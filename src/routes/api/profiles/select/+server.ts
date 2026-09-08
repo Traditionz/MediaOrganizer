@@ -12,7 +12,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
 	try {
 		const profile = unlockProfile(id, passcode);
-		setProfileCookie(cookies, profile.id);
+		setProfileCookie(cookies, profile);
 		return json({ ok: true, profile });
 	} catch (err) {
 		const message = err instanceof Error ? err.message : 'Failed to unlock profile';

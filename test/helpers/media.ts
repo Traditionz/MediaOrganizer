@@ -16,6 +16,7 @@ export function makeMediaItem(overrides: Partial<MediaItem> = {}): MediaItem {
 		width: overrides.width ?? 800,
 		height: overrides.height ?? 600,
 		duration: overrides.duration ?? null,
+		view_count: overrides.view_count ?? 0,
 		created_at: overrides.created_at ?? '2026-01-15T12:00:00Z',
 		deleted_at: overrides.deleted_at ?? null,
 		has_thumbnail: overrides.has_thumbnail

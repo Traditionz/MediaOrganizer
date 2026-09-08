@@ -19,12 +19,14 @@
 		".svelte-kit/types/**/$types.d.ts",
 		"vite.config.js",
 		"vite.config.ts",
-		"test/**/*.d.ts",
 		"src/**/*.js",
 		"src/**/*.ts",
 		"src/**/*.d.ts",
 		"src/**/*.svelte",
+		"src/**/*.test.ts",
+		"test/**/*.ts",
+		"test/**/*.d.ts",
 		"node_modules/svelte/svelte-html.d.ts"
 	],
-	"exclude": ["src/**/*.test.ts"]
+	"exclude": ["e2e/**"]
 }
