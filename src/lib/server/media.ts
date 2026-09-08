@@ -11,7 +11,7 @@ import { pipeline } from 'node:stream/promises';
 import { Readable, Transform } from 'node:stream';
 import { and, count, eq, exists, inArray, isNotNull, isNull, notExists, sql } from 'drizzle-orm';
 import type { MediaItem, MediaType } from '$lib/types';
-import db, { filePathForKey, newId } from './db';
+import { filePathForKey, getProfileDb, newId, tmpPathForKey } from './db';
 import { listAlbums } from './albums';
 import { albumMedia, albums, media } from './schema';
 import type { MediaRow } from './schema';
@@ -24,6 +24,7 @@ import {
 	normalizeViewCount,
 	parseContentLength
 } from './mediaUtil';
+import { decryptName, encryptName } from './nameCrypto';
 
 export {
 	copyFileName,
@@ -50,6 +51,7 @@ function loadAlbumMembership(
 	profileId: string,
 	mediaIds: string[]
 ): Map<string, { ids: string[]; names: string[] }> {
+	const db = getProfileDb(profileId);
 	const map = new Map<string, { ids: string[]; names: string[] }>();
 	for (const id of mediaIds) map.set(id, { ids: [], names: [] });
 	if (!mediaIds.length) return map;
@@ -64,8 +66,7 @@ function loadAlbumMembership(
 		})
 		.from(albumMedia)
 		.innerJoin(albums, eq(albums.id, albumMedia.albumId))
-		.where(and(eq(albums.profileId, profileId), inArray(albumMedia.mediaId, mediaIds)))
-		.orderBy(sql`${albums.name} COLLATE NOCASE`)
+		.where(inArray(albumMedia.mediaId, mediaIds))
 		.all();
 
 	for (const row of rows) {
@@ -74,12 +75,19 @@ function loadAlbumMembership(
 		entry.ids.push(row.albumId);
 		entry.names.push(albumNameById.get(row.albumId) ?? row.albumId);
 	}
+
+	for (const entry of map.values()) {
+		const paired = entry.ids.map((id, i) => ({ id, name: entry.names[i] ?? id }));
+		paired.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+		entry.ids = paired.map((p) => p.id);
+		entry.names = paired.map((p) => p.name);
+	}
 	return map;
 }
 
-function isValidThumbnail(thumbnailKey: string | null | undefined): boolean {
+function isValidThumbnail(profileId: string, thumbnailKey: string | null | undefined): boolean {
 	if (!thumbnailKey) return false;
-	const path = filePathForKey(thumbnailKey);
+	const path = filePathForKey(profileId, thumbnailKey);
 	if (!existsSync(path)) return false;
 	try {
 		return isThumbnailByteSizeOk(statSync(path).size);
@@ -89,23 +97,26 @@ function isValidThumbnail(thumbnailKey: string | null | undefined): boolean {
 }
 
 function clearInvalidThumbnail(profileId: string, id: string, thumbnailKey: string | null) {
+	const db = getProfileDb(profileId);
 	if (!thumbnailKey) return;
-	const path = filePathForKey(thumbnailKey);
+	const path = filePathForKey(profileId, thumbnailKey);
 	try {
 		if (existsSync(path)) unlinkSync(path);
 	} catch {
 		/* ignore */
 	}
-	db.update(media)
-		.set({ thumbnailKey: null })
-		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
-		.run();
+	db.update(media).set({ thumbnailKey: null }).where(eq(media.id, id)).run();
 }
 
-function mapRow(row: MediaRow, albumIds: string[], albumNames: string[]): MediaItem {
+function mapRow(
+	profileId: string,
+	row: MediaRow,
+	albumIds: string[],
+	albumNames: string[]
+): MediaItem {
 	return {
 		id: row.id,
-		original_name: row.originalName,
+		original_name: decryptName(row.originalName),
 		mime_type: row.mimeType,
 		media_type: row.mediaType,
 		album_ids: albumIds,
@@ -117,7 +128,7 @@ function mapRow(row: MediaRow, albumIds: string[], albumNames: string[]): MediaI
 		view_count: normalizeViewCount(row.viewCount),
 		created_at: normalizeCreated(row.createdAt),
 		deleted_at: row.deletedAt ? normalizeCreated(row.deletedAt) : null,
-		has_thumbnail: isValidThumbnail(row.thumbnailKey)
+		has_thumbnail: isValidThumbnail(profileId, row.thumbnailKey)
 	};
 }
 
@@ -128,20 +139,18 @@ function attachAlbums(profileId: string, rows: MediaRow[]): MediaItem[] {
 	);
 	return rows.map((row) => {
 		const entry = membership.get(row.id) ?? { ids: [], names: [] };
-		return mapRow(row, entry.ids, entry.names);
+		return mapRow(profileId, row, entry.ids, entry.names);
 	});
 }
 
 function getMediaRow(profileId: string, id: string): MediaRow | undefined {
-	return db
-		.select()
-		.from(media)
-		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
-		.get();
+	const db = getProfileDb(profileId);
+	return db.select().from(media).where(eq(media.id, id)).get();
 }
 
 export function listMedia(profileId: string, query: MediaQuery = {}): MediaItem[] {
-	const clauses = [eq(media.profileId, profileId)];
+	const db = getProfileDb(profileId);
+	const clauses = [];
 
 	if (query.trash) {
 		clauses.push(isNotNull(media.deletedAt));
@@ -207,7 +216,7 @@ export function getMediaForServe(
 } | null {
 	const row = getMediaRow(profileId, id);
 	if (!row) return null;
-	const path = filePathForKey(row.storageKey);
+	const path = filePathForKey(profileId, row.storageKey);
 	if (!existsSync(path)) return null;
 	const meta = attachAlbums(profileId, [row])[0];
 	return {
@@ -215,28 +224,23 @@ export function getMediaForServe(
 		path,
 		size: row.size,
 		mimeType: row.mimeType,
-		originalName: row.originalName
+		originalName: decryptName(row.originalName)
 	};
 }
 
 function assertAlbum(profileId: string, albumId: string): void {
-	const album = db
-		.select({ id: albums.id })
-		.from(albums)
-		.where(and(eq(albums.id, albumId), eq(albums.profileId, profileId)))
-		.get();
+	const db = getProfileDb(profileId);
+	const album = db.select({ id: albums.id }).from(albums).where(eq(albums.id, albumId)).get();
 	if (!album) throw new Error('Album not found');
 }
 
 async function fillImageDimensions(profileId: string, id: string, path: string): Promise<void> {
+	const db = getProfileDb(profileId);
 	try {
 		const { probeImageSize } = await import('./compress');
 		const dims = await probeImageSize(path);
 		if (!dims) return;
-		db.update(media)
-			.set({ width: dims.width, height: dims.height })
-			.where(and(eq(media.id, id), eq(media.profileId, profileId)))
-			.run();
+		db.update(media).set({ width: dims.width, height: dims.height }).where(eq(media.id, id)).run();
 	} catch {
 		/* dims are optional for layout */
 	}
@@ -299,12 +303,13 @@ export async function insertMediaFromStream(
 		body: ReadableStream<Uint8Array> | Readable;
 	}
 ): Promise<MediaItem> {
+	const db = getProfileDb(profileId);
 	if (input.albumId) assertAlbum(profileId, input.albumId);
 
 	const id = newId();
 	const storageKey = id;
-	const dest = filePathForKey(storageKey);
-	const tmp = `${dest}.tmp`;
+	const dest = filePathForKey(profileId, storageKey);
+	const tmp = tmpPathForKey(profileId, `${id}.upload.tmp`);
 	const duration = normalizeDuration(input.duration);
 	let size = 0;
 
@@ -340,8 +345,7 @@ export async function insertMediaFromStream(
 			tx.insert(media)
 				.values({
 					id,
-					profileId,
-					originalName: input.originalName,
+					originalName: encryptName(input.originalName),
 					mimeType: input.mimeType,
 					mediaType: input.mediaType,
 					size,
@@ -395,14 +399,11 @@ export function updateMediaDuration(
 	id: string,
 	durationSeconds: number
 ): MediaItem {
+	const db = getProfileDb(profileId);
 	const duration = normalizeDuration(durationSeconds);
 	if (duration == null) throw new Error('Duration must be a finite number greater than 0');
 
-	const result = db
-		.update(media)
-		.set({ duration })
-		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
-		.run();
+	const result = db.update(media).set({ duration }).where(eq(media.id, id)).run();
 	if (result.changes === 0) throw new Error('Media not found');
 
 	const meta = getMediaMeta(profileId, id);
@@ -412,10 +413,11 @@ export function updateMediaDuration(
 
 /** Count a lightbox open for this media row. Returns the updated item. */
 export function recordMediaView(profileId: string, id: string): MediaItem {
+	const db = getProfileDb(profileId);
 	const result = db
 		.update(media)
 		.set({ viewCount: sql`${media.viewCount} + 1` })
-		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+		.where(eq(media.id, id))
 		.run();
 	if (result.changes === 0) throw new Error('Media not found');
 
@@ -428,15 +430,12 @@ export function recordMediaView(profileId: string, id: string): MediaItem {
 export async function backfillMissingDurations(
 	profileId: string
 ): Promise<{ updated: number; failed: number; remaining: number }> {
+	const db = getProfileDb(profileId);
 	const rows = db
 		.select({ id: media.id, storageKey: media.storageKey })
 		.from(media)
 		.where(
-			and(
-				eq(media.profileId, profileId),
-				eq(media.mediaType, 'video'),
-				sql`(${media.duration} IS NULL OR ${media.duration} <= 0)`
-			)
+			and(eq(media.mediaType, 'video'), sql`(${media.duration} IS NULL OR ${media.duration} <= 0)`)
 		)
 		.orderBy(sql`${media.createdAt} ASC`)
 		.all();
@@ -448,7 +447,7 @@ export async function backfillMissingDurations(
 	let failed = 0;
 
 	for (const row of rows) {
-		const path = filePathForKey(row.storageKey);
+		const path = filePathForKey(profileId, row.storageKey);
 		if (!existsSync(path)) {
 			failed += 1;
 			continue;
@@ -459,10 +458,7 @@ export async function backfillMissingDurations(
 				failed += 1;
 				continue;
 			}
-			db.update(media)
-				.set({ duration })
-				.where(and(eq(media.id, row.id), eq(media.profileId, profileId)))
-				.run();
+			db.update(media).set({ duration }).where(eq(media.id, row.id)).run();
 			updated += 1;
 		} catch {
 			failed += 1;
@@ -475,7 +471,6 @@ export async function backfillMissingDurations(
 			.from(media)
 			.where(
 				and(
-					eq(media.profileId, profileId),
 					eq(media.mediaType, 'video'),
 					sql`(${media.duration} IS NULL OR ${media.duration} <= 0)`
 				)
@@ -527,10 +522,11 @@ async function pumpDurationBackfill() {
 
 /** Compress on-disk media to AV1 (video) or AVIF (image). Keeps original if not smaller. */
 export async function compressMedia(profileId: string, id: string): Promise<MediaItem> {
+	const db = getProfileDb(profileId);
 	const row = getMediaRow(profileId, id);
 	if (!row) throw new Error('Media not found');
 
-	const path = filePathForKey(row.storageKey);
+	const path = filePathForKey(profileId, row.storageKey);
 	if (!existsSync(path)) throw new Error('Media file missing on disk');
 
 	const { compressImageToAvif, compressVideoToAv1, renameWithExt } = await import('./compress');
@@ -548,9 +544,9 @@ export async function compressMedia(profileId: string, id: string): Promise<Medi
 			db.update(media)
 				.set({
 					mimeType: result.mimeType,
-					originalName: renameWithExt(row.originalName, result.ext)
+					originalName: encryptName(renameWithExt(decryptName(row.originalName), result.ext))
 				})
-				.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+				.where(eq(media.id, id))
 				.run();
 		}
 		return getMediaMeta(profileId, id)!;
@@ -560,25 +556,22 @@ export async function compressMedia(profileId: string, id: string): Promise<Medi
 		.set({
 			size: result.newSize,
 			mimeType: result.mimeType,
-			originalName: renameWithExt(row.originalName, result.ext),
+			originalName: encryptName(renameWithExt(decryptName(row.originalName), result.ext)),
 			width: result.width ?? row.width,
 			height: result.height ?? row.height
 		})
-		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+		.where(eq(media.id, id))
 		.run();
 
 	return getMediaMeta(profileId, id)!;
 }
 
 export function addMediaToAlbum(profileId: string, ids: string[], albumId: string): void {
+	const db = getProfileDb(profileId);
 	assertAlbum(profileId, albumId);
 	db.transaction((tx) => {
 		for (const id of ids) {
-			const row = tx
-				.select({ id: media.id })
-				.from(media)
-				.where(and(eq(media.id, id), eq(media.profileId, profileId)))
-				.get();
+			const row = tx.select({ id: media.id }).from(media).where(eq(media.id, id)).get();
 			if (!row) continue;
 			tx.insert(albumMedia).values({ albumId, mediaId: id }).onConflictDoNothing().run();
 		}
@@ -586,14 +579,11 @@ export function addMediaToAlbum(profileId: string, ids: string[], albumId: strin
 }
 
 export function removeMediaFromAlbum(profileId: string, ids: string[], albumId: string): void {
+	const db = getProfileDb(profileId);
 	assertAlbum(profileId, albumId);
 	db.transaction((tx) => {
 		for (const id of ids) {
-			const row = tx
-				.select({ id: media.id })
-				.from(media)
-				.where(and(eq(media.id, id), eq(media.profileId, profileId)))
-				.get();
+			const row = tx.select({ id: media.id }).from(media).where(eq(media.id, id)).get();
 			if (!row) continue;
 			tx.delete(albumMedia)
 				.where(and(eq(albumMedia.albumId, albumId), eq(albumMedia.mediaId, id)))
@@ -603,13 +593,14 @@ export function removeMediaFromAlbum(profileId: string, ids: string[], albumId: 
 }
 
 export function renameMedia(profileId: string, id: string, name: string): MediaItem {
+	const db = getProfileDb(profileId);
 	const trimmed = name.trim();
 	if (!trimmed) throw new Error('Name is required');
 
 	const result = db
 		.update(media)
-		.set({ originalName: trimmed })
-		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+		.set({ originalName: encryptName(trimmed) })
+		.where(eq(media.id, id))
 		.run();
 	if (result.changes === 0) throw new Error('Media not found');
 
@@ -623,6 +614,7 @@ export function duplicateMedia(
 	ids: string[],
 	albumId: string | null
 ): MediaItem[] {
+	const db = getProfileDb(profileId);
 	if (albumId) assertAlbum(profileId, albumId);
 
 	const created: MediaItem[] = [];
@@ -632,29 +624,28 @@ export function duplicateMedia(
 		if (!row) continue;
 
 		const newMediaId = newId();
-		const src = filePathForKey(row.storageKey);
+		const src = filePathForKey(profileId, row.storageKey);
+		const copyName = copyFileName(decryptName(row.originalName));
 		const destKey = newMediaId;
-		const dest = filePathForKey(destKey);
+		const dest = filePathForKey(profileId, destKey);
 		if (!existsSync(src)) continue;
 
 		copyFileSync(src, dest);
 
 		let thumbKey: string | null = null;
 		if (row.thumbnailKey) {
-			const thumbSrc = filePathForKey(row.thumbnailKey);
+			const thumbSrc = filePathForKey(profileId, row.thumbnailKey);
 			if (existsSync(thumbSrc)) {
 				thumbKey = `${newMediaId}-thumb`;
-				copyFileSync(thumbSrc, filePathForKey(thumbKey));
+				copyFileSync(thumbSrc, filePathForKey(profileId, thumbKey));
 			}
 		}
 
-		const copyName = copyFileName(row.originalName);
 		db.transaction((tx) => {
 			tx.insert(media)
 				.values({
 					id: newMediaId,
-					profileId,
-					originalName: copyName,
+					originalName: encryptName(copyName),
 					mimeType: row.mimeType,
 					mediaType: row.mediaType,
 					size: row.size,
@@ -690,6 +681,7 @@ export function duplicateMedia(
 }
 
 export function deleteMedia(profileId: string, ids: string[]): void {
+	const db = getProfileDb(profileId);
 	db.transaction((tx) => {
 		for (const id of ids) {
 			const row = tx
@@ -698,15 +690,13 @@ export function deleteMedia(profileId: string, ids: string[]): void {
 					thumbnailKey: media.thumbnailKey
 				})
 				.from(media)
-				.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+				.where(eq(media.id, id))
 				.get();
-			tx.delete(media)
-				.where(and(eq(media.id, id), eq(media.profileId, profileId)))
-				.run();
+			tx.delete(media).where(eq(media.id, id)).run();
 			if (row) {
 				for (const key of [row.storageKey, row.thumbnailKey]) {
 					if (!key) continue;
-					const path = filePathForKey(key);
+					const path = filePathForKey(profileId, key);
 					try {
 						if (existsSync(path)) unlinkSync(path);
 					} catch {
@@ -720,19 +710,21 @@ export function deleteMedia(profileId: string, ids: string[]): void {
 
 /** Move media to trash (soft delete). Keeps files and album membership. */
 export function softDeleteMedia(profileId: string, ids: string[]): void {
+	const db = getProfileDb(profileId);
 	if (!ids.length) return;
 	db.update(media)
 		.set({ deletedAt: sql`(datetime('now'))` })
-		.where(and(eq(media.profileId, profileId), inArray(media.id, ids), isNull(media.deletedAt)))
+		.where(and(inArray(media.id, ids), isNull(media.deletedAt)))
 		.run();
 }
 
 /** Restore media from trash. */
 export function restoreMedia(profileId: string, ids: string[]): void {
+	const db = getProfileDb(profileId);
 	if (!ids.length) return;
 	db.update(media)
 		.set({ deletedAt: null })
-		.where(and(eq(media.profileId, profileId), inArray(media.id, ids), isNotNull(media.deletedAt)))
+		.where(and(inArray(media.id, ids), isNotNull(media.deletedAt)))
 		.run();
 }
 
@@ -741,13 +733,13 @@ export function restoreMedia(profileId: string, ids: string[]): void {
  * Call on page load.
  */
 export function purgeExpiredTrash(profileId: string, days: number = TRASH_RETENTION_DAYS): number {
+	const db = getProfileDb(profileId);
 	const retention = Math.max(1, Math.floor(days));
 	const rows = db
 		.select({ id: media.id })
 		.from(media)
 		.where(
 			and(
-				eq(media.profileId, profileId),
 				isNotNull(media.deletedAt),
 				sql`${media.deletedAt} < datetime('now', ${`-${retention} days`})`
 			)
@@ -762,17 +754,18 @@ export function getThumbnailPath(
 	profileId: string,
 	id: string
 ): { path: string; mime: string } | null {
+	const db = getProfileDb(profileId);
 	const row = db
 		.select({ thumbnailKey: media.thumbnailKey })
 		.from(media)
-		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+		.where(eq(media.id, id))
 		.get();
 	if (!row?.thumbnailKey) return null;
-	if (!isValidThumbnail(row.thumbnailKey)) {
+	if (!isValidThumbnail(profileId, row.thumbnailKey)) {
 		clearInvalidThumbnail(profileId, id, row.thumbnailKey);
 		return null;
 	}
-	const path = filePathForKey(row.thumbnailKey);
+	const path = filePathForKey(profileId, row.thumbnailKey);
 	return { path, mime: 'image/jpeg' };
 }
 
@@ -781,22 +774,24 @@ export async function saveThumbnail(
 	id: string,
 	body: ReadableStream<Uint8Array> | null
 ): Promise<void> {
+	const db = getProfileDb(profileId);
 	const row = db
 		.select({
 			id: media.id,
+			storageKey: media.storageKey,
 			thumbnailKey: media.thumbnailKey,
 			mediaType: media.mediaType
 		})
 		.from(media)
-		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+		.where(eq(media.id, id))
 		.get();
 	if (!row) throw new Error('Media not found');
 	if (row.mediaType !== 'video') throw new Error('Thumbnails are only for videos');
 	if (!body) throw new Error('Empty body');
 
 	const thumbKey = `${id}-thumb`;
-	const dest = filePathForKey(thumbKey);
-	const tmp = `${dest}.tmp`;
+	const dest = filePathForKey(profileId, thumbKey);
+	const tmp = tmpPathForKey(profileId, `${id}.thumb.tmp`);
 
 	// SAFETY: Request body is a WHATWG ReadableStream; Node fromWeb accepts that contract.
 	const nodeStream = Readable.fromWeb(body as import('node:stream/web').ReadableStream);
@@ -816,7 +811,7 @@ export async function saveThumbnail(
 	renameSync(tmp, dest);
 
 	if (row.thumbnailKey && row.thumbnailKey !== thumbKey) {
-		const old = filePathForKey(row.thumbnailKey);
+		const old = filePathForKey(profileId, row.thumbnailKey);
 		try {
 			if (existsSync(old)) unlinkSync(old);
 		} catch {
@@ -824,16 +819,14 @@ export async function saveThumbnail(
 		}
 	}
 
-	db.update(media)
-		.set({ thumbnailKey: thumbKey })
-		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
-		.run();
+	db.update(media).set({ thumbnailKey: thumbKey }).where(eq(media.id, id)).run();
 }
 
 /** Build a JPEG poster with ffmpeg when the browser cannot decode the file. */
 export async function ensureVideoThumbnail(profileId: string, id: string): Promise<boolean> {
 	if (getThumbnailPath(profileId, id)) return true;
 
+	const db = getProfileDb(profileId);
 	const row = db
 		.select({
 			id: media.id,
@@ -842,19 +835,19 @@ export async function ensureVideoThumbnail(profileId: string, id: string): Promi
 			duration: media.duration
 		})
 		.from(media)
-		.where(and(eq(media.id, id), eq(media.profileId, profileId)))
+		.where(eq(media.id, id))
 		.get();
 	if (!row || row.mediaType !== 'video') return false;
 
-	const input = filePathForKey(row.storageKey);
+	const input = filePathForKey(profileId, row.storageKey);
 	if (!existsSync(input)) return false;
 
 	const { probeVideoDuration } = await import('./compress');
 	const { extractJpegFrame } = await import('./videoThumb');
 	const duration = normalizeDuration(row.duration) ?? (await probeVideoDuration(input)) ?? 0;
 	const thumbKey = `${id}-thumb`;
-	const dest = filePathForKey(thumbKey);
-	const tmp = `${dest}.tmp`;
+	const dest = filePathForKey(profileId, thumbKey);
+	const tmp = tmpPathForKey(profileId, `${id}.thumb.tmp`);
 
 	for (const seek of thumbnailSeekCandidates(duration)) {
 		try {
@@ -869,10 +862,7 @@ export async function ensureVideoThumbnail(profileId: string, id: string): Promi
 			}
 			if (existsSync(dest)) unlinkSync(dest);
 			renameSync(tmp, dest);
-			db.update(media)
-				.set({ thumbnailKey: thumbKey })
-				.where(and(eq(media.id, id), eq(media.profileId, profileId)))
-				.run();
+			db.update(media).set({ thumbnailKey: thumbKey }).where(eq(media.id, id)).run();
 			return true;
 		} catch {
 			try {
@@ -886,33 +876,23 @@ export async function ensureVideoThumbnail(profileId: string, id: string): Promi
 }
 
 export function countAllMedia(profileId: string): number {
-	return (
-		db
-			.select({ c: count() })
-			.from(media)
-			.where(and(eq(media.profileId, profileId), isNull(media.deletedAt)))
-			.get()?.c ?? 0
-	);
+	const db = getProfileDb(profileId);
+	return db.select({ c: count() }).from(media).where(isNull(media.deletedAt)).get()?.c ?? 0;
 }
 
 export function countTrashMedia(profileId: string): number {
-	return (
-		db
-			.select({ c: count() })
-			.from(media)
-			.where(and(eq(media.profileId, profileId), isNotNull(media.deletedAt)))
-			.get()?.c ?? 0
-	);
+	const db = getProfileDb(profileId);
+	return db.select({ c: count() }).from(media).where(isNotNull(media.deletedAt)).get()?.c ?? 0;
 }
 
 export function countUnassignedMedia(profileId: string): number {
+	const db = getProfileDb(profileId);
 	return (
 		db
 			.select({ c: count() })
 			.from(media)
 			.where(
 				and(
-					eq(media.profileId, profileId),
 					isNull(media.deletedAt),
 					notExists(db.select().from(albumMedia).where(eq(albumMedia.mediaId, media.id)))
 				)

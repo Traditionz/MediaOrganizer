@@ -1,7 +1,11 @@
 import { count, eq, sql } from 'drizzle-orm';
-import { existsSync, unlinkSync } from 'node:fs';
 import type { Profile } from '$lib/types';
-import db, { filePathForKey, isUniqueConstraintError, newId } from './db';
+import registryDb, {
+	destroyProfileStorage,
+	getProfileDb,
+	isUniqueConstraintError,
+	newId
+} from './db';
 import { media, profiles } from './schema';
 import type { ProfileRow } from './schema';
 import { assertPasscodeFormat, hashPasscode, verifyPasscode } from './passcode';
@@ -18,7 +22,7 @@ function mapProfile(row: ProfileRow): Profile {
 }
 
 export function listProfiles(): Profile[] {
-	const rows = db
+	const rows = registryDb
 		.select()
 		.from(profiles)
 		.orderBy(sql`${profiles.name} COLLATE NOCASE`)
@@ -27,12 +31,12 @@ export function listProfiles(): Profile[] {
 }
 
 export function getProfile(id: string): Profile | null {
-	const row = db.select().from(profiles).where(eq(profiles.id, id)).get();
+	const row = registryDb.select().from(profiles).where(eq(profiles.id, id)).get();
 	return row ? mapProfile(row) : null;
 }
 
 function getProfileRow(id: string): ProfileRow | null {
-	return db.select().from(profiles).where(eq(profiles.id, id)).get() ?? null;
+	return registryDb.select().from(profiles).where(eq(profiles.id, id)).get() ?? null;
 }
 
 export function createProfile(name: string, passcode?: string | null): Profile {
@@ -43,7 +47,8 @@ export function createProfile(name: string, passcode?: string | null): Profile {
 
 	const id = newId();
 	try {
-		db.insert(profiles)
+		registryDb
+			.insert(profiles)
 			.values({
 				id,
 				name: trimmed,
@@ -57,6 +62,7 @@ export function createProfile(name: string, passcode?: string | null): Profile {
 		throw err;
 	}
 
+	getProfileDb(id);
 	return getProfile(id)!;
 }
 
@@ -91,7 +97,7 @@ export function setProfilePasscode(
 
 	const trimmed = newPasscode?.trim() ?? '';
 	const hash = trimmed ? hashPasscode(assertPasscodeFormat(trimmed)) : null;
-	db.update(profiles).set({ passcodeHash: hash }).where(eq(profiles.id, id)).run();
+	registryDb.update(profiles).set({ passcodeHash: hash }).where(eq(profiles.id, id)).run();
 	return getProfile(id)!;
 }
 
@@ -109,32 +115,12 @@ export function deleteProfile(
 		throw new Error('Profile name does not match');
 	}
 
-	const actualCount =
-		db.select({ c: count() }).from(media).where(eq(media.profileId, id)).get()?.c ?? 0;
+	const pdb = getProfileDb(id);
+	const actualCount = pdb.select({ c: count() }).from(media).get()?.c ?? 0;
 	if (!Number.isInteger(confirmation.mediaCount) || confirmation.mediaCount !== actualCount) {
 		throw new Error('Media count does not match');
 	}
 
-	const keys = db
-		.select({
-			storageKey: media.storageKey,
-			thumbnailKey: media.thumbnailKey
-		})
-		.from(media)
-		.where(eq(media.profileId, id))
-		.all();
-
-	db.delete(profiles).where(eq(profiles.id, id)).run();
-
-	for (const keyRow of keys) {
-		for (const key of [keyRow.storageKey, keyRow.thumbnailKey]) {
-			if (!key) continue;
-			const path = filePathForKey(key);
-			try {
-				if (existsSync(path)) unlinkSync(path);
-			} catch {
-				/* ignore */
-			}
-		}
-	}
+	registryDb.delete(profiles).where(eq(profiles.id, id)).run();
+	destroyProfileStorage(id);
 }

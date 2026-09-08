@@ -1,6 +1,8 @@
 import { and, count, eq, isNull, sql } from 'drizzle-orm';
 import type { Album } from '$lib/types';
-import db, { isUniqueConstraintError, newId } from './db';
+import { nextDuplicateAlbumName } from '$lib/albumNaming.js';
+import { getProfileDb, isUniqueConstraintError, newId } from './db';
+import { decryptName, encryptName, nameLookupKey } from './nameCrypto';
 import { albumMedia, albums, media } from './schema';
 
 function normalizeCreated(iso: string): string {
@@ -8,6 +10,7 @@ function normalizeCreated(iso: string): string {
 }
 
 export function listAlbums(profileId: string): Album[] {
+	const db = getProfileDb(profileId);
 	const mediaCount = db
 		.select({ c: count() })
 		.from(albumMedia)
@@ -22,25 +25,32 @@ export function listAlbums(profileId: string): Album[] {
 			mediaCount: sql<number>`(${mediaCount})`.mapWith(Number)
 		})
 		.from(albums)
-		.where(eq(albums.profileId, profileId))
-		.orderBy(sql`${albums.name} COLLATE NOCASE`)
 		.all();
 
-	return rows.map((row) => ({
-		id: row.id,
-		name: row.name,
-		created_at: normalizeCreated(row.createdAt),
-		media_count: row.mediaCount
-	}));
+	return rows
+		.map((row) => ({
+			id: row.id,
+			name: decryptName(row.name),
+			created_at: normalizeCreated(row.createdAt),
+			media_count: row.mediaCount
+		}))
+		.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }
 
 export function createAlbum(profileId: string, name: string): Album {
 	const trimmed = name.trim();
 	if (!trimmed) throw new Error('Album name is required');
 
+	const db = getProfileDb(profileId);
 	const id = newId();
 	try {
-		db.insert(albums).values({ id, profileId, name: trimmed }).run();
+		db.insert(albums)
+			.values({
+				id,
+				name: encryptName(trimmed),
+				nameKey: nameLookupKey(trimmed)
+			})
+			.run();
 	} catch (err) {
 		if (err instanceof Error && isUniqueConstraintError(err)) {
 			throw new Error('An album with that name already exists');
@@ -52,26 +62,25 @@ export function createAlbum(profileId: string, name: string): Album {
 }
 
 export function deleteAlbum(profileId: string, id: string): void {
-	db.delete(albums)
-		.where(and(eq(albums.id, id), eq(albums.profileId, profileId)))
-		.run();
+	const db = getProfileDb(profileId);
+	db.delete(albums).where(eq(albums.id, id)).run();
 }
 
 export function renameAlbum(profileId: string, id: string, name: string): Album {
 	const trimmed = name.trim();
 	if (!trimmed) throw new Error('Album name is required');
 
-	const album = db
-		.select({ id: albums.id })
-		.from(albums)
-		.where(and(eq(albums.id, id), eq(albums.profileId, profileId)))
-		.get();
+	const db = getProfileDb(profileId);
+	const album = db.select({ id: albums.id }).from(albums).where(eq(albums.id, id)).get();
 	if (!album) throw new Error('Album not found');
 
 	try {
 		db.update(albums)
-			.set({ name: trimmed })
-			.where(and(eq(albums.id, id), eq(albums.profileId, profileId)))
+			.set({
+				name: encryptName(trimmed),
+				nameKey: nameLookupKey(trimmed)
+			})
+			.where(eq(albums.id, id))
 			.run();
 	} catch (err) {
 		if (err instanceof Error && isUniqueConstraintError(err)) {
@@ -84,8 +93,6 @@ export function renameAlbum(profileId: string, id: string, name: string): Album 
 	if (!updated) throw new Error('Album not found after rename');
 	return updated;
 }
-
-import { nextDuplicateAlbumName } from '$lib/albumNaming.js';
 
 /**
  * Duplicate an album: new album named "Name (x)" with the same media memberships
@@ -101,10 +108,17 @@ export function duplicateAlbum(profileId: string, id: string): Album {
 		existing.map((a) => a.name)
 	);
 	const newIdValue = newId();
+	const db = getProfileDb(profileId);
 
 	try {
 		db.transaction((tx) => {
-			tx.insert(albums).values({ id: newIdValue, profileId, name: newName }).run();
+			tx.insert(albums)
+				.values({
+					id: newIdValue,
+					name: encryptName(newName),
+					nameKey: nameLookupKey(newName)
+				})
+				.run();
 			const memberships = tx
 				.select({ mediaId: albumMedia.mediaId })
 				.from(albumMedia)
