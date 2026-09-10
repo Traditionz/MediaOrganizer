@@ -1,7 +1,7 @@
 export type MediaType = 'image' | 'video';
 export type ViewMode = 'grid' | 'collage';
 export type ThemeMode = 'light' | 'dark';
-export type PasscodeModalMode = 'unlock' | 'create' | 'delete';
+export type PasscodeModalMode = 'unlock' | 'create' | 'delete' | 'passcode';
 
 export interface Profile {
 	id: string;

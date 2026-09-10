@@ -59,7 +59,7 @@ export async function openProfileGate(page: Page): Promise<void> {
 }
 
 export async function unlockProfile(page: Page, name: string, passcode?: string): Promise<void> {
-	await page.getByRole('button', { name }).click();
+	await page.getByRole('button', { name, exact: true }).click();
 	if (passcode !== undefined) {
 		await page.getByPlaceholder('Passcode').fill(passcode);
 		await page.getByRole('button', { name: 'Unlock' }).click();
@@ -124,6 +124,12 @@ export async function exitSelectMode(page: Page): Promise<void> {
 	if (await done.isVisible().catch(() => false)) {
 		await done.click();
 	}
+}
+
+export async function revealLightboxHud(page: Page): Promise<void> {
+	const frame = page.getByRole('dialog').locator('[data-lightbox-frame]');
+	await expect(frame).toBeVisible();
+	await frame.hover();
 }
 
 export async function confirmDialog(page: Page, confirmLabel: string): Promise<void> {

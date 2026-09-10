@@ -108,9 +108,7 @@
 	}
 </script>
 
-<div
-	class="border-border bg-background/90 flex flex-wrap items-center gap-2 border-b px-4 py-3 backdrop-blur"
->
+<div class="mo-app-chrome border-border flex flex-wrap items-center gap-2 border-b px-4 py-3">
 	{#if showSelectionActions}
 		<Badge variant="outline">{selectedCount} selected</Badge>
 		{#if trashMode}
@@ -132,7 +130,7 @@
 				Move to trash
 			</Button>
 		{/if}
-		<Button size="sm" variant="secondary" onclick={onclearSelection}>Clear</Button>
+		<Button size="sm" variant="outline" onclick={onclearSelection}>Clear</Button>
 		<Button size="sm" variant="ghost" onclick={ontoggleSelect}>Done</Button>
 	{:else}
 		<Button size="sm" variant="outline" onclick={ontoggleSelect}>Select</Button>

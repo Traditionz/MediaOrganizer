@@ -9,6 +9,7 @@ import {
 	library,
 	mediaCards,
 	openProfileGate,
+	revealLightboxHud,
 	selectNav,
 	uniqueName,
 	uploadFiles,
@@ -125,6 +126,8 @@ test.describe('media library', () => {
 		await mediaCards(page).first().dblclick();
 		const dialog = page.getByRole('dialog');
 		await expect(dialog).toBeVisible();
+		await expect(dialog.getByText(/0 views/)).toBeHidden();
+		await revealLightboxHud(page);
 		await expect(dialog.getByText(/0 views/)).toBeVisible();
 		await expect(dialog.getByText(/1 view/)).toBeVisible({ timeout: 15_000 });
 		await dialog.getByRole('button', { name: 'Close' }).click();
@@ -137,9 +140,11 @@ test.describe('media library', () => {
 		await uploadFiles(page, fixtures.photoA);
 		await waitForUploadIdle(page);
 		await mediaCards(page).first().dblclick();
+		await revealLightboxHud(page);
 		await expect(page.getByRole('dialog').getByText(/1 view/)).toBeVisible({ timeout: 15_000 });
 		await page.keyboard.press('Escape');
 		await mediaCards(page).first().dblclick();
+		await revealLightboxHud(page);
 		await expect(page.getByRole('dialog').getByText(/1 view/)).toBeVisible();
 		await expect(page.getByRole('dialog').getByText(/2 views/)).toBeVisible({ timeout: 15_000 });
 		await page.keyboard.press('Escape');
@@ -164,6 +169,35 @@ test.describe('media library', () => {
 		await expect(page.getByRole('dialog')).toBeVisible();
 		await page.keyboard.press('Escape');
 		await expect(page.getByRole('dialog')).toBeHidden();
+	});
+
+	test('lightbox arrows and keys move between media', async ({ page }) => {
+		await uploadFiles(page, [fixtures.photoA, fixtures.photoB]);
+		await waitForUploadIdle(page);
+		await expect(mediaCards(page)).toHaveCount(2);
+		await mediaCards(page).first().dblclick();
+		const dialog = page.getByRole('dialog');
+		await expect(dialog).toBeVisible();
+		await expect(dialog.getByText('1 / 2')).toBeHidden();
+		await revealLightboxHud(page);
+		await expect(dialog.getByText('1 / 2')).toBeVisible();
+		await dialog.getByRole('button', { name: 'Next media' }).click();
+		await revealLightboxHud(page);
+		await expect(dialog.getByText('2 / 2')).toBeVisible();
+		await page.keyboard.press('ArrowUp');
+		await revealLightboxHud(page);
+		await expect(dialog.getByText('1 / 2')).toBeVisible();
+		await page.keyboard.press('ArrowDown');
+		await revealLightboxHud(page);
+		await expect(dialog.getByText('2 / 2')).toBeVisible();
+		await page.keyboard.press('Home');
+		await revealLightboxHud(page);
+		await expect(dialog.getByText('1 / 2')).toBeVisible();
+		await page.keyboard.press('End');
+		await revealLightboxHud(page);
+		await expect(dialog.getByText('2 / 2')).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(dialog).toBeHidden();
 	});
 
 	test('F2 renames selected media', async ({ page }) => {

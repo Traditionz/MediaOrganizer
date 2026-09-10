@@ -37,6 +37,7 @@
 		type DragZoneHost
 	} from '$lib/dragUpload';
 	import { asFiniteNumber, asPlainObject, eventTargetHtml, own, ownString } from '$lib/parse';
+	import { passcodePatchBody } from '$lib/profile/passcodeEdit';
 	import {
 		cardsInSelectionBox,
 		computeSelectionRect,
@@ -211,11 +212,36 @@
 		};
 	}
 
+	function openPasscodeEditor(profile: { id: string; name: string; has_passcode: boolean }) {
+		ui.profileModalError = '';
+		ui.profileModal = {
+			open: true,
+			mode: 'passcode',
+			profileId: profile.id,
+			profileName: profile.name,
+			requiresPasscode: profile.has_passcode,
+			mediaCount: 0,
+			prefillName: ''
+		};
+	}
+
+	async function goHome() {
+		ui.preview = null;
+		ui.closeProfileModal();
+		await fetch('/api/profiles/lock', {
+			method: 'POST',
+			credentials: 'same-origin'
+		});
+		await invalidateAll();
+	}
+
 	async function handleProfileModalSubmit(payload: {
 		name?: string;
 		passcode: string;
 		confirmPasscode: string;
 		usePasscode: boolean;
+		currentPasscode?: string;
+		removePasscode?: boolean;
 		confirmName?: string;
 		confirmMediaCount?: number;
 	}) {
@@ -233,6 +259,27 @@
 				ui.closeProfileModal();
 				return;
 			}
+			if (ui.profileModal.mode === 'passcode' && ui.profileModal.profileId) {
+				const body = passcodePatchBody({
+					id: ui.profileModal.profileId,
+					hasPasscode: ui.profileModal.requiresPasscode,
+					remove: payload.removePasscode === true,
+					currentPasscode: payload.currentPasscode ?? '',
+					newPasscode: payload.passcode
+				});
+				const res = await fetch('/api/profiles', {
+					method: 'PATCH',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(body)
+				});
+				if (!res.ok) {
+					const errBody = await res.json().catch(() => ({}));
+					throw new Error(errBody.message || 'Failed to update passcode');
+				}
+				ui.closeProfileModal();
+				await invalidateAll();
+				return;
+			}
 			if (ui.profileModal.mode === 'delete' && ui.profileModal.profileId) {
 				const res = await fetch('/api/profiles', {
 					method: 'DELETE',
@@ -244,8 +291,8 @@
 					})
 				});
 				if (!res.ok) {
-					const body = await res.json().catch(() => ({}));
-					throw new Error(body.message || 'Failed to delete profile');
+					const errBody = await res.json().catch(() => ({}));
+					throw new Error(errBody.message || 'Failed to delete profile');
 				}
 				ui.closeProfileModal();
 				await invalidateAll();
@@ -1252,7 +1299,12 @@
 <svelte:document ondrop={onDocumentDrop} />
 
 {#if !library.activeProfile}
-	<ProfileGate profiles={library.profiles} onselect={selectProfile} oncreate={createProfile} />
+	<ProfileGate
+		profiles={library.profiles}
+		onselect={selectProfile}
+		oncreate={createProfile}
+		onpasscode={openPasscodeEditor}
+	/>
 {:else}
 	<div
 		class="bg-muted text-foreground flex h-screen"
@@ -1280,6 +1332,10 @@
 			onswitchProfile={switchProfileWithPrompt}
 			oncreateProfile={createProfileWithPrompt}
 			ondeleteProfile={deleteProfile}
+			onhome={goHome}
+			oneditPasscode={() => {
+				if (library.activeProfile) openPasscodeEditor(library.activeProfile);
+			}}
 		/>
 
 		<main class="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -1448,13 +1504,13 @@
 	/>
 
 	{#if ui.preview}
-		{#key ui.preview.id}
-			<MediaLightbox
-				item={ui.preview}
-				onclose={() => (ui.preview = null)}
-				onview={applyRecordedView}
-			/>
-		{/key}
+		<MediaLightbox
+			item={ui.preview}
+			items={library.filteredMedia}
+			onclose={() => (ui.preview = null)}
+			onnavigate={(next) => (ui.preview = next)}
+			onview={applyRecordedView}
+		/>
 	{/if}
 
 	<ContextMenu
@@ -1464,20 +1520,6 @@
 		items={contextMenuItems}
 		onselect={handleContextSelect}
 		onclose={() => ui.closeContextMenu()}
-	/>
-
-	<PasscodeModal
-		open={ui.profileModal.open}
-		mode={ui.profileModal.mode}
-		profileName={ui.profileModal.mode === 'create'
-			? ui.profileModal.prefillName
-			: ui.profileModal.profileName}
-		mediaCount={ui.profileModal.mediaCount}
-		requiresPasscode={ui.profileModal.requiresPasscode}
-		busy={ui.profileModalBusy}
-		errorMessage={ui.profileModalError}
-		oncancel={() => ui.closeProfileModal()}
-		onsubmit={handleProfileModalSubmit}
 	/>
 
 	<ConfirmModal
@@ -1512,5 +1554,19 @@
 		onconfirm={handleAlbumPickerConfirm}
 	/>
 {/if}
+
+<PasscodeModal
+	open={ui.profileModal.open}
+	mode={ui.profileModal.mode}
+	profileName={ui.profileModal.mode === 'create'
+		? ui.profileModal.prefillName
+		: ui.profileModal.profileName}
+	mediaCount={ui.profileModal.mediaCount}
+	requiresPasscode={ui.profileModal.requiresPasscode}
+	busy={ui.profileModalBusy}
+	errorMessage={ui.profileModalError}
+	oncancel={() => ui.closeProfileModal()}
+	onsubmit={handleProfileModalSubmit}
+/>
 
 <TransferPanel />

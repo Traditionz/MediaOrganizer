@@ -24,7 +24,7 @@ import {
 	normalizeViewCount,
 	parseContentLength
 } from './mediaUtil';
-import { decryptName, encryptName } from './nameCrypto';
+import { decryptName, decryptStoredName, encryptName } from './nameCrypto';
 
 export {
 	copyFileName,
@@ -116,7 +116,7 @@ function mapRow(
 ): MediaItem {
 	return {
 		id: row.id,
-		original_name: decryptName(row.originalName),
+		original_name: decryptStoredName(row.originalName),
 		mime_type: row.mimeType,
 		media_type: row.mediaType,
 		album_ids: albumIds,
@@ -224,7 +224,7 @@ export function getMediaForServe(
 		path,
 		size: row.size,
 		mimeType: row.mimeType,
-		originalName: decryptName(row.originalName)
+		originalName: decryptStoredName(row.originalName)
 	};
 }
 

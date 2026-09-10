@@ -7,6 +7,11 @@
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Spinner } from '$lib/components/ui/spinner/index.js';
 	import type { PasscodeModalMode } from '$lib/types';
+	import {
+		passcodeEditSubmitLabel,
+		passcodeEditTitle,
+		validatePasscodeEdit
+	} from '$lib/profile/passcodeEdit';
 
 	interface Props {
 		open: boolean;
@@ -23,6 +28,8 @@
 			passcode: string;
 			confirmPasscode: string;
 			usePasscode: boolean;
+			currentPasscode?: string;
+			removePasscode?: boolean;
 			confirmName?: string;
 			confirmMediaCount?: number;
 		}) => void | Promise<void>;
@@ -43,7 +50,9 @@
 	let name = $state('');
 	let passcode = $state('');
 	let confirmPasscode = $state('');
+	let currentPasscode = $state('');
 	let usePasscode = $state(false);
+	let removePasscode = $state(false);
 	let confirmName = $state('');
 	let confirmMediaCount = $state('');
 	let localError = $state('');
@@ -55,14 +64,22 @@
 		name = mode === 'create' ? profileName : '';
 		passcode = '';
 		confirmPasscode = '';
+		currentPasscode = '';
 		usePasscode = false;
+		removePasscode = false;
 		confirmName = '';
 		confirmMediaCount = '';
 		localError = '';
 	});
 
 	const title = $derived(
-		mode === 'unlock' ? 'Enter passcode' : mode === 'create' ? 'New profile' : 'Delete profile'
+		mode === 'unlock'
+			? 'Enter passcode'
+			: mode === 'create'
+				? 'New profile'
+				: mode === 'passcode'
+					? passcodeEditTitle(requiresPasscode)
+					: 'Delete profile'
 	);
 
 	const subtitle = $derived(
@@ -70,7 +87,15 @@
 			? 'Optionally protect this profile with a passcode.'
 			: mode === 'delete'
 				? `Permanently delete “${profileName}” and all of its media. Type the profile name and media count to confirm.`
-				: profileName
+				: mode === 'passcode'
+					? requiresPasscode
+						? `Update the passcode for “${profileName}”.`
+						: `Protect “${profileName}” with a passcode.`
+					: profileName
+	);
+
+	const passcodeSubmitLabel = $derived(
+		passcodeEditSubmitLabel({ hasPasscode: requiresPasscode, remove: removePasscode })
 	);
 
 	async function submit(e: Event) {
@@ -105,6 +130,28 @@
 				usePasscode: false,
 				confirmName: typedName,
 				confirmMediaCount: typedCount
+			});
+			return;
+		}
+
+		if (mode === 'passcode') {
+			const editError = validatePasscodeEdit({
+				hasPasscode: requiresPasscode,
+				remove: removePasscode,
+				currentPasscode,
+				newPasscode: passcode,
+				confirmPasscode
+			});
+			if (editError) {
+				localError = editError;
+				return;
+			}
+			await onsubmit({
+				passcode: removePasscode ? '' : passcode,
+				confirmPasscode,
+				usePasscode: !removePasscode,
+				currentPasscode,
+				removePasscode
 			});
 			return;
 		}
@@ -210,6 +257,51 @@
 							required
 						/>
 					</div>
+				{:else if mode === 'passcode'}
+					{#if requiresPasscode}
+						<div class="mt-3 grid gap-2">
+							<Label class="text-muted-foreground text-xs">Current passcode</Label>
+							<Input
+								type="password"
+								placeholder="Current passcode"
+								bind:value={currentPasscode}
+								disabled={busy}
+								required
+								minlength={4}
+								autocomplete="off"
+							/>
+						</div>
+						<label class="mt-3 flex cursor-pointer items-center gap-2 text-sm">
+							<Checkbox bind:checked={removePasscode} disabled={busy} />
+							Remove passcode
+						</label>
+					{/if}
+					{#if !removePasscode}
+						<div class="mt-3 grid gap-2">
+							<Label class="text-muted-foreground text-xs">New passcode</Label>
+							<Input
+								type="password"
+								placeholder="Passcode (min 4)"
+								bind:value={passcode}
+								disabled={busy}
+								required
+								minlength={4}
+								autocomplete="off"
+							/>
+						</div>
+						<div class="mt-3 grid gap-2">
+							<Label class="text-muted-foreground text-xs">Confirm</Label>
+							<Input
+								type="password"
+								placeholder="Confirm passcode"
+								bind:value={confirmPasscode}
+								disabled={busy}
+								required
+								minlength={4}
+								autocomplete="off"
+							/>
+						</div>
+					{/if}
 				{:else if mode === 'unlock' && !requiresPasscode}
 					<p class="text-muted-foreground mt-3 mb-1 text-sm">This profile has no passcode.</p>
 				{:else if (mode === 'create' && usePasscode) || (mode === 'unlock' && requiresPasscode)}
@@ -249,13 +341,21 @@
 					<Button
 						type="submit"
 						size="sm"
-						variant={mode === 'delete' ? 'destructive' : 'default'}
+						variant={mode === 'delete' || (mode === 'passcode' && removePasscode)
+							? 'destructive'
+							: 'default'}
 						disabled={busy}
 					>
 						{#if busy}
 							<Spinner class="size-3" />
 						{/if}
-						{mode === 'unlock' ? 'Unlock' : mode === 'create' ? 'Create' : 'Delete'}
+						{mode === 'unlock'
+							? 'Unlock'
+							: mode === 'create'
+								? 'Create'
+								: mode === 'passcode'
+									? passcodeSubmitLabel
+									: 'Delete'}
 					</Button>
 				</Dialog.Footer>
 			</form>

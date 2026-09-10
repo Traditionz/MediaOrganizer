@@ -249,9 +249,7 @@
 			onerror={onPosterError}
 		/>
 		<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
-			<span
-				class="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white shadow"
-			>
+			<span class="mo-media-chip flex h-10 w-10 items-center justify-center rounded-full shadow">
 				<Play class="ml-0.5 h-5 w-5" fill="currentColor" />
 			</span>
 		</div>
@@ -269,9 +267,7 @@
 	{:else}
 		<div class="bg-border relative h-full w-full">
 			<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
-				<span
-					class="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white shadow"
-				>
+				<span class="mo-media-chip flex h-10 w-10 items-center justify-center rounded-full shadow">
 					<Play class="ml-0.5 h-5 w-5" fill="currentColor" />
 				</span>
 			</div>
@@ -279,7 +275,7 @@
 	{/if}
 
 	<span
-		class="pointer-events-none absolute top-2 right-2 z-10 flex items-center gap-0.5 rounded bg-black/75 px-1.5 py-0.5 text-[11px] leading-none font-medium text-white tabular-nums"
+		class="mo-media-chip pointer-events-none absolute top-2 right-2 z-10 flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] leading-none font-medium tabular-nums"
 		title={formatViewCount(item.view_count)}
 		aria-label={formatViewCount(item.view_count)}
 	>
@@ -303,11 +299,11 @@
 	{/if}
 
 	<div
-		class="bg-background/95 text-foreground absolute inset-x-0 bottom-0 px-2.5 py-2 opacity-0 transition-opacity group-hover:opacity-100"
+		class="mo-media-chip absolute inset-x-0 bottom-0 rounded-none border-x-0 border-b-0 px-2.5 py-2 opacity-0 transition-opacity group-hover:opacity-100"
 		class:opacity-100={selected}
 	>
 		<p class="truncate text-xs font-medium">{item.original_name}</p>
-		<div class="text-muted-foreground mt-1 flex items-center justify-between gap-2 text-[10px]">
+		<div class="mt-1 flex items-center justify-between gap-2 text-[10px] text-white/70">
 			{#if showAlbumChip && albumLabel}
 				<Badge variant="secondary" class="max-w-[70%] truncate" title={albumTitle}>
 					{albumLabel}
@@ -321,7 +317,8 @@
 
 	{#if durationLabel}
 		<span
-			class="pointer-events-none absolute right-2 bottom-2 z-10 rounded bg-black/75 px-1.5 py-0.5 text-[11px] leading-none font-medium text-white tabular-nums"
+			class="mo-media-chip pointer-events-none absolute right-2 bottom-2 z-10 rounded-md px-1.5 py-0.5 text-[11px] leading-none font-medium tabular-nums group-hover:opacity-0"
+			class:opacity-0={selected}
 		>
 			{durationLabel}
 		</span>

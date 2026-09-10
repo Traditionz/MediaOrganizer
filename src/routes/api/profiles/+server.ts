@@ -45,9 +45,6 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 	const id = body ? (ownString(body, 'id') ?? '') : '';
 	if (!id) throw error(400, 'Profile id is required');
 
-	const active = resolveProfileFromCookies(cookies);
-	if (!active || active.id !== id) throw error(403, 'Unlock this profile first');
-
 	const newPasscodeField = body ? own(body, 'newPasscode') : undefined;
 	let newPasscode: string | null = '';
 	if (newPasscodeField === null) newPasscode = null;
@@ -56,6 +53,8 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 
 	try {
 		const profile = setProfilePasscode(id, currentPasscode, newPasscode);
+		const activeId = cookies.get(PROFILE_COOKIE);
+		if (activeId === profile.id) setProfileCookie(cookies, profile);
 		return json(profile);
 	} catch (err) {
 		const message = err instanceof Error ? err.message : 'Failed to update passcode';

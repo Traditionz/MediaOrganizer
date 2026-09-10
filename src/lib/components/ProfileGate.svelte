@@ -1,21 +1,24 @@
 <script lang="ts">
 	import User from '@lucide/svelte/icons/user';
+	import KeyRound from '@lucide/svelte/icons/key-round';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import * as Alert from '$lib/components/ui/alert/index.js';
-	import * as Card from '$lib/components/ui/card/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Spinner } from '$lib/components/ui/spinner/index.js';
+	import LiquidGlass from '$lib/components/LiquidGlass.svelte';
+	import ShaderBackdrop from '$lib/components/ShaderBackdrop.svelte';
 	import type { Profile } from '$lib/types';
 
 	interface Props {
 		profiles: Profile[];
 		onselect: (id: string, passcode?: string) => Promise<void>;
 		oncreate: (name: string, passcode?: string | null) => Promise<void>;
+		onpasscode: (profile: Profile) => void;
 	}
 
-	let { profiles, onselect, oncreate }: Props = $props();
+	let { profiles, onselect, oncreate, onpasscode }: Props = $props();
 
 	let newName = $state('');
 	let usePasscode = $state(false);
@@ -93,12 +96,12 @@
 	}
 </script>
 
-<div class="bg-muted flex min-h-screen items-center justify-center px-4 py-10">
-	<div class="w-full max-w-md">
-		<div class="mb-8 text-center">
-			<p class="text-muted-foreground text-xs font-semibold tracking-[0.14em] uppercase">Welcome</p>
-			<h1 class="mt-2 text-3xl font-bold tracking-tight">Media Organizer</h1>
-			<p class="text-muted-foreground mt-2 text-sm">
+<div class="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-10">
+	<ShaderBackdrop />
+	<div class="relative z-10 w-full max-w-md">
+		<div class="mb-10 text-center">
+			<h1 class="text-4xl font-bold tracking-tight sm:text-5xl">Media Organizer</h1>
+			<p class="text-muted-foreground mt-3 text-sm">
 				Choose a profile to continue, or create a new one. Passcodes are optional.
 			</p>
 		</div>
@@ -115,14 +118,14 @@
 		{/if}
 
 		{#if unlocking}
-			<Card.Root class="mb-6">
+			<LiquidGlass class="mb-6" radius={18}>
 				<form class="p-4" onsubmit={submitUnlock}>
 					<p class="text-muted-foreground mb-1 text-xs font-semibold tracking-wide uppercase">
 						Enter passcode
 					</p>
 					<p class="mb-3 truncate text-sm font-medium">{unlocking.name}</p>
 					<Input
-						class="mb-3"
+						class="bg-background/50 mb-3"
 						type="password"
 						placeholder="Passcode"
 						bind:value={unlockPasscode}
@@ -143,22 +146,23 @@
 						</Button>
 					</div>
 				</form>
-			</Card.Root>
+			</LiquidGlass>
 		{:else if profiles.length > 0}
 			<div class="mb-6">
 				<p class="text-muted-foreground mb-2 text-xs font-semibold tracking-wide uppercase">
 					Profiles
 				</p>
-				<Card.Root>
+				<LiquidGlass radius={18}>
 					<ul class="flex flex-col gap-1 p-2">
 						{#each profiles as profile (profile.id)}
-							<li>
+							<li class="flex items-center gap-1">
 								<Button
 									type="button"
 									variant="ghost"
-									class="h-auto w-full justify-start gap-3 rounded-lg px-3 py-2.5 font-normal"
+									class="h-auto min-w-0 flex-1 justify-start gap-3 rounded-lg px-3 py-2.5 font-normal"
 									disabled={busy}
 									onclick={() => beginUnlock(profile)}
+									aria-label={profile.name}
 								>
 									<User class="text-muted-foreground h-5 w-5 shrink-0" />
 									<span class="truncate font-medium">{profile.name}</span>
@@ -166,21 +170,34 @@
 										<Badge variant="secondary" class="ml-auto">Locked</Badge>
 									{/if}
 								</Button>
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon"
+									class="size-9 shrink-0"
+									disabled={busy}
+									onclick={() => onpasscode(profile)}
+									aria-label={profile.has_passcode
+										? `Change passcode for ${profile.name}`
+										: `Add passcode for ${profile.name}`}
+								>
+									<KeyRound class="h-4 w-4" />
+								</Button>
 							</li>
 						{/each}
 					</ul>
-				</Card.Root>
+				</LiquidGlass>
 			</div>
 		{/if}
 
 		{#if !unlocking}
-			<Card.Root>
+			<LiquidGlass radius={18}>
 				<form class="p-4" onsubmit={submitCreate}>
 					<p class="text-muted-foreground mb-1.5 text-xs font-semibold tracking-wide uppercase">
 						New profile
 					</p>
 					<Input
-						class="mb-2"
+						class="bg-background/50 mb-2"
 						placeholder="Profile name"
 						bind:value={newName}
 						disabled={busy}
@@ -192,7 +209,7 @@
 					</label>
 					{#if usePasscode}
 						<Input
-							class="mb-2"
+							class="bg-background/50 mb-2"
 							type="password"
 							placeholder="Passcode (min 4)"
 							bind:value={newPasscode}
@@ -202,7 +219,7 @@
 							autocomplete="off"
 						/>
 						<Input
-							class="mb-3"
+							class="bg-background/50 mb-3"
 							type="password"
 							placeholder="Confirm passcode"
 							bind:value={newPasscodeConfirm}
@@ -219,7 +236,7 @@
 						Create profile
 					</Button>
 				</form>
-			</Card.Root>
+			</LiquidGlass>
 		{/if}
 	</div>
 </div>
