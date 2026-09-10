@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import {
+	IMAGE_PREVIEW_MAX_EDGE,
+	isImagePreviewByteSizeOk,
 	isThumbnailByteSizeOk,
 	MAX_THUMBNAIL_BYTES,
+	MIN_IMAGE_PREVIEW_BYTES,
 	MIN_THUMBNAIL_BYTES,
 	thumbnailSeekCandidates,
 	thumbnailSeekTime
@@ -23,6 +26,12 @@ describe('media thumbnail helpers', () => {
 		expect(thumbnailSeekTime(1)).toBe(0.04);
 		expect(thumbnailSeekTime(0.04)).toBe(0);
 		expect(thumbnailSeekTime(Number.NaN)).toBe(0);
+	});
+
+	test('isImagePreviewByteSizeOk allows smaller stills', () => {
+		expect(isImagePreviewByteSizeOk(MIN_IMAGE_PREVIEW_BYTES)).toBe(true);
+		expect(isImagePreviewByteSizeOk(MIN_IMAGE_PREVIEW_BYTES - 1)).toBe(false);
+		expect(IMAGE_PREVIEW_MAX_EDGE).toBe(480);
 	});
 
 	test('thumbnailSeekCandidates are unique and in-range', () => {

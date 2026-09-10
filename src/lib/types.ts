@@ -35,7 +35,7 @@ export interface MediaItem {
 	created_at: string;
 	/** Soft-delete time; null/undefined = active */
 	deleted_at?: string | null;
-	/** True when a generated video preview image exists */
+	/** True when a generated gallery preview image exists */
 	has_thumbnail?: boolean;
 }
 

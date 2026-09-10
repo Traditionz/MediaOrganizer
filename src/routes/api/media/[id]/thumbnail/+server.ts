@@ -3,7 +3,8 @@ import { statSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import type { RequestHandler } from './$types';
 import {
-	ensureVideoThumbnail,
+	ensureImageThumbnail,
+	ensurePreviewThumbnail,
 	getThumbnailPath,
 	openFileReadStream,
 	saveThumbnail
@@ -17,7 +18,11 @@ export const GET: RequestHandler = async ({ params, cookies }) => {
 	const id = params.id;
 	if (!id) throw error(400, 'Invalid media id');
 
-	const thumb = getThumbnailPath(profile.id, id);
+	let thumb = getThumbnailPath(profile.id, id);
+	if (!thumb) {
+		const generated = await ensureImageThumbnail(profile.id, id);
+		if (generated) thumb = getThumbnailPath(profile.id, id);
+	}
 	if (!thumb) {
 		return new Response('Thumbnail not found', {
 			status: 404,
@@ -47,7 +52,7 @@ export const POST: RequestHandler = async ({ params, cookies }) => {
 	const id = params.id;
 	if (!id) throw error(400, 'Invalid media id');
 
-	const ok = await ensureVideoThumbnail(profile.id, id);
+	const ok = await ensurePreviewThumbnail(profile.id, id);
 	if (!ok) throw error(422, 'Could not generate thumbnail');
 
 	return new Response(null, { status: 204 });

@@ -39,11 +39,17 @@
 	import { asFiniteNumber, asPlainObject, eventTargetHtml, own, ownString } from '$lib/parse';
 	import { passcodePatchBody } from '$lib/profile/passcodeEdit';
 	import {
+		MEDIA_LAYOUT_GAP,
+		idsIntersectingBox,
+		libraryCardLayouts
+	} from '$lib/media/virtualLayout';
+	import {
 		cardsInSelectionBox,
 		computeSelectionRect,
 		isTinyRect,
 		pointerPointInElement
 	} from '$lib/selection/geometry.js';
+	import type { SelectionRect } from '$lib/selection/geometry.js';
 	import { applyMarqueeHits, marqueeSelectionAnchor } from '$lib/selection/marquee.js';
 	import { fade } from 'svelte/transition';
 	import { createAppState, setAppState } from '$lib/state';
@@ -1213,6 +1219,21 @@
 		surface.setPointerCapture(e.pointerId);
 	}
 
+	function marqueeHitsFromLayout(surface: HTMLElement, box: SelectionRect): string[] | null {
+		const host = surface.querySelector<HTMLElement>('[data-media-layout]');
+		if (!host) return null;
+		const width = host.clientWidth;
+		if (!(width > 0)) return null;
+		const layouts = libraryCardLayouts(
+			library.filteredMedia,
+			prefs.viewMode,
+			prefs.columns,
+			width,
+			MEDIA_LAYOUT_GAP
+		);
+		return idsIntersectingBox(layouts, box, host.offsetLeft, host.offsetTop);
+	}
+
 	function syncMarqueeSelection(surface: HTMLElement) {
 		const box = computeSelectionRect(true, selection.selStart, selection.selCurrent);
 		if (!box || isTinyRect(box.w, box.h)) {
@@ -1224,7 +1245,7 @@
 			return;
 		}
 
-		const hits = cardsInSelectionBox(surface, box);
+		const hits = marqueeHitsFromLayout(surface, box) ?? cardsInSelectionBox(surface, box);
 		applyMarqueeHits(selection.selectedIds, hits, {
 			additive: marqueeAdditive,
 			baseIds: marqueeBaseIds

@@ -15,7 +15,11 @@ import { filePathForKey, getProfileDb, newId, tmpPathForKey } from './db';
 import { listAlbums } from './albums';
 import { albumMedia, albums, media } from './schema';
 import type { MediaRow } from './schema';
-import { isThumbnailByteSizeOk, thumbnailSeekCandidates } from '$lib/media/thumbnail';
+import {
+	isImagePreviewByteSizeOk,
+	isThumbnailByteSizeOk,
+	thumbnailSeekCandidates
+} from '$lib/media/thumbnail';
 import {
 	copyFileName,
 	formatMediaBytes,
@@ -246,6 +250,11 @@ async function fillImageDimensions(profileId: string, id: string, path: string):
 	}
 }
 
+async function fillImagePreview(profileId: string, id: string, path: string): Promise<void> {
+	await fillImageDimensions(profileId, id, path);
+	await ensureImageThumbnail(profileId, id);
+}
+
 /** Throttled per-file lines for the Vite / Node terminal. */
 function createVideoUploadProgress(name: string, totalBytes: number | null) {
 	let loaded = 0;
@@ -369,8 +378,12 @@ export async function insertMediaFromStream(
 		throw err;
 	}
 
-	if (input.mediaType === 'image' && (input.width == null || input.height == null)) {
-		void fillImageDimensions(profileId, id, dest);
+	if (input.mediaType === 'image') {
+		if (input.width == null || input.height == null) {
+			void fillImagePreview(profileId, id, dest);
+		} else {
+			void ensureImageThumbnail(profileId, id);
+		}
 	}
 	if (input.mediaType === 'video' && duration == null) {
 		enqueueDurationBackfill(profileId);
@@ -820,6 +833,72 @@ export async function saveThumbnail(
 	}
 
 	db.update(media).set({ thumbnailKey: thumbKey }).where(eq(media.id, id)).run();
+}
+
+const previewJobs = new Map<string, Promise<boolean>>();
+
+/** Gallery JPEG for a still image (sharp). No-op for videos. */
+export async function ensureImageThumbnail(profileId: string, id: string): Promise<boolean> {
+	if (getThumbnailPath(profileId, id)) return true;
+
+	const db = getProfileDb(profileId);
+	const row = db
+		.select({
+			id: media.id,
+			storageKey: media.storageKey,
+			mediaType: media.mediaType
+		})
+		.from(media)
+		.where(eq(media.id, id))
+		.get();
+	if (!row || row.mediaType !== 'image') return false;
+
+	const input = filePathForKey(profileId, row.storageKey);
+	if (!existsSync(input)) return false;
+
+	const { writeImagePreviewJpeg } = await import('./imageThumb');
+	const thumbKey = `${id}-thumb`;
+	const dest = filePathForKey(profileId, thumbKey);
+	const tmp = tmpPathForKey(profileId, `${id}.thumb.tmp`);
+
+	try {
+		await writeImagePreviewJpeg(input, tmp);
+		if (!existsSync(tmp) || !isImagePreviewByteSizeOk(statSync(tmp).size)) {
+			try {
+				if (existsSync(tmp)) unlinkSync(tmp);
+			} catch {
+				/* ignore */
+			}
+			return false;
+		}
+		if (existsSync(dest)) unlinkSync(dest);
+		renameSync(tmp, dest);
+		db.update(media).set({ thumbnailKey: thumbKey }).where(eq(media.id, id)).run();
+		return true;
+	} catch {
+		try {
+			if (existsSync(tmp)) unlinkSync(tmp);
+		} catch {
+			/* ignore */
+		}
+		return false;
+	}
+}
+
+/** Image: sharp preview. Video: ffmpeg poster. Dedupes in-flight work per id. */
+export function ensurePreviewThumbnail(profileId: string, id: string): Promise<boolean> {
+	const key = `${profileId}:${id}`;
+	const existing = previewJobs.get(key);
+	if (existing) return existing;
+	const job = (async () => {
+		if (getThumbnailPath(profileId, id)) return true;
+		if (await ensureImageThumbnail(profileId, id)) return true;
+		return ensureVideoThumbnail(profileId, id);
+	})().finally(() => {
+		previewJobs.delete(key);
+	});
+	previewJobs.set(key, job);
+	return job;
 }
 
 /** Build a JPEG poster with ffmpeg when the browser cannot decode the file. */

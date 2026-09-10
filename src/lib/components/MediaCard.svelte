@@ -45,9 +45,11 @@
 		variant = 'grid'
 	}: Props = $props();
 
-	const src = $derived(`/api/media/${item.id}`);
+	const originalSrc = $derived(`/api/media/${item.id}`);
 	let thumbEpoch = $state(0);
+	let failedThumbId = $state<string | null>(null);
 	const thumbSrc = $derived(`/api/media/${item.id}/thumbnail?v=${thumbEpoch}`);
+	const imageSrc = $derived(failedThumbId === item.id ? originalSrc : thumbSrc);
 	const albumLabel = $derived.by(() => {
 		const names = item.album_names;
 		if (!names?.length) return null;
@@ -161,6 +163,11 @@
 		startLazyThumbnail(true);
 	}
 
+	function onImageError() {
+		if (failedThumbId === item.id) return;
+		failedThumbId = item.id;
+	}
+
 	function attachCard(node: HTMLDivElement) {
 		cardEl = node;
 		const needsThumb = item.media_type === 'video' && !item.has_thumbnail && !localThumb;
@@ -207,9 +214,9 @@
 <div
 	{@attach attachCard}
 	class={[
-		'media-card group bg-muted relative overflow-hidden transition-shadow',
-		variant === 'grid' && 'aspect-square rounded-xl shadow-sm hover:shadow-md',
-		variant === 'collage' && 'w-full rounded-lg shadow-sm hover:shadow-md',
+		'media-card group bg-muted relative h-full w-full overflow-hidden transition-shadow',
+		variant === 'grid' && 'rounded-xl shadow-sm hover:shadow-md',
+		variant === 'collage' && 'rounded-lg shadow-sm hover:shadow-md',
 		selected && 'ring-primary ring-offset-background ring-2 ring-offset-2',
 		dragging && 'opacity-40',
 		showCheckbox ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
@@ -233,11 +240,13 @@
 >
 	{#if item.media_type === 'image'}
 		<img
-			{src}
+			src={imageSrc}
 			alt={item.original_name}
 			class="h-full w-full object-cover"
 			loading="lazy"
+			decoding="async"
 			draggable="false"
+			onerror={onImageError}
 		/>
 	{:else if showPoster}
 		<img
@@ -245,6 +254,7 @@
 			alt={item.original_name}
 			class="h-full w-full object-cover"
 			loading="lazy"
+			decoding="async"
 			draggable="false"
 			onerror={onPosterError}
 		/>

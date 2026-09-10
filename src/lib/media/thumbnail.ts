@@ -1,8 +1,18 @@
 export const MIN_THUMBNAIL_BYTES = 800;
+export const MIN_IMAGE_PREVIEW_BYTES = 32;
 export const MAX_THUMBNAIL_BYTES = 5 * 1024 * 1024;
+
+/** Longest edge for gallery preview JPEGs (matches video ffmpeg scale=480). */
+export const IMAGE_PREVIEW_MAX_EDGE = 480;
+export const IMAGE_PREVIEW_JPEG_QUALITY = 72;
 
 export function isThumbnailByteSizeOk(size: number): boolean {
 	return Number.isFinite(size) && size >= MIN_THUMBNAIL_BYTES && size <= MAX_THUMBNAIL_BYTES;
+}
+
+/** Image previews can be tiny (small source files); still reject empty / huge. */
+export function isImagePreviewByteSizeOk(size: number): boolean {
+	return Number.isFinite(size) && size >= MIN_IMAGE_PREVIEW_BYTES && size <= MAX_THUMBNAIL_BYTES;
 }
 
 /** Seek time for preview frames: 4% of the video's full duration. */
