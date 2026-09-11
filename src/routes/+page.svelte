@@ -3,11 +3,9 @@
 	import type { MediaItem } from '$lib/types';
 	import {
 		isSupportedMediaFile,
-		captureVideoThumbnail,
 		isVideoFile,
 		requestServerThumbnail,
 		uploadMediaFile,
-		uploadVideoThumbnail,
 		mapWithConcurrency,
 		isAbortError,
 		UPLOAD_CONCURRENCY
@@ -37,12 +35,20 @@
 		type DragZoneHost
 	} from '$lib/dragUpload';
 	import { asFiniteNumber, asPlainObject, eventTargetHtml, own, ownString } from '$lib/parse';
+	import { passcodePatchBody } from '$lib/profile/passcodeEdit';
+	import { profileDeleteNeedsConfirm } from '$lib/profile/deleteConfirm';
+	import {
+		MEDIA_LAYOUT_GAP,
+		idsIntersectingBox,
+		libraryCardLayouts
+	} from '$lib/media/virtualLayout';
 	import {
 		cardsInSelectionBox,
 		computeSelectionRect,
 		isTinyRect,
 		pointerPointInElement
 	} from '$lib/selection/geometry.js';
+	import type { SelectionRect } from '$lib/selection/geometry.js';
 	import { applyMarqueeHits, marqueeSelectionAnchor } from '$lib/selection/marquee.js';
 	import { fade } from 'svelte/transition';
 	import { createAppState, setAppState } from '$lib/state';
@@ -211,11 +217,36 @@
 		};
 	}
 
+	function openPasscodeEditor(profile: { id: string; name: string; has_passcode: boolean }) {
+		ui.profileModalError = '';
+		ui.profileModal = {
+			open: true,
+			mode: 'passcode',
+			profileId: profile.id,
+			profileName: profile.name,
+			requiresPasscode: profile.has_passcode,
+			mediaCount: 0,
+			prefillName: ''
+		};
+	}
+
+	async function goHome() {
+		ui.preview = null;
+		ui.closeProfileModal();
+		await fetch('/api/profiles/lock', {
+			method: 'POST',
+			credentials: 'same-origin'
+		});
+		await invalidateAll();
+	}
+
 	async function handleProfileModalSubmit(payload: {
 		name?: string;
 		passcode: string;
 		confirmPasscode: string;
 		usePasscode: boolean;
+		currentPasscode?: string;
+		removePasscode?: boolean;
 		confirmName?: string;
 		confirmMediaCount?: number;
 	}) {
@@ -233,6 +264,27 @@
 				ui.closeProfileModal();
 				return;
 			}
+			if (ui.profileModal.mode === 'passcode' && ui.profileModal.profileId) {
+				const body = passcodePatchBody({
+					id: ui.profileModal.profileId,
+					hasPasscode: ui.profileModal.requiresPasscode,
+					remove: payload.removePasscode === true,
+					currentPasscode: payload.currentPasscode ?? '',
+					newPasscode: payload.passcode
+				});
+				const res = await fetch('/api/profiles', {
+					method: 'PATCH',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(body)
+				});
+				if (!res.ok) {
+					const errBody = await res.json().catch(() => ({}));
+					throw new Error(errBody.message || 'Failed to update passcode');
+				}
+				ui.closeProfileModal();
+				await invalidateAll();
+				return;
+			}
 			if (ui.profileModal.mode === 'delete' && ui.profileModal.profileId) {
 				const res = await fetch('/api/profiles', {
 					method: 'DELETE',
@@ -244,8 +296,8 @@
 					})
 				});
 				if (!res.ok) {
-					const body = await res.json().catch(() => ({}));
-					throw new Error(body.message || 'Failed to delete profile');
+					const errBody = await res.json().catch(() => ({}));
+					throw new Error(errBody.message || 'Failed to delete profile');
 				}
 				ui.closeProfileModal();
 				await invalidateAll();
@@ -267,7 +319,25 @@
 	}
 
 	async function deleteProfile(id: string) {
-		openDeleteProfileModal(id);
+		const count = id === library.activeProfile?.id ? library.totalCount : 0;
+		if (profileDeleteNeedsConfirm(count)) {
+			openDeleteProfileModal(id);
+			return;
+		}
+		try {
+			const res = await fetch('/api/profiles', {
+				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ id })
+			});
+			if (!res.ok) {
+				const errBody = await res.json().catch(() => ({}));
+				throw new Error(errBody.message || 'Failed to delete profile');
+			}
+			await invalidateAll();
+		} catch (err) {
+			ui.errorMessage = err instanceof Error ? err.message : 'Failed to delete profile';
+		}
 	}
 
 	async function createAlbum(name: string) {
@@ -1020,12 +1090,7 @@
 						if (signal?.aborted) return;
 
 						if (isVideoFile(file) && uploaded?.id) {
-							const mediaId = uploaded.id;
-							void (async () => {
-								const thumb = await captureVideoThumbnail(file);
-								if (thumb) await uploadVideoThumbnail(mediaId, thumb);
-								else await requestServerThumbnail(mediaId);
-							})().catch(() => {
+							void requestServerThumbnail(uploaded.id).catch(() => {
 								/* thumbnail backfill is optional */
 							});
 						}
@@ -1166,6 +1231,21 @@
 		surface.setPointerCapture(e.pointerId);
 	}
 
+	function marqueeHitsFromLayout(surface: HTMLElement, box: SelectionRect): string[] | null {
+		const host = surface.querySelector<HTMLElement>('[data-media-layout]');
+		if (!host) return null;
+		const width = host.clientWidth;
+		if (!(width > 0)) return null;
+		const layouts = libraryCardLayouts(
+			library.filteredMedia,
+			prefs.viewMode,
+			prefs.columns,
+			width,
+			MEDIA_LAYOUT_GAP
+		);
+		return idsIntersectingBox(layouts, box, host.offsetLeft, host.offsetTop);
+	}
+
 	function syncMarqueeSelection(surface: HTMLElement) {
 		const box = computeSelectionRect(true, selection.selStart, selection.selCurrent);
 		if (!box || isTinyRect(box.w, box.h)) {
@@ -1177,7 +1257,7 @@
 			return;
 		}
 
-		const hits = cardsInSelectionBox(surface, box);
+		const hits = marqueeHitsFromLayout(surface, box) ?? cardsInSelectionBox(surface, box);
 		applyMarqueeHits(selection.selectedIds, hits, {
 			additive: marqueeAdditive,
 			baseIds: marqueeBaseIds
@@ -1252,7 +1332,12 @@
 <svelte:document ondrop={onDocumentDrop} />
 
 {#if !library.activeProfile}
-	<ProfileGate profiles={library.profiles} onselect={selectProfile} oncreate={createProfile} />
+	<ProfileGate
+		profiles={library.profiles}
+		onselect={selectProfile}
+		oncreate={createProfile}
+		onpasscode={openPasscodeEditor}
+	/>
 {:else}
 	<div
 		class="bg-muted text-foreground flex h-screen"
@@ -1280,6 +1365,10 @@
 			onswitchProfile={switchProfileWithPrompt}
 			oncreateProfile={createProfileWithPrompt}
 			ondeleteProfile={deleteProfile}
+			onhome={goHome}
+			oneditPasscode={() => {
+				if (library.activeProfile) openPasscodeEditor(library.activeProfile);
+			}}
 		/>
 
 		<main class="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -1448,13 +1537,13 @@
 	/>
 
 	{#if ui.preview}
-		{#key ui.preview.id}
-			<MediaLightbox
-				item={ui.preview}
-				onclose={() => (ui.preview = null)}
-				onview={applyRecordedView}
-			/>
-		{/key}
+		<MediaLightbox
+			item={ui.preview}
+			items={library.filteredMedia}
+			onclose={() => (ui.preview = null)}
+			onnavigate={(next) => (ui.preview = next)}
+			onview={applyRecordedView}
+		/>
 	{/if}
 
 	<ContextMenu
@@ -1464,20 +1553,6 @@
 		items={contextMenuItems}
 		onselect={handleContextSelect}
 		onclose={() => ui.closeContextMenu()}
-	/>
-
-	<PasscodeModal
-		open={ui.profileModal.open}
-		mode={ui.profileModal.mode}
-		profileName={ui.profileModal.mode === 'create'
-			? ui.profileModal.prefillName
-			: ui.profileModal.profileName}
-		mediaCount={ui.profileModal.mediaCount}
-		requiresPasscode={ui.profileModal.requiresPasscode}
-		busy={ui.profileModalBusy}
-		errorMessage={ui.profileModalError}
-		oncancel={() => ui.closeProfileModal()}
-		onsubmit={handleProfileModalSubmit}
 	/>
 
 	<ConfirmModal
@@ -1512,5 +1587,19 @@
 		onconfirm={handleAlbumPickerConfirm}
 	/>
 {/if}
+
+<PasscodeModal
+	open={ui.profileModal.open}
+	mode={ui.profileModal.mode}
+	profileName={ui.profileModal.mode === 'create'
+		? ui.profileModal.prefillName
+		: ui.profileModal.profileName}
+	mediaCount={ui.profileModal.mediaCount}
+	requiresPasscode={ui.profileModal.requiresPasscode}
+	busy={ui.profileModalBusy}
+	errorMessage={ui.profileModalError}
+	oncancel={() => ui.closeProfileModal()}
+	onsubmit={handleProfileModalSubmit}
+/>
 
 <TransferPanel />

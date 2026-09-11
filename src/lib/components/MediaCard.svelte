@@ -7,17 +7,10 @@
 	import { Spinner } from '$lib/components/ui/spinner/index.js';
 	import { beginMediaDrag, endInternalDrag, setCompactMediaDragImage } from '$lib/dragSession';
 	import { formatViewCount } from '$lib/media/views';
+	import { galleryStillSrc, galleryThumbUrl, isCurrentThumbSrc } from '$lib/media/thumbnail';
 	import { getAppState } from '$lib/state';
 	import { enqueueThumbnailJob } from '$lib/thumbnailQueue';
-	import {
-		captureVideoThumbnailFromUrl,
-		formatDate,
-		formatDuration,
-		persistMediaDuration,
-		probeVideoDurationFromUrl,
-		requestServerThumbnail,
-		uploadVideoThumbnail
-	} from '$lib/utils';
+	import { formatDate, formatDuration, requestServerThumbnail } from '$lib/utils';
 
 	interface Props {
 		item: MediaItem;
@@ -45,9 +38,11 @@
 		variant = 'grid'
 	}: Props = $props();
 
-	const src = $derived(`/api/media/${item.id}`);
+	const originalSrc = $derived(`/api/media/${item.id}`);
 	let thumbEpoch = $state(0);
-	const thumbSrc = $derived(`/api/media/${item.id}/thumbnail?v=${thumbEpoch}`);
+	let failedSrc = $state<string | null>(null);
+	const thumbSrc = $derived(galleryThumbUrl(item.id, thumbEpoch));
+	const stillSrc = $derived(galleryStillSrc(thumbSrc, failedSrc, originalSrc));
 	const albumLabel = $derived.by(() => {
 		const names = item.album_names;
 		if (!names?.length) return null;
@@ -70,7 +65,6 @@
 	let localThumb = $state(false);
 	let generatingThumbnail = $state(false);
 	let thumbStarted = false;
-	let durationStarted = false;
 	let posterErrors = 0;
 	const MAX_POSTER_ERRORS = 2;
 
@@ -108,10 +102,7 @@
 		const mediaId = item.id;
 		enqueueThumbnailJob(async () => {
 			try {
-				const blob = await captureVideoThumbnailFromUrl(`/api/media/${mediaId}`);
-				let ok = false;
-				if (blob) ok = await uploadVideoThumbnail(mediaId, blob);
-				if (!ok) ok = await requestServerThumbnail(mediaId);
+				const ok = await requestServerThumbnail(mediaId);
 				if (!ok) return;
 				localThumb = true;
 				thumbEpoch += 1;
@@ -128,31 +119,11 @@
 		});
 	}
 
-	function startLazyDuration() {
-		if (durationStarted) return;
-		if (item.media_type !== 'video') return;
-		if (item.duration != null && Number.isFinite(item.duration) && item.duration > 0) return;
-		durationStarted = true;
-
-		const mediaId = item.id;
-		enqueueThumbnailJob(async () => {
-			try {
-				const duration = await probeVideoDurationFromUrl(`/api/media/${mediaId}`);
-				if (duration == null) return;
-				const ok = await persistMediaDuration(mediaId, duration);
-				if (!ok) return;
-				try {
-					getAppState().library.setMediaDuration(mediaId, duration);
-				} catch {
-					/* outside app context */
-				}
-			} catch {
-				/* leave without badge */
-			}
-		});
-	}
-
-	function onPosterError() {
+	function onPosterError(e: Event) {
+		const el = e.currentTarget;
+		if (!(el instanceof HTMLImageElement)) return;
+		const src = el.getAttribute('src') ?? '';
+		if (!isCurrentThumbSrc(src, thumbSrc) && !isCurrentThumbSrc(el.src, thumbSrc)) return;
 		if (posterErrors >= MAX_POSTER_ERRORS) return;
 		posterErrors += 1;
 		localThumb = false;
@@ -161,22 +132,26 @@
 		startLazyThumbnail(true);
 	}
 
+	function onImageError(e: Event) {
+		const el = e.currentTarget;
+		if (!(el instanceof HTMLImageElement)) return;
+		const src = el.getAttribute('src') ?? '';
+		if (!isCurrentThumbSrc(src, thumbSrc) && !isCurrentThumbSrc(el.src, thumbSrc)) return;
+		failedSrc = thumbSrc;
+	}
+
 	function attachCard(node: HTMLDivElement) {
 		cardEl = node;
 		const needsThumb = item.media_type === 'video' && !item.has_thumbnail && !localThumb;
-		const needsDuration =
-			item.media_type === 'video' &&
-			!(item.duration != null && Number.isFinite(item.duration) && item.duration > 0);
 
-		if (!needsThumb && !needsDuration) {
+		if (!needsThumb) {
 			return () => {
 				if (cardEl === node) cardEl = undefined;
 			};
 		}
 
 		const runVisibleWork = () => {
-			if (needsThumb) startLazyThumbnail();
-			if (needsDuration) startLazyDuration();
+			startLazyThumbnail();
 		};
 
 		if (!('IntersectionObserver' in globalThis)) {
@@ -207,9 +182,9 @@
 <div
 	{@attach attachCard}
 	class={[
-		'media-card group bg-muted relative overflow-hidden transition-shadow',
-		variant === 'grid' && 'aspect-square rounded-xl shadow-sm hover:shadow-md',
-		variant === 'collage' && 'w-full rounded-lg shadow-sm hover:shadow-md',
+		'media-card group bg-muted relative h-full w-full overflow-hidden transition-shadow',
+		variant === 'grid' && 'rounded-xl shadow-sm hover:shadow-md',
+		variant === 'collage' && 'rounded-lg shadow-sm hover:shadow-md',
 		selected && 'ring-primary ring-offset-background ring-2 ring-offset-2',
 		dragging && 'opacity-40',
 		showCheckbox ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
@@ -231,55 +206,40 @@
 		}
 	}}
 >
-	{#if item.media_type === 'image'}
-		<img
-			{src}
-			alt={item.original_name}
-			class="h-full w-full object-cover"
-			loading="lazy"
-			draggable="false"
-		/>
-	{:else if showPoster}
-		<img
-			src={thumbSrc}
-			alt={item.original_name}
-			class="h-full w-full object-cover"
-			loading="lazy"
-			draggable="false"
-			onerror={onPosterError}
-		/>
-		<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
-			<span
-				class="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white shadow"
-			>
-				<Play class="ml-0.5 h-5 w-5" fill="currentColor" />
-			</span>
-		</div>
-	{:else if generatingThumbnail}
-		<div
-			class="bg-border flex h-full w-full flex-col items-center justify-center gap-2"
-			aria-busy="true"
-			aria-label="Generating thumbnail"
-		>
-			<Spinner class="text-muted-foreground size-6" />
-			<span class="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
-				Thumbnail
-			</span>
-		</div>
-	{:else}
-		<div class="bg-border relative h-full w-full">
+	<div class="relative h-full w-full">
+		{#if item.media_type === 'image' || showPoster}
+			<img
+				src={stillSrc}
+				alt={item.original_name}
+				class="h-full w-full object-cover"
+				decoding="async"
+				draggable="false"
+				onerror={item.media_type === 'image' ? onImageError : onPosterError}
+			/>
+		{/if}
+		{#if item.media_type !== 'image'}
 			<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
-				<span
-					class="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white shadow"
-				>
+				<span class="mo-media-chip flex h-10 w-10 items-center justify-center rounded-full shadow">
 					<Play class="ml-0.5 h-5 w-5" fill="currentColor" />
 				</span>
 			</div>
-		</div>
-	{/if}
+		{/if}
+		{#if generatingThumbnail && !showPoster}
+			<div
+				class="bg-border/80 absolute inset-0 flex flex-col items-center justify-center gap-2"
+				aria-busy="true"
+				aria-label="Generating thumbnail"
+			>
+				<Spinner class="text-muted-foreground size-6" />
+				<span class="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
+					Thumbnail
+				</span>
+			</div>
+		{/if}
+	</div>
 
 	<span
-		class="pointer-events-none absolute top-2 right-2 z-10 flex items-center gap-0.5 rounded bg-black/75 px-1.5 py-0.5 text-[11px] leading-none font-medium text-white tabular-nums"
+		class="mo-media-chip pointer-events-none absolute top-2 right-2 z-10 flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] leading-none font-medium tabular-nums"
 		title={formatViewCount(item.view_count)}
 		aria-label={formatViewCount(item.view_count)}
 	>
@@ -303,11 +263,11 @@
 	{/if}
 
 	<div
-		class="bg-background/95 text-foreground absolute inset-x-0 bottom-0 px-2.5 py-2 opacity-0 transition-opacity group-hover:opacity-100"
+		class="mo-media-chip absolute inset-x-0 bottom-0 rounded-none border-x-0 border-b-0 px-2.5 py-2 opacity-0 transition-opacity group-hover:opacity-100"
 		class:opacity-100={selected}
 	>
 		<p class="truncate text-xs font-medium">{item.original_name}</p>
-		<div class="text-muted-foreground mt-1 flex items-center justify-between gap-2 text-[10px]">
+		<div class="mt-1 flex items-center justify-between gap-2 text-[10px] text-white/70">
 			{#if showAlbumChip && albumLabel}
 				<Badge variant="secondary" class="max-w-[70%] truncate" title={albumTitle}>
 					{albumLabel}
@@ -321,7 +281,8 @@
 
 	{#if durationLabel}
 		<span
-			class="pointer-events-none absolute right-2 bottom-2 z-10 rounded bg-black/75 px-1.5 py-0.5 text-[11px] leading-none font-medium text-white tabular-nums"
+			class="mo-media-chip pointer-events-none absolute right-2 bottom-2 z-10 rounded-md px-1.5 py-0.5 text-[11px] leading-none font-medium tabular-nums group-hover:opacity-0"
+			class:opacity-0={selected}
 		>
 			{durationLabel}
 		</span>

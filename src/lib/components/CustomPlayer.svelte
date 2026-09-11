@@ -6,18 +6,29 @@
 		setPlaybackPosition
 	} from '$lib/playbackPosition';
 	import { accumulateWatchDelta } from '$lib/media/views';
+	import {
+		clampSeekTime,
+		PLAYER_VOLUME_STEP,
+		playerHotkey,
+		playerSeekDelta,
+		playerWheelAction,
+		type PlayerKeyAction
+	} from '$lib/media/playerKeys';
+	import { isLightboxTypingTarget } from '$lib/media/lightboxNav';
 	import Maximize from '@lucide/svelte/icons/maximize';
 	import Pause from '@lucide/svelte/icons/pause';
 	import Play from '@lucide/svelte/icons/play';
 	import Volume1 from '@lucide/svelte/icons/volume-1';
 	import Volume2 from '@lucide/svelte/icons/volume-2';
 	import VolumeX from '@lucide/svelte/icons/volume-x';
-	import { eventHtml } from '$lib/parse';
+	import { eventHtml, eventTargetHtml } from '$lib/parse';
 
 	interface Props {
 		src: string;
 		/** Media id — used to resume where playback left off */
 		mediaId?: string;
+		/** When false, left/right arrows do not seek. */
+		arrowSeek?: boolean;
 		onmetadata?: (meta: { w: number; h: number; duration: number }) => void;
 		onwatchprogress?: (watchedSeconds: number, durationSeconds: number) => void;
 	}
@@ -27,7 +38,7 @@
 	const PREVIEW_MAX_W_REM = 17.875;
 	const SAVE_INTERVAL_MS = 2500;
 
-	let { src, mediaId = '', onmetadata, onwatchprogress }: Props = $props();
+	let { src, mediaId = '', arrowSeek = true, onmetadata, onwatchprogress }: Props = $props();
 
 	let videoEl: HTMLVideoElement | undefined = $state();
 	let playerEl: HTMLDivElement | undefined = $state();
@@ -219,7 +230,26 @@
 
 	function attachPlayer(node: HTMLDivElement) {
 		playerEl = node;
+		const onVolumeWheel = (e: WheelEvent) => {
+			if (e.ctrlKey || e.metaKey || e.altKey) return;
+			const hit = e.target instanceof HTMLElement ? e.target : null;
+			if (
+				isLightboxTypingTarget(
+					hit
+						? { tagName: hit.tagName, isContentEditable: hit.isContentEditable, role: hit.role }
+						: null
+				)
+			) {
+				return;
+			}
+			const action = playerWheelAction(e.deltaY, e.deltaX);
+			if (!action) return;
+			e.preventDefault();
+			applyPlayerAction(action);
+		};
+		window.addEventListener('wheel', onVolumeWheel, { passive: false });
 		return () => {
+			window.removeEventListener('wheel', onVolumeWheel);
 			if (playerEl === node) playerEl = undefined;
 		};
 	}
@@ -434,52 +464,76 @@
 		revealControls();
 	}
 
-	function onPlayerKeydown(e: KeyboardEvent) {
-		if (e.key === ' ' || e.key === 'k' || e.key === 'K') {
-			e.preventDefault();
+	function applyPlayerAction(action: PlayerKeyAction) {
+		const seek = playerSeekDelta(action);
+		if (seek != null) {
+			if (!videoEl) return;
+			current = clampSeekTime(pendingSeek ?? videoEl.currentTime, duration, seek);
+			commitSeek();
+			revealControls();
+			return;
+		}
+		if (action === 'play') {
 			togglePlay();
-		} else if (e.key === 'm' || e.key === 'M') {
-			e.preventDefault();
+			return;
+		}
+		if (action === 'mute') {
 			toggleMute();
-		} else if (e.key === 'f' || e.key === 'F') {
-			e.preventDefault();
+			return;
+		}
+		if (action === 'fullscreen') {
 			toggleFullscreen();
-		} else if (e.key === 'ArrowUp') {
-			e.preventDefault();
-			nudgeVolume(0.05);
-		} else if (e.key === 'ArrowDown') {
-			e.preventDefault();
-			nudgeVolume(-0.05);
-		} else if (e.key === 'ArrowLeft' && videoEl) {
-			e.preventDefault();
-			current = Math.max(0, (pendingSeek ?? videoEl.currentTime) - 5);
-			commitSeek();
-			revealControls();
-		} else if (e.key === 'ArrowRight' && videoEl) {
-			e.preventDefault();
-			current = Math.min(duration, (pendingSeek ?? videoEl.currentTime) + 5);
-			commitSeek();
-			revealControls();
-		} else if (e.key === '<' || e.key === ',') {
-			e.preventDefault();
+			return;
+		}
+		if (action === 'volumeUp') {
+			nudgeVolume(PLAYER_VOLUME_STEP);
+			return;
+		}
+		if (action === 'volumeDown') {
+			nudgeVolume(-PLAYER_VOLUME_STEP);
+			return;
+		}
+		if (action === 'slower') {
 			cyclePlaybackRate(-1);
-		} else if (e.key === '>' || e.key === '.') {
-			e.preventDefault();
+			return;
+		}
+		if (action === 'faster') {
 			cyclePlaybackRate(1);
-		} else if (e.key === 'Escape' && speedMenuOpen) {
-			e.preventDefault();
+			return;
+		}
+		if (action === 'closeMenu') {
 			speedMenuOpen = false;
 			scheduleHide();
 		}
 	}
+
+	function onPlayerKeydown(e: KeyboardEvent) {
+		const el = eventTargetHtml(e);
+		const action = playerHotkey(e.key, {
+			reserved: isLightboxTypingTarget(
+				el
+					? {
+							tagName: el.tagName,
+							isContentEditable: el.isContentEditable,
+							role: el.getAttribute('role')
+						}
+					: null
+			),
+			ctrlKey: e.ctrlKey,
+			metaKey: e.metaKey,
+			altKey: e.altKey,
+			shiftKey: e.shiftKey,
+			arrowSeek,
+			speedMenuOpen
+		});
+		if (!action) return;
+		e.preventDefault();
+		e.stopImmediatePropagation();
+		applyPlayerAction(action);
+	}
 </script>
 
-<svelte:window
-	onkeydown={(e) => {
-		if (!hovered) return;
-		onPlayerKeydown(e);
-	}}
-/>
+<svelte:window onkeydown={onPlayerKeydown} />
 
 <div
 	{@attach attachPlayer}
@@ -676,15 +730,6 @@
 					onpointerup={onVolumePointerUp}
 					onpointercancel={onVolumePointerUp}
 					onclick={(e) => e.stopPropagation()}
-					onkeydown={(e) => {
-						if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
-							e.preventDefault();
-							nudgeVolume(-0.05);
-						} else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
-							e.preventDefault();
-							nudgeVolume(0.05);
-						}
-					}}
 				>
 					<div class="custom-volume-track">
 						<div class="custom-volume-fill"></div>

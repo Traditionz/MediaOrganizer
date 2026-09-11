@@ -77,6 +77,13 @@ export function isMediaSortBy(value: string): value is MediaSortBy {
 	return value === 'date' || value === 'name' || value === 'duration' || value === 'size';
 }
 
+export function mediaSortLabel(sortBy: string): string {
+	for (const option of MEDIA_SORT_OPTIONS) {
+		if (option.value === sortBy) return option.label;
+	}
+	return 'Date';
+}
+
 export function isMediaSortDir(value: string): value is MediaSortDir {
 	return value === 'asc' || value === 'desc';
 }

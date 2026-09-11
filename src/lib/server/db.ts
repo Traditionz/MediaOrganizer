@@ -152,9 +152,7 @@ function migrateEncryptedNames(sqlite: Database.Database) {
 
 	type AlbumRow = { id: string; name: string; name_key: string | null };
 	const albumRows = sqlite.prepare('SELECT id, name, name_key FROM albums').all() as AlbumRow[];
-	const updateAlbum = sqlite.prepare(
-		'UPDATE albums SET name = ?, name_key = ? WHERE id = ?'
-	);
+	const updateAlbum = sqlite.prepare('UPDATE albums SET name = ?, name_key = ? WHERE id = ?');
 	for (const row of albumRows) {
 		const plain = decryptName(row.name);
 		const cipher = ensureEncryptedName(row.name);
@@ -167,9 +165,7 @@ function migrateEncryptedNames(sqlite: Database.Database) {
 	sqlite.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_albums_name_key ON albums (name_key)');
 
 	type MediaNameRow = { id: string; original_name: string };
-	const mediaRows = sqlite
-		.prepare('SELECT id, original_name FROM media')
-		.all() as MediaNameRow[];
+	const mediaRows = sqlite.prepare('SELECT id, original_name FROM media').all() as MediaNameRow[];
 	const updateMedia = sqlite.prepare('UPDATE media SET original_name = ? WHERE id = ?');
 	for (const row of mediaRows) {
 		if (isEncryptedName(row.original_name)) continue;

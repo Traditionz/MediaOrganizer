@@ -39,6 +39,12 @@
 	--sidebar-accent-foreground: oklch(0.205 0 0);
 	--sidebar-border: oklch(0.922 0 0);
 	--sidebar-ring: oklch(0.708 0 0);
+	/* Visual elevation — slate / stone / muted teal (not purple) */
+	--shader-a: #c8d4d8;
+	--shader-b: #b7cbc4;
+	--shader-c: #e2d6c8;
+	--glass-bg: color-mix(in oklch, white 62%, transparent);
+	--glass-border: color-mix(in oklch, white 55%, oklch(0.7 0.02 200) 45%);
 }
 
 .dark {
@@ -73,6 +79,11 @@
 	--sidebar-accent-foreground: oklch(0.985 0 0);
 	--sidebar-border: oklch(1 0 0 / 10%);
 	--sidebar-ring: oklch(0.556 0 0);
+	--shader-a: #1c2a30;
+	--shader-b: #163038;
+	--shader-c: #2a221c;
+	--glass-bg: color-mix(in oklch, oklch(0.22 0.02 220) 55%, transparent);
+	--glass-border: color-mix(in oklch, white 14%, transparent);
 }
 
 @theme inline {
@@ -126,6 +137,22 @@
 	}
 	body {
 		@apply bg-background text-foreground;
+	}
+}
+
+@layer components {
+	.mo-app-chrome {
+		background: var(--glass-bg);
+		-webkit-backdrop-filter: blur(16px) saturate(1.4);
+		backdrop-filter: blur(16px) saturate(1.4);
+	}
+	.mo-media-chip {
+		background: color-mix(in oklch, black 55%, transparent);
+		color: white;
+		border: 1px solid color-mix(in oklch, white 16%, transparent);
+		box-shadow: 0 1px 0 color-mix(in oklch, white 12%, transparent) inset;
+		-webkit-backdrop-filter: blur(10px) saturate(1.2);
+		backdrop-filter: blur(10px) saturate(1.2);
 	}
 }
 

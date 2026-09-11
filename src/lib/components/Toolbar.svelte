@@ -1,12 +1,14 @@
 <script lang="ts">
 	import ArrowDownWideNarrow from '@lucide/svelte/icons/arrow-down-wide-narrow';
 	import ArrowUpNarrowWide from '@lucide/svelte/icons/arrow-up-narrow-wide';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import Moon from '@lucide/svelte/icons/moon';
 	import Search from '@lucide/svelte/icons/search';
 	import Sun from '@lucide/svelte/icons/sun';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Slider } from '$lib/components/ui/slider/index.js';
 	import { Spinner } from '$lib/components/ui/spinner/index.js';
@@ -14,6 +16,7 @@
 	import {
 		MEDIA_SORT_OPTIONS,
 		isMediaSortBy,
+		mediaSortLabel,
 		type MediaSortBy,
 		type MediaSortDir
 	} from '$lib/media/sort';
@@ -97,20 +100,18 @@
 
 	const showSelectionActions = $derived(selectMode || selectedCount > 0);
 	const sortDirLabel = $derived(sortDir === 'asc' ? 'Ascending' : 'Descending');
+	const sortByLabel = $derived(mediaSortLabel(sortBy));
 
 	function asBool(v: boolean | 'indeterminate'): boolean {
 		return v === true;
 	}
 
-	function onSortSelect(e: Event) {
-		const value = (e.currentTarget as HTMLSelectElement).value;
+	function onSortByChange(value: string) {
 		if (isMediaSortBy(value)) onsortBy(value);
 	}
 </script>
 
-<div
-	class="border-border bg-background/90 flex flex-wrap items-center gap-2 border-b px-4 py-3 backdrop-blur"
->
+<div class="mo-app-chrome border-border flex flex-wrap items-center gap-2 border-b px-4 py-3">
 	{#if showSelectionActions}
 		<Badge variant="outline">{selectedCount} selected</Badge>
 		{#if trashMode}
@@ -132,7 +133,7 @@
 				Move to trash
 			</Button>
 		{/if}
-		<Button size="sm" variant="secondary" onclick={onclearSelection}>Clear</Button>
+		<Button size="sm" variant="outline" onclick={onclearSelection}>Clear</Button>
 		<Button size="sm" variant="ghost" onclick={ontoggleSelect}>Done</Button>
 	{:else}
 		<Button size="sm" variant="outline" onclick={ontoggleSelect}>Select</Button>
@@ -201,19 +202,31 @@
 	</div>
 
 	<div class="flex items-center gap-1" role="group" aria-label="Sort media">
-		<label class="text-muted-foreground flex items-center gap-1.5 text-sm">
-			<span class="hidden sm:inline">Sort</span>
-			<select
-				class="border-input bg-background h-8 rounded-lg border px-2 text-sm"
-				value={sortBy}
-				onchange={onSortSelect}
-				aria-label="Sort by"
-			>
-				{#each MEDIA_SORT_OPTIONS as option (option.value)}
-					<option value={option.value}>{option.label}</option>
-				{/each}
-			</select>
-		</label>
+		<span class="text-muted-foreground hidden text-sm sm:inline">Sort</span>
+		<DropdownMenu.Root>
+			<DropdownMenu.Trigger>
+				{#snippet child({ props })}
+					<Button
+						{...props}
+						type="button"
+						variant="outline"
+						size="sm"
+						class="min-w-28 justify-between gap-1.5 font-normal"
+						aria-label="Sort by"
+					>
+						<span class="truncate">{sortByLabel}</span>
+						<ChevronDown class="size-3.5 opacity-60" />
+					</Button>
+				{/snippet}
+			</DropdownMenu.Trigger>
+			<DropdownMenu.Content align="end" class="min-w-36">
+				<DropdownMenu.RadioGroup value={sortBy} onValueChange={onSortByChange}>
+					{#each MEDIA_SORT_OPTIONS as option (option.value)}
+						<DropdownMenu.RadioItem value={option.value}>{option.label}</DropdownMenu.RadioItem>
+					{/each}
+				</DropdownMenu.RadioGroup>
+			</DropdownMenu.Content>
+		</DropdownMenu.Root>
 		<Button
 			variant="outline"
 			size="icon-sm"

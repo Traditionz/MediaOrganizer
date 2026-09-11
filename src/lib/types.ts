@@ -1,7 +1,7 @@
 export type MediaType = 'image' | 'video';
 export type ViewMode = 'grid' | 'collage';
 export type ThemeMode = 'light' | 'dark';
-export type PasscodeModalMode = 'unlock' | 'create' | 'delete';
+export type PasscodeModalMode = 'unlock' | 'create' | 'delete' | 'passcode';
 
 export interface Profile {
 	id: string;
@@ -35,7 +35,7 @@ export interface MediaItem {
 	created_at: string;
 	/** Soft-delete time; null/undefined = active */
 	deleted_at?: string | null;
-	/** True when a generated video preview image exists */
+	/** True when a generated gallery preview image exists */
 	has_thumbnail?: boolean;
 }
 

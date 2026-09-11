@@ -2,12 +2,15 @@ import { expect, test } from '@playwright/test';
 import {
 	clickMenuItem,
 	createProfile,
+	fixtures,
 	gotoFresh,
 	library,
 	openProfileGate,
 	openProfileMenu,
 	uniqueName,
-	unlockProfile
+	unlockProfile,
+	uploadFiles,
+	waitForUploadIdle
 } from './helpers';
 
 test.describe('profiles', () => {
@@ -64,9 +67,9 @@ test.describe('profiles', () => {
 		await createProfile(page, name, { passcode });
 
 		await gotoFresh(page);
-		const row = page.getByRole('button', { name });
+		const row = page.getByRole('button', { name, exact: true });
 		await expect(row).toBeVisible();
-		await expect(row.getByText('Locked', { exact: true })).toBeVisible();
+		await expect(page.getByText('Locked', { exact: true })).toBeVisible();
 		await unlockProfile(page, name, passcode);
 	});
 
@@ -88,7 +91,7 @@ test.describe('profiles', () => {
 		await createProfile(page, name, { passcode: 'goodpass' });
 
 		await gotoFresh(page);
-		await page.getByRole('button', { name }).click();
+		await page.getByRole('button', { name, exact: true }).click();
 		await page.getByPlaceholder('Passcode').fill('badpass');
 		await page.getByRole('button', { name: 'Unlock' }).click();
 		await expect(page.getByRole('button', { name: 'Unlock' })).toBeVisible();
@@ -101,10 +104,10 @@ test.describe('profiles', () => {
 		await createProfile(page, name, { passcode: 'goodpass' });
 
 		await gotoFresh(page);
-		await page.getByRole('button', { name }).click();
+		await page.getByRole('button', { name, exact: true }).click();
 		await page.getByRole('button', { name: 'Cancel' }).click();
 		await expect(page.getByPlaceholder('Profile name')).toBeVisible();
-		await expect(page.getByRole('button', { name })).toBeVisible();
+		await expect(page.getByRole('button', { name, exact: true })).toBeVisible();
 	});
 
 	test('switch profile from sidebar menu', async ({ page }) => {
@@ -132,7 +135,7 @@ test.describe('profiles', () => {
 		await expect(page.locator('aside').getByText(first)).toBeVisible();
 	});
 
-	test('delete current profile returns to gate when last', async ({ page }) => {
+	test('delete current empty profile returns to gate without confirm', async ({ page }) => {
 		await openProfileGate(page);
 		const name = uniqueName('DeleteMe');
 		await createProfile(page, name);
@@ -140,20 +143,17 @@ test.describe('profiles', () => {
 		await openProfileMenu(page, name);
 		await clickMenuItem(page, 'Delete current profile');
 
-		const dialog = page.getByRole('dialog');
-		await expect(dialog.getByRole('heading', { name: 'Delete profile' })).toBeVisible();
-		await dialog.getByPlaceholder(name).fill(name);
-		await dialog.getByPlaceholder('Total media items').fill('0');
-		await dialog.getByRole('button', { name: 'Delete' }).click();
-
+		await expect(page.getByRole('dialog')).toHaveCount(0);
 		await expect(page.getByText('Choose a profile to continue')).toBeVisible({ timeout: 15_000 });
 		await expect(library(page)).toHaveCount(0);
 	});
 
-	test('delete profile validates name and count', async ({ page }) => {
+	test('delete profile validates name and count when media exists', async ({ page }) => {
 		await openProfileGate(page);
 		const name = uniqueName('ValidateDel');
 		await createProfile(page, name);
+		await uploadFiles(page, fixtures.photoA);
+		await waitForUploadIdle(page);
 
 		await openProfileMenu(page, name);
 		await clickMenuItem(page, 'Delete current profile');
@@ -162,7 +162,7 @@ test.describe('profiles', () => {
 		await expect(dialog.getByRole('heading', { name: 'Delete profile' })).toBeVisible();
 
 		await dialog.getByPlaceholder(name).fill('wrong-name');
-		await dialog.getByPlaceholder('Total media items').fill('0');
+		await dialog.getByPlaceholder('Total media items').fill('1');
 		await dialog.getByRole('button', { name: 'Delete' }).click();
 		await expect(dialog.getByText('Profile name does not match')).toBeVisible();
 
@@ -170,5 +170,48 @@ test.describe('profiles', () => {
 		await dialog.getByPlaceholder('Total media items').fill('99');
 		await dialog.getByRole('button', { name: 'Delete' }).click();
 		await expect(dialog.getByText('Media count does not match')).toBeVisible();
+	});
+
+	test('logo returns to profile gate', async ({ page }) => {
+		await openProfileGate(page);
+		await createProfile(page, uniqueName('HomeLogo'));
+		await expect(library(page)).toBeVisible();
+		await page.getByRole('button', { name: 'Home' }).click();
+		await expect(page.getByText('Choose a profile to continue')).toBeVisible();
+		await expect(library(page)).toHaveCount(0);
+	});
+
+	test('adds passcode to an existing profile from the sidebar', async ({ page }) => {
+		await openProfileGate(page);
+		const name = uniqueName('AddCode');
+		await createProfile(page, name);
+		await openProfileMenu(page, name);
+		await clickMenuItem(page, 'Add passcode');
+		const dialog = page.getByRole('dialog');
+		await expect(dialog.getByRole('heading', { name: 'Add passcode' })).toBeVisible();
+		await dialog.getByPlaceholder('Passcode (min 4)').fill('newpass1');
+		await dialog.getByPlaceholder('Confirm passcode').fill('newpass1');
+		await dialog.getByRole('button', { name: 'Add' }).click();
+		await expect(dialog).toBeHidden({ timeout: 15_000 });
+		await page.getByRole('button', { name: 'Home' }).click();
+		await expect(page.getByText('Locked', { exact: true })).toBeVisible();
+		await unlockProfile(page, name, 'newpass1');
+	});
+
+	test('changes passcode on an existing locked profile', async ({ page }) => {
+		await openProfileGate(page);
+		const name = uniqueName('ChangeCode');
+		await createProfile(page, name, { passcode: 'oldpass1' });
+		await openProfileMenu(page, name);
+		await clickMenuItem(page, 'Change passcode');
+		const dialog = page.getByRole('dialog');
+		await expect(dialog.getByRole('heading', { name: 'Change passcode' })).toBeVisible();
+		await dialog.getByPlaceholder('Current passcode').fill('oldpass1');
+		await dialog.getByPlaceholder('Passcode (min 4)').fill('newpass2');
+		await dialog.getByPlaceholder('Confirm passcode').fill('newpass2');
+		await dialog.getByRole('button', { name: 'Save' }).click();
+		await expect(dialog).toBeHidden({ timeout: 15_000 });
+		await page.getByRole('button', { name: 'Home' }).click();
+		await unlockProfile(page, name, 'newpass2');
 	});
 });

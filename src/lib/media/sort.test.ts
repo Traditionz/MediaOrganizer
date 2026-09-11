@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { durationSortValue, isMediaSortBy, isMediaSortDir, sortMediaItems } from '$lib/media/sort';
+import {
+	durationSortValue,
+	isMediaSortBy,
+	isMediaSortDir,
+	mediaSortLabel,
+	sortMediaItems
+} from '$lib/media/sort';
 import { makeMediaItem, resetMediaHelpers } from '../../../test/helpers/media';
 
 describe('durationSortValue', () => {
@@ -60,5 +66,14 @@ describe('sort guards', () => {
 		expect(isMediaSortBy('nope')).toBe(false);
 		expect(isMediaSortDir('asc')).toBe(true);
 		expect(isMediaSortDir('up')).toBe(false);
+	});
+
+	test('mediaSortLabel maps known keys and falls back', () => {
+		expect(mediaSortLabel('date')).toBe('Date');
+		expect(mediaSortLabel('name')).toBe('Name');
+		expect(mediaSortLabel('duration')).toBe('Duration');
+		expect(mediaSortLabel('size')).toBe('Size');
+		expect(mediaSortLabel('')).toBe('Date');
+		expect(mediaSortLabel('nope')).toBe('Date');
 	});
 });

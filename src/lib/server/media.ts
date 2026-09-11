@@ -15,7 +15,14 @@ import { filePathForKey, getProfileDb, newId, tmpPathForKey } from './db';
 import { listAlbums } from './albums';
 import { albumMedia, albums, media } from './schema';
 import type { MediaRow } from './schema';
-import { isThumbnailByteSizeOk, thumbnailSeekCandidates } from '$lib/media/thumbnail';
+import {
+	isImagePreviewByteSizeOk,
+	isThumbnailByteSizeOk,
+	previewThumbKey,
+	previewThumbTmpName,
+	thumbEdgeForSource,
+	thumbnailSeekCandidates
+} from '$lib/media/thumbnail';
 import {
 	copyFileName,
 	formatMediaBytes,
@@ -24,7 +31,7 @@ import {
 	normalizeViewCount,
 	parseContentLength
 } from './mediaUtil';
-import { decryptName, encryptName } from './nameCrypto';
+import { decryptName, decryptStoredName, encryptName } from './nameCrypto';
 
 export {
 	copyFileName,
@@ -90,7 +97,7 @@ function isValidThumbnail(profileId: string, thumbnailKey: string | null | undef
 	const path = filePathForKey(profileId, thumbnailKey);
 	if (!existsSync(path)) return false;
 	try {
-		return isThumbnailByteSizeOk(statSync(path).size);
+		return isImagePreviewByteSizeOk(statSync(path).size);
 	} catch {
 		return false;
 	}
@@ -116,7 +123,7 @@ function mapRow(
 ): MediaItem {
 	return {
 		id: row.id,
-		original_name: decryptName(row.originalName),
+		original_name: decryptStoredName(row.originalName),
 		mime_type: row.mimeType,
 		media_type: row.mediaType,
 		album_ids: albumIds,
@@ -224,7 +231,7 @@ export function getMediaForServe(
 		path,
 		size: row.size,
 		mimeType: row.mimeType,
-		originalName: decryptName(row.originalName)
+		originalName: decryptStoredName(row.originalName)
 	};
 }
 
@@ -244,6 +251,11 @@ async function fillImageDimensions(profileId: string, id: string, path: string):
 	} catch {
 		/* dims are optional for layout */
 	}
+}
+
+async function fillImagePreview(profileId: string, id: string, path: string): Promise<void> {
+	await fillImageDimensions(profileId, id, path);
+	await ensureImageThumbnail(profileId, id);
 }
 
 /** Throttled per-file lines for the Vite / Node terminal. */
@@ -369,8 +381,12 @@ export async function insertMediaFromStream(
 		throw err;
 	}
 
-	if (input.mediaType === 'image' && (input.width == null || input.height == null)) {
-		void fillImageDimensions(profileId, id, dest);
+	if (input.mediaType === 'image') {
+		if (input.width == null || input.height == null) {
+			void fillImagePreview(profileId, id, dest);
+		} else {
+			void ensureImageThumbnail(profileId, id);
+		}
 	}
 	if (input.mediaType === 'video' && duration == null) {
 		enqueueDurationBackfill(profileId);
@@ -750,10 +766,12 @@ export function purgeExpiredTrash(profileId: string, days: number = TRASH_RETENT
 	return ids.length;
 }
 
-export function getThumbnailPath(
-	profileId: string,
-	id: string
-): { path: string; mime: string } | null {
+export type PreviewThumbFile = {
+	path: string;
+	mime: string;
+};
+
+export function getThumbnailPath(profileId: string, id: string): PreviewThumbFile | null {
 	const db = getProfileDb(profileId);
 	const row = db
 		.select({ thumbnailKey: media.thumbnailKey })
@@ -767,6 +785,10 @@ export function getThumbnailPath(
 	}
 	const path = filePathForKey(profileId, row.thumbnailKey);
 	return { path, mime: 'image/jpeg' };
+}
+
+export function getPreviewThumbPath(profileId: string, id: string): PreviewThumbFile | null {
+	return getThumbnailPath(profileId, id);
 }
 
 export async function saveThumbnail(
@@ -822,6 +844,74 @@ export async function saveThumbnail(
 	db.update(media).set({ thumbnailKey: thumbKey }).where(eq(media.id, id)).run();
 }
 
+const previewJobs = new Map<string, Promise<boolean>>();
+
+/** Gallery JPEG for a still image (sharp). No-op for videos. */
+export async function ensureImageThumbnail(profileId: string, id: string): Promise<boolean> {
+	if (getThumbnailPath(profileId, id)) return true;
+
+	const db = getProfileDb(profileId);
+	const row = db
+		.select({
+			id: media.id,
+			storageKey: media.storageKey,
+			mediaType: media.mediaType,
+			width: media.width,
+			height: media.height
+		})
+		.from(media)
+		.where(eq(media.id, id))
+		.get();
+	if (!row || row.mediaType !== 'image') return false;
+
+	const input = filePathForKey(profileId, row.storageKey);
+	if (!existsSync(input)) return false;
+
+	const { writeImagePreviewJpeg } = await import('./imageThumb');
+	const thumbKey = previewThumbKey(id);
+	const dest = filePathForKey(profileId, thumbKey);
+	const tmp = tmpPathForKey(profileId, previewThumbTmpName(id));
+
+	try {
+		await writeImagePreviewJpeg(input, tmp, thumbEdgeForSource(row.width, row.height));
+		if (!existsSync(tmp) || !isImagePreviewByteSizeOk(statSync(tmp).size)) {
+			try {
+				if (existsSync(tmp)) unlinkSync(tmp);
+			} catch {
+				/* ignore */
+			}
+			return false;
+		}
+		if (existsSync(dest)) unlinkSync(dest);
+		renameSync(tmp, dest);
+		db.update(media).set({ thumbnailKey: thumbKey }).where(eq(media.id, id)).run();
+		return true;
+	} catch {
+		try {
+			if (existsSync(tmp)) unlinkSync(tmp);
+		} catch {
+			/* ignore */
+		}
+		return false;
+	}
+}
+
+/** Image: sharp preview. Video: ffmpeg poster. Dedupes in-flight work per id. */
+export function ensurePreviewThumbnail(profileId: string, id: string): Promise<boolean> {
+	const key = `${profileId}:${id}`;
+	const existing = previewJobs.get(key);
+	if (existing) return existing;
+	const job = (async () => {
+		if (getThumbnailPath(profileId, id)) return true;
+		if (await ensureImageThumbnail(profileId, id)) return true;
+		return ensureVideoThumbnail(profileId, id);
+	})().finally(() => {
+		previewJobs.delete(key);
+	});
+	previewJobs.set(key, job);
+	return job;
+}
+
 /** Build a JPEG poster with ffmpeg when the browser cannot decode the file. */
 export async function ensureVideoThumbnail(profileId: string, id: string): Promise<boolean> {
 	if (getThumbnailPath(profileId, id)) return true;
@@ -832,7 +922,9 @@ export async function ensureVideoThumbnail(profileId: string, id: string): Promi
 			id: media.id,
 			storageKey: media.storageKey,
 			mediaType: media.mediaType,
-			duration: media.duration
+			duration: media.duration,
+			width: media.width,
+			height: media.height
 		})
 		.from(media)
 		.where(eq(media.id, id))
@@ -845,13 +937,14 @@ export async function ensureVideoThumbnail(profileId: string, id: string): Promi
 	const { probeVideoDuration } = await import('./compress');
 	const { extractJpegFrame } = await import('./videoThumb');
 	const duration = normalizeDuration(row.duration) ?? (await probeVideoDuration(input)) ?? 0;
-	const thumbKey = `${id}-thumb`;
+	const thumbKey = previewThumbKey(id);
 	const dest = filePathForKey(profileId, thumbKey);
-	const tmp = tmpPathForKey(profileId, `${id}.thumb.tmp`);
+	const tmp = tmpPathForKey(profileId, previewThumbTmpName(id));
+	const edge = thumbEdgeForSource(row.width, row.height);
 
 	for (const seek of thumbnailSeekCandidates(duration)) {
 		try {
-			await extractJpegFrame(input, tmp, seek);
+			await extractJpegFrame(input, tmp, seek, edge);
 			if (!existsSync(tmp) || !isThumbnailByteSizeOk(statSync(tmp).size)) {
 				try {
 					if (existsSync(tmp)) unlinkSync(tmp);

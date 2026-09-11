@@ -45,9 +45,6 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 	const id = body ? (ownString(body, 'id') ?? '') : '';
 	if (!id) throw error(400, 'Profile id is required');
 
-	const active = resolveProfileFromCookies(cookies);
-	if (!active || active.id !== id) throw error(403, 'Unlock this profile first');
-
 	const newPasscodeField = body ? own(body, 'newPasscode') : undefined;
 	let newPasscode: string | null = '';
 	if (newPasscodeField === null) newPasscode = null;
@@ -56,6 +53,8 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 
 	try {
 		const profile = setProfilePasscode(id, currentPasscode, newPasscode);
+		const activeId = cookies.get(PROFILE_COOKIE);
+		if (activeId === profile.id) setProfileCookie(cookies, profile);
 		return json(profile);
 	} catch (err) {
 		const message = err instanceof Error ? err.message : 'Failed to update passcode';
@@ -71,18 +70,20 @@ export const DELETE: RequestHandler = async ({ request, cookies }) => {
 	const confirmName = body ? (ownString(body, 'confirmName') ?? '') : '';
 	const confirmMediaCount = body ? asFiniteNumber(own(body, 'confirmMediaCount')) : null;
 	if (!id) throw error(400, 'Profile id is required');
-	if (!confirmName.trim()) throw error(400, 'Profile name confirmation is required');
-	if (confirmMediaCount == null || !Number.isInteger(confirmMediaCount)) {
-		throw error(400, 'Media count confirmation is required');
-	}
 
 	const existing = getProfile(id);
 	if (!existing) throw error(404, 'Profile not found');
 
+	const confirmation =
+		confirmName.trim() && confirmMediaCount != null && Number.isInteger(confirmMediaCount)
+			? { name: confirmName, mediaCount: confirmMediaCount }
+			: null;
+
 	try {
-		deleteProfile(id, { name: confirmName, mediaCount: confirmMediaCount });
+		deleteProfile(id, confirmation);
 	} catch (err) {
 		const message = err instanceof Error ? err.message : 'Failed to delete profile';
+		if (message === 'Confirmation required') throw error(400, message);
 		if (message.includes('does not match')) throw error(403, message);
 		if (message.includes('not found')) throw error(404, message);
 		throw error(500, message);

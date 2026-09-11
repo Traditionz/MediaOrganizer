@@ -1,10 +1,4 @@
-import {
-	createCipheriv,
-	createDecipheriv,
-	createHmac,
-	createHash,
-	randomBytes
-} from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHmac, createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { DATA_DIR } from './dbUtil';
@@ -82,19 +76,59 @@ export function encryptName(plaintext: string): string {
 	return `${NAME_CIPHER_PREFIX}${packed.toString('base64url')}`;
 }
 
+export const UNREADABLE_NAME = '[unreadable]';
+
 export function decryptName(stored: string): string {
 	if (!isEncryptedName(stored)) return stored;
-	const packed = Buffer.from(stored.slice(NAME_CIPHER_PREFIX.length), 'base64url');
-	if (packed.length < IV_LEN + TAG_LEN + 1) {
+	try {
+		const packed = Buffer.from(stored.slice(NAME_CIPHER_PREFIX.length), 'base64url');
+		if (packed.length < IV_LEN + TAG_LEN + 1) {
+			throw new Error('Corrupt encrypted name');
+		}
+		const iv = packed.subarray(0, IV_LEN);
+		const tag = packed.subarray(IV_LEN, IV_LEN + TAG_LEN);
+		const ct = packed.subarray(IV_LEN + TAG_LEN);
+		const key = resolveNameKey();
+		const decipher = createDecipheriv(ALGO, key, iv);
+		decipher.setAuthTag(tag);
+		return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
+	} catch (err) {
+		if (err instanceof Error && err.message === 'Corrupt encrypted name') throw err;
 		throw new Error('Corrupt encrypted name');
 	}
-	const iv = packed.subarray(0, IV_LEN);
-	const tag = packed.subarray(IV_LEN, IV_LEN + TAG_LEN);
-	const ct = packed.subarray(IV_LEN + TAG_LEN);
-	const key = resolveNameKey();
-	const decipher = createDecipheriv(ALGO, key, iv);
-	decipher.setAuthTag(tag);
-	return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
+}
+
+/** Decrypt or null when ciphertext is mangled (e.g. concatenated enc:v1 blobs). */
+export function tryDecryptName(stored: string): string | null {
+	try {
+		return decryptName(stored);
+	} catch {
+		return null;
+	}
+}
+
+/** Decrypt for UI — never throws. */
+export function decryptStoredName(stored: string): string {
+	return tryDecryptName(stored) ?? UNREADABLE_NAME;
+}
+
+export type DecryptBatchItem = { ok: true; value: string } | { ok: false; error: string };
+
+/** Batch decrypt/encrypt for local rename scripts. */
+export function batchNameCrypto(input: { decrypt?: string[]; encrypt?: string[] }): {
+	decrypted: DecryptBatchItem[];
+	encrypted: string[];
+} {
+	return {
+		decrypted: (input.decrypt ?? []).map((stored) => {
+			try {
+				return { ok: true, value: decryptName(stored) };
+			} catch {
+				return { ok: false, error: 'Corrupt encrypted name' };
+			}
+		}),
+		encrypted: (input.encrypt ?? []).map((plain) => encryptName(plain))
+	};
 }
 
 /** Encrypt only when value is still plaintext. */

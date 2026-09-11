@@ -4,6 +4,7 @@
 	import Images from '@lucide/svelte/icons/images';
 	import Inbox from '@lucide/svelte/icons/inbox';
 	import Plus from '@lucide/svelte/icons/plus';
+	import KeyRound from '@lucide/svelte/icons/key-round';
 	import Search from '@lucide/svelte/icons/search';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import User from '@lucide/svelte/icons/user';
@@ -37,6 +38,8 @@
 		onswitchProfile: (id: string) => Promise<void>;
 		oncreateProfile: (name: string) => Promise<void>;
 		ondeleteProfile: (id: string) => Promise<void>;
+		onhome: () => Promise<void> | void;
+		oneditPasscode: () => void;
 	}
 
 	const MEDIA_MIME = 'application/x-media-ids';
@@ -58,7 +61,9 @@
 		onaddMedia,
 		onswitchProfile,
 		oncreateProfile,
-		ondeleteProfile
+		ondeleteProfile,
+		onhome,
+		oneditPasscode
 	}: Props = $props();
 
 	let newName = $state('');
@@ -427,11 +432,19 @@
 </script>
 
 <aside
-	class="border-border bg-background flex h-full w-[var(--media-sidebar-width)] shrink-0 flex-col border-r"
+	class="mo-app-chrome border-sidebar-border flex h-full w-[var(--media-sidebar-width)] shrink-0 flex-col border-r"
 >
 	<div class="border-border border-b px-4 py-5">
 		<p class="text-muted-foreground text-xs font-semibold tracking-[0.14em] uppercase">Library</p>
-		<h1 class="mt-1 text-xl font-bold tracking-tight">Media Organizer</h1>
+		<Button
+			type="button"
+			variant="ghost"
+			class="mt-1 h-auto justify-start px-0 py-0 text-xl font-bold tracking-tight"
+			onclick={() => void onhome()}
+			aria-label="Home"
+		>
+			Media Organizer
+		</Button>
 
 		<div class="mt-3">
 			<DropdownMenu.Root
@@ -515,6 +528,11 @@
 							New profile…
 						</DropdownMenu.Item>
 					{/if}
+
+					<DropdownMenu.Item disabled={isBusy} onclick={() => oneditPasscode()}>
+						<KeyRound class="h-4 w-4" />
+						{profile.has_passcode ? 'Change passcode' : 'Add passcode'}
+					</DropdownMenu.Item>
 
 					<DropdownMenu.Item
 						variant="destructive"
