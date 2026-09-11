@@ -2,8 +2,9 @@
 
 A **local-only** media library for organizing pictures and videos. Built with **SvelteKit**, **shadcn-svelte**, **Drizzle**, and **SQLite**.
 
-- Metadata (profiles, albums, names) lives in a SQLite database: `data/media.db`
-- Media bytes are stored as files under `data/files/` and streamed on upload/playback
+- Profile list lives in `data/registry.db`
+- Each profile has its own SQLite DB and files: `data/profiles/{profileId}/media.db` + `data/profiles/{profileId}/files/`
+- Media bytes are streamed on upload/playback (HTTP Range for video seek)
 - No Docker, no MongoDB, no cloud database — when the app is off, nothing keeps running in the background
 
 Each **profile** has its own albums and media. Passcodes are **optional** per profile.
@@ -18,7 +19,7 @@ Each **profile** has its own albums and media. Passcodes are **optional** per pr
 | **Bun**       | Runtime + packages      | **1.4+**                      |
 | **A browser** | Use the UI              | Chrome, Firefox, Edge, Safari |
 
-No Docker, npm, or MongoDB install is required. Node is not required for day-to-day use (Bun runs the app).
+No Docker, npm, or MongoDB install is required. Node is not required for day-to-day use (Bun runs the app). Production `bun run start` uses the Node adapter output (`node build`).
 
 ---
 
@@ -107,7 +108,7 @@ bun install
 bun run dev
 ```
 
-The first run creates `data/media.db` and `data/files/` automatically.
+The first run creates `data/registry.db` and `data/profiles/` automatically.
 
 ### 3. Open the app
 
@@ -139,14 +140,18 @@ Open [http://localhost:5173](http://localhost:5173).
 
 ## How storage works (local efficiency)
 
-| Piece                            | Location                 | Notes                                        |
-| -------------------------------- | ------------------------ | -------------------------------------------- |
-| Profiles, albums, media metadata | `data/media.db` (SQLite) | Embedded in the app process                  |
-| Images / videos                  | `data/files/<id>`        | Streamed to/from disk; supports multi‑GB MP4 |
-| Upload                           | HTTP body → disk stream  | Does not load whole files into RAM           |
-| Playback                         | File stream + HTTP Range | Efficient seeking for large videos           |
+| Piece                            | Location                                      | Notes                                              |
+| -------------------------------- | --------------------------------------------- | -------------------------------------------------- |
+| Profile registry                 | `data/registry.db`                            | Profile names + optional passcode hashes           |
+| Albums + media metadata          | `data/profiles/{id}/media.db`                 | Per-profile SQLite                                 |
+| Images / videos + thumbnails     | `data/profiles/{id}/files/`                   | Streamed; supports multi‑GB MP4                    |
+| Upload                           | HTTP body → disk stream                       | Does not load whole files into RAM                 |
+| Playback                         | File stream + HTTP Range                      | Efficient seeking for large videos                 |
+| Library list                     | Paginated (`limit`/`offset`, default 120)     | Scroll loads more; filters/sort run on the server  |
 
 Back up the whole `data/` folder to keep your library.
+
+Display names are encrypted at rest. Duplicate detection uses an HMAC `name_key` (exact / case-insensitive), not a full-library client scan.
 
 ---
 
@@ -159,6 +164,7 @@ Back up the whole `data/` folder to keep your library.
 | Upload / APIs return 401              | Create or select a profile first                                         |
 | `better-sqlite3` build errors         | Use Bun 1.4+; on Windows, a normal install is usually enough (prebuilds) |
 | Lost library after moving the project | Copy the `data/` directory with the project                              |
+| Folder import fails                   | Path must be a local folder outside `data/`; use an absolute path        |
 
 ---
 
@@ -166,10 +172,12 @@ Back up the whole `data/` folder to keep your library.
 
 ```bash
 bun run build
-bun run preview
+bun run start
 ```
 
-Still uses local `data/` — this project is not intended for remote production servers.
+Uses `@sveltejs/adapter-node` → `node build`. Still uses local `data/` — this project is not intended for remote multi-tenant servers.
+
+`bun run preview` remains available for a quick Vite preview of the build.
 
 ---
 
@@ -188,17 +196,20 @@ Still uses local `data/` — this project is not intended for remote production 
 - Drag media onto an album to add it (additive; media keeps its other album memberships)
 - Right‑click an album: copy name, rename, duplicate, delete (deleting an album only removes the membership — media itself is kept)
 
-### Upload & playback
+### Upload, import & playback
 
 - Upload via **Upload**, drag‑and‑drop, or empty‑area context menu
+- **Import folder…** (empty-area context menu): paste an absolute folder path on this machine; one-shot import of images/videos (optional recursive). Does **not** watch the folder.
 - Images and videos (including large **H.264 / AV1 MP4** files) with upload progress
 - Double‑click a card to open the lightbox (videos play there)
 
 ### Browse & filter
 
-- **Grid** or **Collage** layout
+- **Grid** or **Collage** layout (virtualized; only visible cards mount)
 - Column slider in grid view (2–8 columns)
-- Filter by **Pictures** / **Videos** and date range
+- Filter by **Pictures** / **Videos**, date range, search, and sort — applied **server-side** with pagination
+- Scroll near the bottom to load the next page
+- Trash loads only when you open the Trash view (badge count still shows)
 - Light / dark theme toggle
 
 ### Selection & organization
@@ -226,7 +237,7 @@ Still uses local `data/` — this project is not intended for remote production 
 | Compress (AV1/AVIF) | Manual re‑encode (see Compression below)              |
 | Move to trash       | Soft delete; permanently removed after 30 days        |
 
-Empty area: **Paste**, **Upload…** (in Trash: **Empty trash**)
+Empty area: **Paste**, **Upload…**, **Import folder…** (in Trash: **Empty trash**)
 
 ### Upload settings
 
@@ -234,13 +245,13 @@ The toolbar **Upload settings** group (separate from filters) has:
 
 | Setting             | Default | Effect                                                                                                                                                                                            |
 | ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Warn duplicates** | on      | If a file name already exists, ask: **Skip duplicates** (default) or **Upload as duplicates**. Skipping into an album links the existing library item. Off = skip silently (Amazon Photos–style). |
+| **Warn duplicates** | on      | If a file name already exists (HMAC lookup), ask: **Skip duplicates** (default) or **Upload as duplicates**. Skipping into an album links the existing library item. Off = skip silently. |
 
 ### Compression
 
 Uploads are stored as-is. There is **no** background or on-upload recompress.
 
-**Manual Compress** (selection bar or right‑click) re‑encodes selected items on demand (videos → AV1 MP4, images → AVIF). Smaller result wins; if compression does not shrink the file, the original is kept. AV1 encoding is CPU‑heavy (libaom).
+**Manual Compress** (selection bar or right‑click) re‑encodes selected items on demand (videos → AV1 MP4, images → AVIF). Default preset is **fast** (`libaom` cpu-used 8); pass `preset: "quality"` on the API for a slower encode. Smaller result wins; if compression does not shrink the file, the original is kept.
 
 ### Keyboard shortcuts
 
@@ -256,15 +267,16 @@ Uploads are stored as-is. There is **no** background or on-upload recompress.
 
 ## Project scripts
 
-| Command             | Description                   |
-| ------------------- | ----------------------------- |
-| `bun run dev`       | Dev server with HMR           |
-| `bun run build`     | Production build              |
-| `bun run preview`   | Preview the production build  |
-| `bun run check`     | Typecheck / Svelte check      |
-| `bun run format`    | Format with Oxfmt             |
-| `bun run lint`      | Oxlint (anti-slop + defaults) |
-| `bun run reinstall` | Reinstall deps + sync types   |
+| Command             | Description                                      |
+| ------------------- | ------------------------------------------------ |
+| `bun run dev`       | Dev server with HMR                              |
+| `bun run build`     | Production build (adapter-node)                  |
+| `bun run start`     | Run production server (`node build`)             |
+| `bun run preview`   | Vite preview of the production build             |
+| `bun run check`     | Typecheck / Svelte check                         |
+| `bun run format`    | Format with Oxfmt                                |
+| `bun run lint`      | Oxlint (anti-slop + defaults)                    |
+| `bun run reinstall` | Reinstall deps + sync types                      |
 
 ---
 
@@ -276,5 +288,6 @@ Uploads are stored as-is. There is **no** background or on-upload recompress.
 - **@lucide/svelte** for icons
 - **Oxfmt** for formatting
 - **Bun 1.4+** for runtime and packages
-- **Local filesystem** under `data/files/` for media bytes
-- **ffmpeg-static** + **sharp** for duration/size probes and optional manual AV1 / AVIF compression
+- **@sveltejs/adapter-node** for local production
+- **Local filesystem** under `data/profiles/{id}/files/` for media bytes
+- **ffmpeg-static** + **sharp** for duration/size probes, thumbnails, and optional manual AV1 / AVIF compression

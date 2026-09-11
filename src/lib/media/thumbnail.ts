@@ -74,7 +74,8 @@ export function previewThumbKey(id: string): string {
 }
 
 export function previewThumbTmpName(id: string): string {
-	return `${id}.thumb.tmp`;
+	// Must end with an image extension — modern ffmpeg will not mux JPEG to `.tmp`.
+	return `${id}.thumb.tmp.jpg`;
 }
 
 export function galleryThumbUrl(id: string, epoch: number): string {

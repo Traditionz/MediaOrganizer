@@ -1,9 +1,11 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import type { MediaItem } from '$lib/types';
+	import type { LibraryAlbumFilter, MediaItem } from '$lib/types';
 	import {
 		isSupportedMediaFile,
 		isVideoFile,
+		captureVideoThumbnail,
+		uploadVideoThumbnail,
 		requestServerThumbnail,
 		uploadMediaFile,
 		mapWithConcurrency,
@@ -34,7 +36,18 @@
 		shouldShowOsFileDragOverlay,
 		type DragZoneHost
 	} from '$lib/dragUpload';
-	import { asFiniteNumber, asPlainObject, eventTargetHtml, own, ownString } from '$lib/parse';
+	import { asFiniteNumber, asPlainObject, eventTargetHtml, own } from '$lib/parse';
+	import {
+		albumsWithoutId,
+		albumsWithUpsert,
+		existingIdsFromNameLookup,
+		parseAlbum,
+		parseImportedMedia,
+		parseMediaItem,
+		parseMediaItems,
+		parseOkMediaItems
+	} from '$lib/library/mutationHandlers';
+	import { parseIdsFromOk, type LibraryState } from '$lib/state/library.svelte';
 	import { passcodePatchBody } from '$lib/profile/passcodeEdit';
 	import { profileDeleteNeedsConfirm } from '$lib/profile/deleteConfirm';
 	import {
@@ -52,6 +65,7 @@
 	import { applyMarqueeHits, marqueeSelectionAnchor } from '$lib/selection/marquee.js';
 	import { fade } from 'svelte/transition';
 	import { createAppState, setAppState } from '$lib/state';
+	import type { MediaSortBy } from '$lib/media/sort.js';
 
 	interface Props {
 		data: PageData;
@@ -66,6 +80,32 @@
 	let selectionSurface = $state<HTMLElement | null>(null);
 	let marqueeAdditive = false;
 	let marqueeBaseIds: string[] = [];
+	let promptKind: 'rename' | 'import-folder' = 'rename';
+	let queryReloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function scheduleQueryReload() {
+		if (queryReloadTimer) clearTimeout(queryReloadTimer);
+		queryReloadTimer = setTimeout(() => {
+			queryReloadTimer = null;
+			void library.reloadQuery();
+		}, 200);
+	}
+
+	async function selectAlbumFilter(id: LibraryAlbumFilter) {
+		selection.selectedIds.clear();
+		selection.selectionAnchor = null;
+		if (id === 'trash') {
+			await library.ensureTrashLoaded();
+			library.setActiveAlbum(id);
+			return;
+		}
+		library.setActiveAlbum(id);
+		await library.reloadQuery();
+	}
+
+	async function refreshAlbumsAndCounts() {
+		await Promise.all([library.refreshAlbums(), library.refreshCounts()]);
+	}
 
 	/** Keep marquee hit target at least viewport-tall so empty space below rows is draggable. */
 	$effect(() => {
@@ -86,11 +126,30 @@
 	});
 
 	$effect(() => {
+		const viewport = selection.contentEl;
+		if (!viewport) return;
+		const onScroll = () => {
+			const remaining = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+			if (remaining < 900 && library.hasMore) {
+				void library.loadMore();
+			}
+		};
+		viewport.addEventListener('scroll', onScroll, { passive: true });
+		return () => viewport.removeEventListener('scroll', onScroll);
+	});
+
+	$effect(() => {
 		library.sync({
 			albums: data.albums,
 			media: data.media,
+			mediaTotal: data.mediaTotal,
+			mediaHasMore: data.mediaHasMore,
 			trash: data.trash,
+			trashCount: data.trashCount,
+			trashLoaded: data.trashLoaded,
 			totalCount: data.totalCount,
+			unassignedCount: data.unassignedCount,
+			pageSize: data.pageSize,
 			profiles: data.profiles,
 			activeProfile: data.activeProfile
 		});
@@ -108,7 +167,7 @@
 					if (!res.ok) return;
 					const summary = asPlainObject(await res.json());
 					const updated = summary ? asFiniteNumber(own(summary, 'updated')) : null;
-					if ((updated ?? 0) > 0) await library.refresh();
+					if ((updated ?? 0) > 0) await library.reloadQuery();
 				} catch {
 					/* duration backfill optional */
 				}
@@ -351,7 +410,10 @@
 			ui.errorMessage = body.message || 'Failed to create album';
 			throw new Error(ui.errorMessage);
 		}
-		await library.refresh();
+		const album = parseAlbum(await res.json());
+		if (album) library.replaceAlbums(albumsWithUpsert(library.albums, album));
+		else await library.refreshAlbums();
+		await library.refreshCounts();
 	}
 
 	async function deleteAlbum(id: string) {
@@ -371,8 +433,12 @@
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ id })
 		});
-		if (library.activeAlbum === id) library.setActiveAlbum('all');
-		await library.refresh();
+		library.replaceAlbums(albumsWithoutId(library.albums, id));
+		if (library.activeAlbum === id) {
+			library.setActiveAlbum('all');
+			await library.reloadQuery();
+		}
+		await refreshAlbumsAndCounts();
 	}
 
 	async function renameAlbum(id: string, name: string) {
@@ -386,7 +452,9 @@
 			ui.errorMessage = body.message || 'Failed to rename album';
 			throw new Error(ui.errorMessage);
 		}
-		await library.refresh();
+		const album = parseAlbum(await res.json());
+		if (album) library.replaceAlbums(albumsWithUpsert(library.albums, album));
+		else await library.refreshAlbums();
 	}
 
 	async function duplicateAlbum(id: string) {
@@ -400,31 +468,44 @@
 			ui.errorMessage = body.message || 'Failed to duplicate album';
 			return;
 		}
-		await library.refresh();
+		const album = parseAlbum(await res.json());
+		if (album) library.replaceAlbums(albumsWithUpsert(library.albums, album));
+		else await library.refreshAlbums();
+		await library.refreshCounts();
 	}
 
 	async function addMediaToAlbum(ids: string[], albumId: string) {
 		if (!ids.length || !albumId) return;
-		await fetch('/api/media', {
+		const res = await fetch('/api/media', {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ action: 'add-to-album', ids, albumId })
 		});
+		if (res.ok) {
+			library.upsertMedia(parseOkMediaItems(await res.json()));
+		}
 		selection.selectedIds.clear();
 		selection.selectionAnchor = null;
-		await library.refresh();
+		await refreshAlbumsAndCounts();
 	}
 
 	async function removeMediaFromAlbum(ids: string[], albumId: string) {
 		if (!ids.length || !albumId) return;
-		await fetch('/api/media', {
+		const res = await fetch('/api/media', {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ action: 'remove-from-album', ids, albumId })
 		});
+		if (res.ok) {
+			const items = parseOkMediaItems(await res.json());
+			library.upsertMedia(items);
+			if (library.activeAlbum === albumId) {
+				library.removeMediaIds(ids);
+			}
+		}
 		selection.selectedIds.clear();
 		selection.selectionAnchor = null;
-		await library.refresh();
+		await refreshAlbumsAndCounts();
 	}
 
 	async function duplicateMedia(
@@ -442,12 +523,15 @@
 			ui.errorMessage = body.message || 'Failed to duplicate media';
 			return;
 		}
-		await library.refresh();
+		const created = parseMediaItems(await res.json());
+		library.prependMedia(created);
+		await refreshAlbumsAndCounts();
 	}
 
 	async function renameMediaItem(id: string) {
 		const item = library.media.find((m) => m.id === id);
 		if (!item) return;
+		promptKind = 'rename';
 		ui.openRenamePrompt(id, item.original_name);
 	}
 
@@ -471,10 +555,60 @@
 				const body = await res.json().catch(() => ({}));
 				throw new Error(body.message || 'Failed to rename media');
 			}
+			const updated = parseMediaItem(await res.json());
+			if (updated) library.upsertMedia([updated]);
 			ui.closePromptModal();
-			await library.refresh();
 		} catch (err) {
 			ui.promptModalError = err instanceof Error ? err.message : 'Failed to rename media';
+			ui.promptModalBusy = false;
+		}
+	}
+
+	function openImportFolderPrompt() {
+		promptKind = 'import-folder';
+		ui.promptModalBusy = false;
+		ui.promptModalError = '';
+		ui.promptModal = {
+			open: true,
+			title: 'Import folder',
+			label: 'Absolute folder path',
+			initialValue: '',
+			mediaId: null
+		};
+	}
+
+	async function runImportFolder(path: string) {
+		const trimmed = path.trim();
+		if (!trimmed) {
+			ui.promptModalError = 'Folder path is required';
+			return;
+		}
+		ui.promptModalBusy = true;
+		ui.promptModalError = '';
+		try {
+			const res = await fetch('/api/media', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					action: 'import-folder',
+					path: trimmed,
+					albumId: library.pasteTargetAlbumId()
+				})
+			});
+			if (!res.ok) {
+				const body = await res.json().catch(() => ({}));
+				throw new Error(body.message || 'Import failed');
+			}
+			const imported = parseImportedMedia(await res.json());
+			library.prependMedia(imported);
+			await refreshAlbumsAndCounts();
+			ui.closePromptModal();
+			ui.convertResultMessage =
+				imported.length === 1
+					? 'Imported 1 file from folder.'
+					: `Imported ${imported.length} files from folder.`;
+		} catch (err) {
+			ui.promptModalError = err instanceof Error ? err.message : 'Import failed';
 			ui.promptModalBusy = false;
 		}
 	}
@@ -532,7 +666,7 @@
 				throw new Error(body.message || 'Compress failed');
 			}
 			ui.setTransferProgress(jobId, 100);
-			await library.refresh();
+			library.upsertMedia(parseMediaItems(await res.json()));
 		} catch (err) {
 			ui.errorMessage = err instanceof Error ? err.message : 'Compress failed';
 		} finally {
@@ -558,7 +692,8 @@
 					label: 'Paste',
 					disabled: !ui.clipboard?.ids.length
 				},
-				{ id: 'upload', label: 'Upload…' }
+				{ id: 'upload', label: 'Upload…' },
+				{ id: 'import-folder', label: 'Import folder…' }
 			];
 		}
 
@@ -695,6 +830,8 @@
 			return;
 		}
 		if (id === 'empty-trash') {
+			if (library.trashCount === 0) return;
+			await library.ensureTrashLoaded();
 			ui.openConfirmModal({
 				kind: 'empty-trash',
 				title: 'Empty trash',
@@ -707,6 +844,10 @@
 		}
 		if (id === 'upload') {
 			ui.fileInput?.click();
+			return;
+		}
+		if (id === 'import-folder') {
+			openImportFolderPrompt();
 			return;
 		}
 		if (id === 'remove-from-album') {
@@ -855,18 +996,22 @@
 	async function restoreSelected(ids?: string[]) {
 		const targetIds = ids ?? [...selection.selectedIds];
 		if (!targetIds.length) return;
-		await fetch('/api/media', {
+		const res = await fetch('/api/media', {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ action: 'restore', ids: targetIds })
 		});
+		if (res.ok) {
+			library.restoreFromTrash(parseOkMediaItems(await res.json()));
+		}
 		for (const mid of targetIds) selection.selectedIds.delete(mid);
 		selection.selectionAnchor = null;
-		await library.refresh();
+		await refreshAlbumsAndCounts();
 	}
 
 	async function emptyTrash() {
-		if (!library.trash.length) return;
+		if (library.trashCount === 0) return;
+		await library.ensureTrashLoaded();
 		ui.openConfirmModal({
 			kind: 'empty-trash',
 			title: 'Empty trash',
@@ -879,14 +1024,21 @@
 
 	async function runDeleteMedia(ids: string[], permanent = false) {
 		if (!ids.length) return;
-		await fetch('/api/media', {
+		const res = await fetch('/api/media', {
 			method: 'DELETE',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ ids, permanent })
 		});
+		const payload = res.ok ? await res.json() : null;
 		for (const mid of ids) selection.selectedIds.delete(mid);
 		selection.selectionAnchor = null;
-		await library.refresh();
+		if (permanent) {
+			const removed = parseIdsFromOk(payload);
+			library.removeMediaIds(removed.length ? removed : ids);
+		} else {
+			library.moveToTrash(parseOkMediaItems(payload));
+		}
+		await refreshAlbumsAndCounts();
 	}
 
 	async function handleConfirmModal() {
@@ -938,6 +1090,10 @@
 	}
 
 	async function handlePromptModalSubmit(value: string) {
+		if (promptKind === 'import-folder') {
+			await runImportFolder(value);
+			return;
+		}
 		if (!ui.promptModal.mediaId) return;
 		await runRenameMediaItem(ui.promptModal.mediaId, value);
 	}
@@ -971,14 +1127,14 @@
 	}
 
 	/** Existing library ids matching file names (case-insensitive, one id per name). */
-	function existingIdsForDuplicateFiles(files: File[]): string[] {
-		const wanted = new Set(files.map((f) => f.name.toLowerCase()));
-		const byName = new Map<string, string>();
-		for (const item of library.media) {
-			const key = item.original_name.toLowerCase();
-			if (wanted.has(key) && !byName.has(key)) byName.set(key, item.id);
-		}
-		return [...byName.values()];
+	function existingIdsForDuplicateFiles(
+		found: Awaited<ReturnType<LibraryState['lookupNames']>>,
+		files: File[]
+	): string[] {
+		return existingIdsFromNameLookup(
+			found,
+			files.map((file) => file.name)
+		);
 	}
 
 	async function uploadFiles(fileList: FileList | File[]) {
@@ -988,14 +1144,14 @@
 			return;
 		}
 
-		const knownNames = new Set(library.media.map((m) => m.original_name.toLowerCase()));
+		const found = await library.lookupNames(files.map((file) => file.name));
 		const uniqueFiles: File[] = [];
 		const duplicateFiles: File[] = [];
 		const seenInBatch = new Set<string>();
 
 		for (const file of files) {
 			const key = file.name.toLowerCase();
-			if (knownNames.has(key) || seenInBatch.has(key)) {
+			if ((found[key]?.length ?? 0) > 0 || seenInBatch.has(key)) {
 				duplicateFiles.push(file);
 			} else {
 				uniqueFiles.push(file);
@@ -1021,20 +1177,24 @@
 
 		// Skipping duplicates into an album: link existing library items instead of re-uploading
 		if (duplicateFiles.length && !uploadDupes && albumId) {
-			const existingIds = existingIdsForDuplicateFiles(duplicateFiles);
+			const existingIds = existingIdsForDuplicateFiles(found, duplicateFiles);
 			if (existingIds.length) {
-				await fetch('/api/media', {
+				const res = await fetch('/api/media', {
 					method: 'PATCH',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ action: 'add-to-album', ids: existingIds, albumId })
 				});
+				if (res.ok) {
+					library.upsertMedia(parseOkMediaItems(await res.json()));
+					await refreshAlbumsAndCounts();
+				}
 			}
 		}
 
 		if (!filesToUpload.length) {
-			await library.refresh();
+			await refreshAlbumsAndCounts();
 			if (duplicateFiles.length) {
-				const linked = albumId ? existingIdsForDuplicateFiles(duplicateFiles).length : 0;
+				const linked = albumId ? existingIdsForDuplicateFiles(found, duplicateFiles).length : 0;
 				ui.convertResultMessage =
 					linked > 0
 						? `Skipped ${duplicateFiles.length} duplicate(s); added ${linked} existing item(s) to album.`
@@ -1089,8 +1249,18 @@
 
 						if (signal?.aborted) return;
 
-						if (isVideoFile(file) && uploaded?.id) {
-							void requestServerThumbnail(uploaded.id).catch(() => {
+						library.prependMedia([uploaded]);
+
+						if (uploaded.id) {
+							void (async () => {
+								let ok = false;
+								if (isVideoFile(file)) {
+									const blob = await captureVideoThumbnail(file);
+									if (blob) ok = await uploadVideoThumbnail(uploaded.id, blob);
+								}
+								if (!ok) ok = await requestServerThumbnail(uploaded.id);
+								if (ok) library.markHasThumbnail(uploaded.id);
+							})().catch(() => {
 								/* thumbnail backfill is optional */
 							});
 						}
@@ -1121,7 +1291,7 @@
 						? errors[0]
 						: `${errors.length} of ${filesToUpload.length} uploads failed: ${errors[0]}`;
 			} else if (duplicateFiles.length && !uploadDupes) {
-				const linked = albumId ? existingIdsForDuplicateFiles(duplicateFiles).length : 0;
+				const linked = albumId ? existingIdsForDuplicateFiles(found, duplicateFiles).length : 0;
 				ui.convertResultMessage =
 					linked > 0
 						? `Uploaded ${uniqueFiles.length} file(s); skipped ${duplicateFiles.length} duplicate(s) and added ${linked} to album.`
@@ -1132,7 +1302,7 @@
 				ui.errorMessage = err instanceof Error ? err.message : 'Upload failed';
 			}
 		} finally {
-			void library.refresh().catch(() => {
+			void refreshAlbumsAndCounts().catch(() => {
 				/* list refresh is best-effort after upload */
 			});
 			if (ui.isTransferCancelled(jobId) || signal?.aborted) {
@@ -1356,7 +1526,7 @@
 			trashCount={library.trashCount}
 			profile={library.activeProfile}
 			profiles={library.profiles}
-			onselect={(id) => app.selectAlbum(id)}
+			onselect={selectAlbumFilter}
 			oncreate={createAlbum}
 			ondelete={deleteAlbum}
 			onrename={renameAlbum}
@@ -1390,13 +1560,34 @@
 				trashMode={library.activeAlbum === 'trash'}
 				trashCount={library.trashCount}
 				onviewMode={(m) => prefs.setViewMode(m)}
-				onshowImages={(v) => prefs.setShowImages(v)}
-				onshowVideos={(v) => prefs.setShowVideos(v)}
-				ondateFrom={(v) => prefs.setDateFrom(v)}
-				ondateTo={(v) => prefs.setDateTo(v)}
-				onsearchQuery={(v) => prefs.setSearchQuery(v)}
-				onsortBy={(v) => prefs.setSortBy(v)}
-				ontoggleSortDir={() => prefs.toggleSortDir()}
+				onshowImages={(v) => {
+					prefs.setShowImages(v);
+					scheduleQueryReload();
+				}}
+				onshowVideos={(v) => {
+					prefs.setShowVideos(v);
+					scheduleQueryReload();
+				}}
+				ondateFrom={(v) => {
+					prefs.setDateFrom(v);
+					scheduleQueryReload();
+				}}
+				ondateTo={(v) => {
+					prefs.setDateTo(v);
+					scheduleQueryReload();
+				}}
+				onsearchQuery={(v) => {
+					prefs.setSearchQuery(v);
+					scheduleQueryReload();
+				}}
+				onsortBy={(v: MediaSortBy) => {
+					prefs.setSortBy(v);
+					scheduleQueryReload();
+				}}
+				ontoggleSortDir={() => {
+					prefs.toggleSortDir();
+					scheduleQueryReload();
+				}}
 				oncolumns={(v) => prefs.setColumns(v)}
 				onwarnDuplicateUploads={(v) => prefs.setWarnDuplicateUploads(v)}
 				ontoggleSelect={() => selection.toggleSelectMode()}

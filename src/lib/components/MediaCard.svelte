@@ -67,6 +67,8 @@
 	let thumbStarted = false;
 	let posterErrors = 0;
 	const MAX_POSTER_ERRORS = 2;
+	let imageThumbErrors = 0;
+	const MAX_IMAGE_THUMB_ERRORS = 3;
 
 	const showPoster = $derived(Boolean(item.has_thumbnail) || localThumb);
 
@@ -95,7 +97,7 @@
 
 	function startLazyThumbnail(force = false) {
 		if (!force && (thumbStarted || item.has_thumbnail || localThumb)) return;
-		if (item.media_type !== 'video') return;
+		if (item.media_type !== 'video' && item.media_type !== 'image') return;
 		thumbStarted = true;
 		generatingThumbnail = true;
 
@@ -137,12 +139,20 @@
 		if (!(el instanceof HTMLImageElement)) return;
 		const src = el.getAttribute('src') ?? '';
 		if (!isCurrentThumbSrc(src, thumbSrc) && !isCurrentThumbSrc(el.src, thumbSrc)) return;
+		if (imageThumbErrors < MAX_IMAGE_THUMB_ERRORS) {
+			imageThumbErrors += 1;
+			thumbEpoch += 1;
+			return;
+		}
 		failedSrc = thumbSrc;
 	}
 
 	function attachCard(node: HTMLDivElement) {
 		cardEl = node;
-		const needsThumb = item.media_type === 'video' && !item.has_thumbnail && !localThumb;
+		const needsThumb =
+			(item.media_type === 'video' || item.media_type === 'image') &&
+			!item.has_thumbnail &&
+			!localThumb;
 
 		if (!needsThumb) {
 			return () => {

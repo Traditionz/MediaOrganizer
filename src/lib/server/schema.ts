@@ -40,6 +40,8 @@ export const media = sqliteTable(
 	{
 		id: text('id').primaryKey(),
 		originalName: text('original_name').notNull(),
+		/** HMAC of normalized plaintext name — duplicate / exact lookup. */
+		nameKey: text('name_key').notNull().default(''),
 		mimeType: text('mime_type').notNull(),
 		mediaType: text('media_type', { enum: ['image', 'video'] }).notNull(),
 		size: integer('size').notNull(),
@@ -58,7 +60,9 @@ export const media = sqliteTable(
 	(t) => [
 		index('idx_media_type').on(t.mediaType),
 		index('idx_media_created').on(t.createdAt),
-		index('idx_media_deleted').on(t.deletedAt)
+		index('idx_media_deleted').on(t.deletedAt),
+		index('idx_media_deleted_created').on(t.deletedAt, t.createdAt),
+		index('idx_media_name_key').on(t.nameKey)
 	]
 );
 

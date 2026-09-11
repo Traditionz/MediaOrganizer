@@ -5,6 +5,7 @@ export default defineConfig({
 	out: './drizzle',
 	dialect: 'sqlite',
 	dbCredentials: {
-		url: './data/media.db'
+		// Registry DB for drizzle-kit studio; per-profile DBs live under data/profiles/{id}/media.db
+		url: './data/registry.db'
 	}
 });

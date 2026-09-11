@@ -4,9 +4,11 @@ import { Readable } from 'node:stream';
 import type { RequestHandler } from './$types';
 import {
 	ensurePreviewThumbnail,
+	getMediaMeta,
 	getThumbnailPath,
 	openFileReadStream,
-	saveThumbnail
+	saveThumbnail,
+	schedulePreviewThumbnail
 } from '$lib/server/media';
 import { resolveProfileFromCookies } from '$lib/server/profileContext';
 
@@ -20,8 +22,30 @@ export const GET: RequestHandler = async ({ params, cookies }) => {
 	try {
 		let thumb = getThumbnailPath(profile.id, id);
 		if (!thumb) {
-			const generated = await ensurePreviewThumbnail(profile.id, id);
-			if (generated) thumb = getThumbnailPath(profile.id, id);
+			const meta = getMediaMeta(profile.id, id);
+			if (!meta) {
+				return new Response('Thumbnail not found', {
+					status: 404,
+					headers: { 'Cache-Control': 'no-store' }
+				});
+			}
+
+			if (meta.media_type === 'image') {
+				// Sharp is fast — generate inline so first gallery paint works.
+				const generated = await ensurePreviewThumbnail(profile.id, id);
+				if (generated) thumb = getThumbnailPath(profile.id, id);
+			} else {
+				// ffmpeg can be slow — schedule and let the client POST/retry.
+				schedulePreviewThumbnail(profile.id, id);
+				return new Response('Thumbnail pending', {
+					status: 404,
+					headers: {
+						'Cache-Control': 'no-store',
+						'Retry-After': '1',
+						'X-Thumbnail-Status': 'pending'
+					}
+				});
+			}
 		}
 		if (!thumb) {
 			return new Response('Thumbnail not found', {

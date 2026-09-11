@@ -1,6 +1,8 @@
 import { appDefaults } from '$lib/config/defaults';
+import { parseMediaItem } from '$lib/library/mutationHandlers';
 import { isThumbnailByteSizeOk, thumbnailSeekCandidates } from '$lib/media/thumbnail';
 import { asPlainObject, ownString } from '$lib/parse';
+import type { MediaItem } from '$lib/types';
 
 export { thumbnailSeekTime } from '$lib/media/thumbnail';
 
@@ -409,7 +411,7 @@ export function uploadMediaFile(
 		onProgress?: (info: UploadProgressInfo) => void;
 		signal?: AbortSignal;
 	}
-): Promise<{ id: string; media_type?: string }> {
+): Promise<MediaItem> {
 	return new Promise((resolve, reject) => {
 		if (options.signal?.aborted) {
 			reject(new DOMException('Upload cancelled', 'AbortError'));
@@ -437,7 +439,7 @@ export function uploadMediaFile(
 		}
 
 		let settled = false;
-		const succeed = (value: { id: string; media_type?: string }) => {
+		const succeed = (value: MediaItem) => {
 			if (settled) return;
 			settled = true;
 			resolve(value);
@@ -467,13 +469,12 @@ export function uploadMediaFile(
 			options.signal?.removeEventListener('abort', onAbort);
 			if (xhr.status >= 200 && xhr.status < 300) {
 				options.onProgress?.({ pct: 100, loaded: file.size, total: file.size });
-				const payload = asPlainObject(xhr.response);
-				const id = payload ? ownString(payload, 'id') : null;
-				if (!payload || !id) {
+				const item = parseMediaItem(xhr.response);
+				if (!item) {
 					fail(new Error(`Upload succeeded without media id for ${file.name}`));
 					return;
 				}
-				succeed({ id, media_type: ownString(payload, 'media_type') ?? undefined });
+				succeed(item);
 			} else {
 				const payload = asPlainObject(xhr.response);
 				const msg =

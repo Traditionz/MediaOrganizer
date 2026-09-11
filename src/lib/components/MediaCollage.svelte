@@ -6,10 +6,8 @@
 		MEDIA_LAYOUT_GAP,
 		MEDIA_OVERSCAN_PX,
 		attachMediaVirtualHost,
-		layoutsInYWindow,
-		toCollageItems
+		collageLayoutsInYWindow
 	} from '$lib/media/virtualLayout';
-	import { layoutCollage } from '$lib/utils';
 	import MediaCard from './MediaCard.svelte';
 
 	/**
@@ -42,10 +40,15 @@
 
 	const columnCount = $derived(Math.max(1, columns));
 	const packed = $derived(
-		layoutCollage(toCollageItems(items), columnCount, width, MEDIA_LAYOUT_GAP)
-	);
-	const visible = $derived(
-		layoutsInYWindow(packed.layouts, visibleTop, visibleBottom, MEDIA_OVERSCAN_PX)
+		collageLayoutsInYWindow(
+			items,
+			columnCount,
+			width,
+			MEDIA_LAYOUT_GAP,
+			visibleTop,
+			visibleBottom,
+			MEDIA_OVERSCAN_PX
+		)
 	);
 	const itemById = $derived.by(() => {
 		const map = new SvelteMap<string, MediaItem>();
@@ -68,7 +71,7 @@
 	data-media-layout="collage"
 	style:height="{packed.totalHeight}px"
 >
-	{#each visible as layout (layout.id)}
+	{#each packed.layouts as layout (layout.id)}
 		{@const item = itemById.get(layout.id)}
 		{#if item}
 			<div

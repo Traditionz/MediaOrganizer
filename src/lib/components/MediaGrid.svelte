@@ -6,10 +6,9 @@
 		MEDIA_LAYOUT_GAP,
 		MEDIA_OVERSCAN_PX,
 		attachMediaVirtualHost,
-		gridCardLayouts,
+		gridCardLayoutsInYWindow,
 		gridCellSize,
-		gridTotalHeight,
-		layoutsInYWindow
+		gridTotalHeight
 	} from '$lib/media/virtualLayout';
 	import MediaCard from './MediaCard.svelte';
 
@@ -39,15 +38,17 @@
 
 	const cellSize = $derived(gridCellSize(width, columns, MEDIA_LAYOUT_GAP));
 	const totalHeight = $derived(gridTotalHeight(items.length, columns, cellSize, MEDIA_LAYOUT_GAP));
-	const layouts = $derived(
-		gridCardLayouts(
+	const visible = $derived(
+		gridCardLayoutsInYWindow(
 			items.map((item) => item.id),
 			columns,
 			width,
-			MEDIA_LAYOUT_GAP
+			MEDIA_LAYOUT_GAP,
+			visibleTop,
+			visibleBottom,
+			MEDIA_OVERSCAN_PX
 		)
 	);
-	const visible = $derived(layoutsInYWindow(layouts, visibleTop, visibleBottom, MEDIA_OVERSCAN_PX));
 	const itemById = $derived.by(() => {
 		const map = new SvelteMap<string, MediaItem>();
 		for (const item of items) map.set(item.id, item);

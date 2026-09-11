@@ -82,7 +82,7 @@ describe('media thumbnail helpers', () => {
 
 	test('previewThumbKey is one file per id', () => {
 		expect(previewThumbKey('abc')).toBe('abc-thumb');
-		expect(previewThumbTmpName('abc')).toBe('abc.thumb.tmp');
+		expect(previewThumbTmpName('abc')).toBe('abc.thumb.tmp.jpg');
 	});
 
 	test('galleryThumbUrl is the single thumb route', () => {

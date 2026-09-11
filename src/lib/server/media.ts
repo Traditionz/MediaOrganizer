@@ -11,8 +11,14 @@ import { pipeline } from 'node:stream/promises';
 import { Readable, Transform } from 'node:stream';
 import { and, count, eq, exists, inArray, isNotNull, isNull, notExists, sql } from 'drizzle-orm';
 import type { MediaItem, MediaType } from '$lib/types';
+import {
+	MEDIA_PAGE_SIZE,
+	mediaListPageFromItems,
+	type MediaListPage
+} from '$lib/media/page';
+import type { MediaSortBy, MediaSortDir } from '$lib/media/sort';
+import { durationSortValue } from '$lib/media/sort';
 import { filePathForKey, getProfileDb, newId, tmpPathForKey } from './db';
-import { listAlbums } from './albums';
 import { albumMedia, albums, media } from './schema';
 import type { MediaRow } from './schema';
 import {
@@ -31,7 +37,7 @@ import {
 	normalizeViewCount,
 	parseContentLength
 } from './mediaUtil';
-import { decryptName, decryptStoredName, encryptName } from './nameCrypto';
+import { decryptName, decryptStoredName, encryptName, nameLookupKey } from './nameCrypto';
 
 export {
 	copyFileName,
@@ -52,6 +58,12 @@ export interface MediaQuery {
 	dateTo?: string;
 	/** When true, only trashed items; when false/omitted, only active. */
 	trash?: boolean;
+	/** Substring match on decrypted original name (local scan). */
+	search?: string;
+	sortBy?: MediaSortBy;
+	sortDir?: MediaSortDir;
+	limit?: number;
+	offset?: number;
 }
 
 function loadAlbumMembership(
@@ -63,13 +75,11 @@ function loadAlbumMembership(
 	for (const id of mediaIds) map.set(id, { ids: [], names: [] });
 	if (!mediaIds.length) return map;
 
-	const albumList = listAlbums(profileId);
-	const albumNameById = new Map(albumList.map((a) => [a.id, a.name]));
-
 	const rows = db
 		.select({
 			mediaId: albumMedia.mediaId,
-			albumId: albumMedia.albumId
+			albumId: albumMedia.albumId,
+			albumName: albums.name
 		})
 		.from(albumMedia)
 		.innerJoin(albums, eq(albums.id, albumMedia.albumId))
@@ -80,7 +90,7 @@ function loadAlbumMembership(
 		const entry = map.get(row.mediaId);
 		if (!entry) continue;
 		entry.ids.push(row.albumId);
-		entry.names.push(albumNameById.get(row.albumId) ?? row.albumId);
+		entry.names.push(decryptStoredName(row.albumName));
 	}
 
 	for (const entry of map.values()) {
@@ -90,17 +100,6 @@ function loadAlbumMembership(
 		entry.names = paired.map((p) => p.name);
 	}
 	return map;
-}
-
-function isValidThumbnail(profileId: string, thumbnailKey: string | null | undefined): boolean {
-	if (!thumbnailKey) return false;
-	const path = filePathForKey(profileId, thumbnailKey);
-	if (!existsSync(path)) return false;
-	try {
-		return isImagePreviewByteSizeOk(statSync(path).size);
-	} catch {
-		return false;
-	}
 }
 
 function clearInvalidThumbnail(profileId: string, id: string, thumbnailKey: string | null) {
@@ -113,6 +112,17 @@ function clearInvalidThumbnail(profileId: string, id: string, thumbnailKey: stri
 		/* ignore */
 	}
 	db.update(media).set({ thumbnailKey: null }).where(eq(media.id, id)).run();
+}
+
+function isValidThumbnail(profileId: string, thumbnailKey: string | null | undefined): boolean {
+	if (!thumbnailKey) return false;
+	const path = filePathForKey(profileId, thumbnailKey);
+	if (!existsSync(path)) return false;
+	try {
+		return isImagePreviewByteSizeOk(statSync(path).size);
+	} catch {
+		return false;
+	}
 }
 
 function mapRow(
@@ -135,7 +145,8 @@ function mapRow(
 		view_count: normalizeViewCount(row.viewCount),
 		created_at: normalizeCreated(row.createdAt),
 		deleted_at: row.deletedAt ? normalizeCreated(row.deletedAt) : null,
-		has_thumbnail: isValidThumbnail(profileId, row.thumbnailKey)
+		// Trust DB key on list paths; repair happens on thumbnail GET/serve.
+		has_thumbnail: Boolean(row.thumbnailKey)
 	};
 }
 
@@ -155,7 +166,7 @@ function getMediaRow(profileId: string, id: string): MediaRow | undefined {
 	return db.select().from(media).where(eq(media.id, id)).get();
 }
 
-export function listMedia(profileId: string, query: MediaQuery = {}): MediaItem[] {
+function buildMediaWhere(profileId: string, query: MediaQuery) {
 	const db = getProfileDb(profileId);
 	const clauses = [];
 
@@ -191,24 +202,145 @@ export function listMedia(profileId: string, query: MediaQuery = {}): MediaItem[
 		clauses.push(sql`date(${media.createdAt}) <= date(${query.dateTo})`);
 	}
 
-	const orderBy = query.trash
-		? sql`${media.deletedAt} DESC, ${media.id} DESC`
-		: sql`${media.createdAt} DESC, ${media.id} DESC`;
+	return and(...clauses);
+}
 
+function sqlOrderFor(query: MediaQuery) {
+	const sortBy = query.sortBy ?? 'date';
+	const sortDir = query.sortDir ?? 'desc';
+	const asc = sortDir === 'asc';
+
+	if (query.trash) {
+		return asc
+			? sql`${media.deletedAt} ASC, ${media.id} ASC`
+			: sql`${media.deletedAt} DESC, ${media.id} DESC`;
+	}
+
+	switch (sortBy) {
+		case 'size':
+			return asc
+				? sql`${media.size} ASC, ${media.createdAt} DESC, ${media.id} DESC`
+				: sql`${media.size} DESC, ${media.createdAt} DESC, ${media.id} DESC`;
+		case 'duration':
+			return asc
+				? sql`CASE WHEN ${media.duration} IS NULL OR ${media.duration} <= 0 THEN 1 ELSE 0 END ASC, ${media.duration} ASC, ${media.createdAt} DESC, ${media.id} DESC`
+				: sql`CASE WHEN ${media.duration} IS NULL OR ${media.duration} <= 0 THEN 1 ELSE 0 END ASC, ${media.duration} DESC, ${media.createdAt} DESC, ${media.id} DESC`;
+		case 'name':
+			// Ciphertext order is meaningless — caller sorts in memory.
+			return sql`${media.createdAt} DESC, ${media.id} DESC`;
+		case 'date':
+		default:
+			return asc
+				? sql`${media.createdAt} ASC, ${media.id} ASC`
+				: sql`${media.createdAt} DESC, ${media.id} DESC`;
+	}
+}
+
+function sortDecryptedItems(
+	items: MediaItem[],
+	sortBy: MediaSortBy,
+	sortDir: MediaSortDir
+): MediaItem[] {
+	const copy = [...items];
+	copy.sort((a, b) => {
+		if (sortBy === 'duration') {
+			const da = durationSortValue(a.duration);
+			const db = durationSortValue(b.duration);
+			if (da == null && db == null) {
+				return b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id);
+			}
+			if (da == null) return 1;
+			if (db == null) return -1;
+			const byDuration = sortDir === 'desc' ? db - da : da - db;
+			return byDuration || b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id);
+		}
+		if (sortBy === 'name') {
+			const byName = a.original_name.localeCompare(b.original_name, undefined, {
+				sensitivity: 'base',
+				numeric: true
+			});
+			const base = byName || b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id);
+			return sortDir === 'desc' ? -base : base;
+		}
+		if (sortBy === 'size') {
+			const base = a.size - b.size || b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id);
+			return sortDir === 'desc' ? -base : base;
+		}
+		const base = b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id);
+		return sortDir === 'asc' ? -base : base;
+	});
+	return copy;
+}
+
+export function listMedia(profileId: string, query: MediaQuery = {}): MediaListPage {
+	const db = getProfileDb(profileId);
+	const where = buildMediaWhere(profileId, query);
+	const limit = Math.min(500, Math.max(1, Math.floor(query.limit ?? MEDIA_PAGE_SIZE)));
+	const offset = Math.max(0, Math.floor(query.offset ?? 0));
+	const sortBy = query.sortBy ?? 'date';
+	const sortDir = query.sortDir ?? 'desc';
+	const search = query.search?.trim().toLowerCase() ?? '';
+	const needsMemoryPass = Boolean(search) || sortBy === 'name';
+
+	if (needsMemoryPass) {
+		const rows = db.select().from(media).where(where).orderBy(sqlOrderFor(query)).all();
+		let items = attachAlbums(profileId, rows);
+		if (search) {
+			items = items.filter((item) => item.original_name.toLowerCase().includes(search));
+		}
+		items = sortDecryptedItems(items, sortBy, sortDir);
+		const total = items.length;
+		const page = items.slice(offset, offset + limit);
+		return mediaListPageFromItems(page, total, offset, limit);
+	}
+
+	const total = db.select({ c: count() }).from(media).where(where).get()?.c ?? 0;
 	const rows = db
 		.select()
 		.from(media)
-		.where(and(...clauses))
-		.orderBy(orderBy)
+		.where(where)
+		.orderBy(sqlOrderFor(query))
+		.limit(limit)
+		.offset(offset)
 		.all();
 
-	return attachAlbums(profileId, rows);
+	return mediaListPageFromItems(attachAlbums(profileId, rows), total, offset, limit);
+}
+
+/** All matching rows (no pagination) — for tests / internal callers that need the full set. */
+export function listAllMedia(profileId: string, query: MediaQuery = {}): MediaItem[] {
+	return listMedia(profileId, { ...query, limit: 500, offset: 0 }).items;
 }
 
 export function getMediaMeta(profileId: string, id: string): MediaItem | undefined {
 	const row = getMediaRow(profileId, id);
 	if (!row) return undefined;
 	return attachAlbums(profileId, [row])[0];
+}
+
+export function getMediaByIds(profileId: string, ids: string[]): MediaItem[] {
+	if (!ids.length) return [];
+	const db = getProfileDb(profileId);
+	const rows = db.select().from(media).where(inArray(media.id, ids)).all();
+	const byId = new Map(attachAlbums(profileId, rows).map((item) => [item.id, item]));
+	return ids.map((id) => byId.get(id)).filter((item): item is MediaItem => Boolean(item));
+}
+
+/** Case-insensitive exact name lookup via HMAC name_key. */
+export function lookupMediaByNames(profileId: string, names: string[]) {
+	const db = getProfileDb(profileId);
+	const out: { [lowerName: string]: MediaItem[] } = {};
+	const unique = [...new Set(names.map((n) => n.trim()).filter(Boolean))];
+	for (const name of unique) {
+		const key = nameLookupKey(name);
+		const rows = db
+			.select()
+			.from(media)
+			.where(and(eq(media.nameKey, key), isNull(media.deletedAt)))
+			.all();
+		out[name.toLowerCase()] = attachAlbums(profileId, rows);
+	}
+	return out;
 }
 
 export function getMediaForServe(
@@ -358,6 +490,7 @@ export async function insertMediaFromStream(
 				.values({
 					id,
 					originalName: encryptName(input.originalName),
+					nameKey: nameLookupKey(input.originalName),
 					mimeType: input.mimeType,
 					mediaType: input.mediaType,
 					size,
@@ -383,30 +516,32 @@ export async function insertMediaFromStream(
 
 	if (input.mediaType === 'image') {
 		if (input.width == null || input.height == null) {
-			void fillImagePreview(profileId, id, dest);
+			await fillImagePreview(profileId, id, dest);
 		} else {
-			void ensureImageThumbnail(profileId, id);
+			await ensureImageThumbnail(profileId, id);
 		}
 	}
 	if (input.mediaType === 'video' && duration == null) {
 		enqueueDurationBackfill(profileId);
 	}
 
-	return {
-		id,
-		original_name: input.originalName,
-		mime_type: input.mimeType,
-		media_type: input.mediaType,
-		album_ids: input.albumId ? [input.albumId] : [],
-		album_names: [],
-		size,
-		width: input.width,
-		height: input.height,
-		duration,
-		view_count: 0,
-		created_at: new Date().toISOString(),
-		has_thumbnail: false
-	};
+	return (
+		getMediaMeta(profileId, id) ?? {
+			id,
+			original_name: input.originalName,
+			mime_type: input.mimeType,
+			media_type: input.mediaType,
+			album_ids: input.albumId ? [input.albumId] : [],
+			album_names: [],
+			size,
+			width: input.width,
+			height: input.height,
+			duration,
+			view_count: 0,
+			created_at: new Date().toISOString(),
+			has_thumbnail: false
+		}
+	);
 }
 
 /** Persist probed video duration (seconds) when finite and > 0. */
@@ -537,7 +672,11 @@ async function pumpDurationBackfill() {
 }
 
 /** Compress on-disk media to AV1 (video) or AVIF (image). Keeps original if not smaller. */
-export async function compressMedia(profileId: string, id: string): Promise<MediaItem> {
+export async function compressMedia(
+	profileId: string,
+	id: string,
+	options?: { preset?: 'fast' | 'quality' }
+): Promise<MediaItem> {
 	const db = getProfileDb(profileId);
 	const row = getMediaRow(profileId, id);
 	if (!row) throw new Error('Media not found');
@@ -546,9 +685,12 @@ export async function compressMedia(profileId: string, id: string): Promise<Medi
 	if (!existsSync(path)) throw new Error('Media file missing on disk');
 
 	const { compressImageToAvif, compressVideoToAv1, renameWithExt } = await import('./compress');
+	const preset = options?.preset ?? 'fast';
 
 	const result =
-		row.mediaType === 'video' ? await compressVideoToAv1(path) : await compressImageToAvif(path);
+		row.mediaType === 'video'
+			? await compressVideoToAv1(path, { preset })
+			: await compressImageToAvif(path);
 
 	if (result.skipped && result.newSize === row.size) {
 		if (
@@ -557,10 +699,12 @@ export async function compressMedia(profileId: string, id: string): Promise<Medi
 				result.reason === 'Already AVIF' &&
 				row.mimeType !== 'image/avif')
 		) {
+			const nextName = renameWithExt(decryptName(row.originalName), result.ext);
 			db.update(media)
 				.set({
 					mimeType: result.mimeType,
-					originalName: encryptName(renameWithExt(decryptName(row.originalName), result.ext))
+					originalName: encryptName(nextName),
+					nameKey: nameLookupKey(nextName)
 				})
 				.where(eq(media.id, id))
 				.run();
@@ -568,11 +712,13 @@ export async function compressMedia(profileId: string, id: string): Promise<Medi
 		return getMediaMeta(profileId, id)!;
 	}
 
+	const nextName = renameWithExt(decryptName(row.originalName), result.ext);
 	db.update(media)
 		.set({
 			size: result.newSize,
 			mimeType: result.mimeType,
-			originalName: encryptName(renameWithExt(decryptName(row.originalName), result.ext)),
+			originalName: encryptName(nextName),
+			nameKey: nameLookupKey(nextName),
 			width: result.width ?? row.width,
 			height: result.height ?? row.height
 		})
@@ -582,7 +728,7 @@ export async function compressMedia(profileId: string, id: string): Promise<Medi
 	return getMediaMeta(profileId, id)!;
 }
 
-export function addMediaToAlbum(profileId: string, ids: string[], albumId: string): void {
+export function addMediaToAlbum(profileId: string, ids: string[], albumId: string): MediaItem[] {
 	const db = getProfileDb(profileId);
 	assertAlbum(profileId, albumId);
 	db.transaction((tx) => {
@@ -592,9 +738,14 @@ export function addMediaToAlbum(profileId: string, ids: string[], albumId: strin
 			tx.insert(albumMedia).values({ albumId, mediaId: id }).onConflictDoNothing().run();
 		}
 	});
+	return getMediaByIds(profileId, ids);
 }
 
-export function removeMediaFromAlbum(profileId: string, ids: string[], albumId: string): void {
+export function removeMediaFromAlbum(
+	profileId: string,
+	ids: string[],
+	albumId: string
+): MediaItem[] {
 	const db = getProfileDb(profileId);
 	assertAlbum(profileId, albumId);
 	db.transaction((tx) => {
@@ -606,6 +757,7 @@ export function removeMediaFromAlbum(profileId: string, ids: string[], albumId: 
 				.run();
 		}
 	});
+	return getMediaByIds(profileId, ids);
 }
 
 export function renameMedia(profileId: string, id: string, name: string): MediaItem {
@@ -615,7 +767,7 @@ export function renameMedia(profileId: string, id: string, name: string): MediaI
 
 	const result = db
 		.update(media)
-		.set({ originalName: encryptName(trimmed) })
+		.set({ originalName: encryptName(trimmed), nameKey: nameLookupKey(trimmed) })
 		.where(eq(media.id, id))
 		.run();
 	if (result.changes === 0) throw new Error('Media not found');
@@ -662,6 +814,7 @@ export function duplicateMedia(
 				.values({
 					id: newMediaId,
 					originalName: encryptName(copyName),
+					nameKey: nameLookupKey(copyName),
 					mimeType: row.mimeType,
 					mediaType: row.mediaType,
 					size: row.size,
@@ -725,23 +878,25 @@ export function deleteMedia(profileId: string, ids: string[]): void {
 }
 
 /** Move media to trash (soft delete). Keeps files and album membership. */
-export function softDeleteMedia(profileId: string, ids: string[]): void {
+export function softDeleteMedia(profileId: string, ids: string[]): MediaItem[] {
 	const db = getProfileDb(profileId);
-	if (!ids.length) return;
+	if (!ids.length) return [];
 	db.update(media)
 		.set({ deletedAt: sql`(datetime('now'))` })
 		.where(and(inArray(media.id, ids), isNull(media.deletedAt)))
 		.run();
+	return getMediaByIds(profileId, ids);
 }
 
 /** Restore media from trash. */
-export function restoreMedia(profileId: string, ids: string[]): void {
+export function restoreMedia(profileId: string, ids: string[]): MediaItem[] {
 	const db = getProfileDb(profileId);
-	if (!ids.length) return;
+	if (!ids.length) return [];
 	db.update(media)
 		.set({ deletedAt: null })
 		.where(and(inArray(media.id, ids), isNotNull(media.deletedAt)))
 		.run();
+	return getMediaByIds(profileId, ids);
 }
 
 /**
@@ -813,7 +968,7 @@ export async function saveThumbnail(
 
 	const thumbKey = `${id}-thumb`;
 	const dest = filePathForKey(profileId, thumbKey);
-	const tmp = tmpPathForKey(profileId, `${id}.thumb.tmp`);
+	const tmp = tmpPathForKey(profileId, `${id}.thumb.tmp.jpg`);
 
 	// SAFETY: Request body is a WHATWG ReadableStream; Node fromWeb accepts that contract.
 	const nodeStream = Readable.fromWeb(body as import('node:stream/web').ReadableStream);
@@ -845,6 +1000,11 @@ export async function saveThumbnail(
 }
 
 const previewJobs = new Map<string, Promise<boolean>>();
+
+/** Kick off encode without awaiting — used by thumbnail GET for fast 404 + background fill. */
+export function schedulePreviewThumbnail(profileId: string, id: string): void {
+	void ensurePreviewThumbnail(profileId, id);
+}
 
 /** Gallery JPEG for a still image (sharp). No-op for videos. */
 export async function ensureImageThumbnail(profileId: string, id: string): Promise<boolean> {
@@ -940,7 +1100,9 @@ export async function ensureVideoThumbnail(profileId: string, id: string): Promi
 	const thumbKey = previewThumbKey(id);
 	const dest = filePathForKey(profileId, thumbKey);
 	const tmp = tmpPathForKey(profileId, previewThumbTmpName(id));
-	const edge = thumbEdgeForSource(row.width, row.height);
+	// Unknown source dims → small gallery poster (1280 is wasteful for cards).
+	const edge =
+		row.width || row.height ? thumbEdgeForSource(row.width, row.height) : 480;
 
 	for (const seek of thumbnailSeekCandidates(duration)) {
 		try {
@@ -957,7 +1119,13 @@ export async function ensureVideoThumbnail(profileId: string, id: string): Promi
 			renameSync(tmp, dest);
 			db.update(media).set({ thumbnailKey: thumbKey }).where(eq(media.id, id)).run();
 			return true;
-		} catch {
+		} catch (err) {
+			console.warn(
+				'[media-organizer] video thumb failed:',
+				id,
+				`seek=${seek}`,
+				err instanceof Error ? err.message.split('\n').slice(-2).join(' | ') : err
+			);
 			try {
 				if (existsSync(tmp)) unlinkSync(tmp);
 			} catch {

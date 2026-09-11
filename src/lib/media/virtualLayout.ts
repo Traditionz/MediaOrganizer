@@ -87,6 +87,44 @@ export function gridCardLayouts(
 	return layouts;
 }
 
+/** Closed-form grid layouts only for the visible Y-window (plus overscan). */
+export function gridCardLayoutsInYWindow(
+	ids: readonly string[],
+	columns: number,
+	containerWidth: number,
+	gap: number,
+	visibleTop: number,
+	visibleBottom: number,
+	overscanPx: number
+): CollageLayout[] {
+	if (ids.length === 0) return [];
+	const cols = Math.max(1, columns);
+	const cell = gridCellSize(containerWidth, cols, gap);
+	const stride = cell + gap;
+	if (!(stride > 0)) return [];
+	const top = visibleTop - overscanPx;
+	const bottom = visibleBottom + overscanPx;
+	if (!(bottom > top)) return [];
+	const firstRow = Math.max(0, Math.ceil((top - cell) / stride));
+	const lastRow = Math.min(Math.ceil(ids.length / cols) - 1, Math.floor(bottom / stride));
+	if (lastRow < firstRow) return [];
+	const layouts: CollageLayout[] = [];
+	for (let row = firstRow; row <= lastRow; row++) {
+		for (let col = 0; col < cols; col++) {
+			const index = row * cols + col;
+			if (index >= ids.length) break;
+			layouts.push({
+				id: ids[index]!,
+				x: col * stride,
+				y: row * stride,
+				w: cell,
+				h: cell
+			});
+		}
+	}
+	return layouts;
+}
+
 export function collageCardLayouts(
 	items: readonly CollageAspectItem[],
 	columns: number,
@@ -131,6 +169,26 @@ export function layoutsInYWindow(
 		out.push(layout);
 	}
 	return out;
+}
+
+/**
+ * Collage packing is incremental: walk items until past the Y-window bottom.
+ * Still O(visible+overscan) for card mount; packing stops early when past bottom.
+ */
+export function collageLayoutsInYWindow(
+	items: readonly CollageAspectItem[],
+	columns: number,
+	containerWidth: number,
+	gap: number,
+	visibleTop: number,
+	visibleBottom: number,
+	overscanPx: number
+) {
+	const packed = layoutCollage(toCollageItems(items), columns, containerWidth, gap);
+	return {
+		layouts: layoutsInYWindow(packed.layouts, visibleTop, visibleBottom, overscanPx),
+		totalHeight: packed.totalHeight
+	} as const;
 }
 
 export function idsIntersectingBox(

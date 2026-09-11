@@ -5,6 +5,7 @@ import {
 	collageFallbackSize,
 	collageItemSize,
 	gridCardLayouts,
+	gridCardLayoutsInYWindow,
 	gridCellSize,
 	gridTotalHeight,
 	idsIntersectingBox,
@@ -73,6 +74,17 @@ describe('grid layout math', () => {
 		expect(layouts[1]).toEqual({ id: 'b', x: 55, y: 0, w: 45, h: 45 });
 		expect(layouts[2]).toEqual({ id: 'c', x: 0, y: 55, w: 45, h: 45 });
 		expect(gridCardLayouts([], 3, 200, MEDIA_LAYOUT_GAP)).toEqual([]);
+	});
+
+	test('gridCardLayoutsInYWindow only builds visible rows', () => {
+		const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
+		const visible = gridCardLayoutsInYWindow(ids, 2, 100, 10, 50, 60, 0);
+		expect(visible.map((l) => l.id)).toEqual(['c', 'd']);
+		expect(gridCardLayoutsInYWindow(ids, 2, 100, 10, 0, 45, 0).map((l) => l.id)).toEqual([
+			'a',
+			'b'
+		]);
+		expect(gridCardLayoutsInYWindow([], 2, 100, 10, 0, 100, 0)).toEqual([]);
 	});
 });
 

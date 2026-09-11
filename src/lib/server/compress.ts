@@ -121,8 +121,12 @@ export async function probeVideoDuration(path: string): Promise<number | null> {
 /**
  * Re-encode H.264/H.265/etc. to AV1 (libaom) in an MP4 container.
  * Replaces the file only when the result is meaningfully smaller.
+ * `fast` uses higher cpu-used (quicker, larger); `quality` is slower.
  */
-export async function compressVideoToAv1(inputPath: string): Promise<CompressResult> {
+export async function compressVideoToAv1(
+	inputPath: string,
+	options?: { preset?: 'fast' | 'quality' }
+): Promise<CompressResult> {
 	const originalSize = statSync(inputPath).size;
 	const info = await probeVideo(inputPath);
 
@@ -141,6 +145,9 @@ export async function compressVideoToAv1(inputPath: string): Promise<CompressRes
 	}
 
 	const outPath = compressTempPath(inputPath, '.av1.tmp.mp4');
+	const preset = options?.preset ?? 'fast';
+	const cpuUsed = preset === 'quality' ? '6' : '8';
+	const crf = preset === 'quality' ? '32' : '36';
 
 	try {
 		await runFfmpeg([
@@ -154,11 +161,11 @@ export async function compressVideoToAv1(inputPath: string): Promise<CompressRes
 			'-c:v',
 			'libaom-av1',
 			'-crf',
-			'36',
+			crf,
 			'-b:v',
 			'0',
 			'-cpu-used',
-			'8',
+			cpuUsed,
 			'-row-mt',
 			'1',
 			'-tiles',

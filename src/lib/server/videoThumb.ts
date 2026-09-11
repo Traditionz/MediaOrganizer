@@ -34,6 +34,8 @@ export function extractJpegFrame(
 						'3',
 						'-vf',
 						previewFfmpegScale(maxEdge),
+						'-f',
+						'image2',
 						outputPath
 					],
 					{ windowsHide: true }

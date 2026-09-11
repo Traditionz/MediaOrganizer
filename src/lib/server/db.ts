@@ -5,9 +5,7 @@ import { asPlainObject, type JsonObject, type JsonValue } from '$lib/parse';
 import * as schema from './schema';
 import {
 	decryptName,
-	encryptName,
 	ensureEncryptedName,
-	isEncryptedName,
 	nameLookupKey
 } from './nameCrypto';
 import {
@@ -97,6 +95,7 @@ function createProfileSchema(sqlite: Database.Database) {
 		CREATE TABLE IF NOT EXISTS media (
 			id TEXT PRIMARY KEY NOT NULL,
 			original_name TEXT NOT NULL,
+			name_key TEXT NOT NULL DEFAULT '',
 			mime_type TEXT NOT NULL,
 			media_type TEXT NOT NULL CHECK (media_type IN ('image', 'video')),
 			size INTEGER NOT NULL,
@@ -123,6 +122,8 @@ function createProfileSchema(sqlite: Database.Database) {
 		CREATE INDEX IF NOT EXISTS idx_album_media_album ON album_media(album_id);
 	`);
 
+	// Existing profile DBs keep their old CREATE TABLE shape — ALTER before any
+	// index that needs new columns (CREATE TABLE IF NOT EXISTS will not add them).
 	const mediaCols = tableColumns(sqlite, 'media');
 	if (mediaCols.size > 0 && !mediaCols.has('thumbnail_key')) {
 		sqlite.exec('ALTER TABLE media ADD COLUMN thumbnail_key TEXT');
@@ -136,6 +137,12 @@ function createProfileSchema(sqlite: Database.Database) {
 	if (mediaCols.size > 0 && !mediaCols.has('view_count')) {
 		sqlite.exec('ALTER TABLE media ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0');
 	}
+	if (mediaCols.size > 0 && !mediaCols.has('name_key')) {
+		sqlite.exec(`ALTER TABLE media ADD COLUMN name_key TEXT NOT NULL DEFAULT ''`);
+	}
+
+	sqlite.exec('CREATE INDEX IF NOT EXISTS idx_media_deleted_created ON media(deleted_at, created_at)');
+	sqlite.exec('CREATE INDEX IF NOT EXISTS idx_media_name_key ON media(name_key)');
 
 	migrateEncryptedNames(sqlite);
 }
@@ -151,6 +158,7 @@ function migrateEncryptedNames(sqlite: Database.Database) {
 	sqlite.exec('DROP INDEX IF EXISTS idx_albums_name');
 
 	type AlbumRow = { id: string; name: string; name_key: string | null };
+	// SAFETY: SELECT id, name, name_key FROM albums yields these columns.
 	const albumRows = sqlite.prepare('SELECT id, name, name_key FROM albums').all() as AlbumRow[];
 	const updateAlbum = sqlite.prepare('UPDATE albums SET name = ?, name_key = ? WHERE id = ?');
 	for (const row of albumRows) {
@@ -164,12 +172,21 @@ function migrateEncryptedNames(sqlite: Database.Database) {
 
 	sqlite.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_albums_name_key ON albums (name_key)');
 
-	type MediaNameRow = { id: string; original_name: string };
-	const mediaRows = sqlite.prepare('SELECT id, original_name FROM media').all() as MediaNameRow[];
-	const updateMedia = sqlite.prepare('UPDATE media SET original_name = ? WHERE id = ?');
+	type MediaNameRow = { id: string; original_name: string; name_key: string | null };
+	// SAFETY: SELECT id, original_name, name_key FROM media yields these columns.
+	const mediaRows = sqlite
+		.prepare('SELECT id, original_name, name_key FROM media')
+		.all() as MediaNameRow[];
+	const updateMedia = sqlite.prepare(
+		'UPDATE media SET original_name = ?, name_key = ? WHERE id = ?'
+	);
 	for (const row of mediaRows) {
-		if (isEncryptedName(row.original_name)) continue;
-		updateMedia.run(encryptName(row.original_name), row.id);
+		const plain = decryptName(row.original_name);
+		const cipher = ensureEncryptedName(row.original_name);
+		const key = nameLookupKey(plain);
+		if (cipher !== row.original_name || row.name_key !== key) {
+			updateMedia.run(cipher, key, row.id);
+		}
 	}
 }
 
