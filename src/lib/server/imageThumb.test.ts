@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'bun:test';
 import sharp from 'sharp';
-import { IMAGE_PREVIEW_MAX_EDGE, isImagePreviewByteSizeOk } from '$lib/media/thumbnail';
+import { isImagePreviewByteSizeOk, THUMB_FALLBACK_EDGE } from '$lib/media/thumbnail';
 import { writeImagePreviewJpeg } from '$lib/server/imageThumb';
 
 const dirs: string[] = [];
@@ -36,7 +36,25 @@ describe('isImagePreviewByteSizeOk', () => {
 });
 
 describe('writeImagePreviewJpeg', () => {
-	test('downscales long edge to preview max', async () => {
+	test('downscales long edge to the HD fallback', async () => {
+		const dir = scratchDir();
+		const input = join(dir, 'wide.png');
+		const output = join(dir, 'out.jpg');
+		await sharp({
+			create: { width: 3200, height: 1600, channels: 3, background: { r: 12, g: 80, b: 160 } }
+		})
+			.png()
+			.toFile(input);
+
+		await writeImagePreviewJpeg(input, output);
+		const meta = await sharp(output).metadata();
+		expect(meta.format).toBe('jpeg');
+		expect(meta.width).toBe(THUMB_FALLBACK_EDGE);
+		expect(meta.height).toBe(THUMB_FALLBACK_EDGE / 2);
+		expect(isImagePreviewByteSizeOk(statSync(output).size)).toBe(true);
+	});
+
+	test('honors a source-sized edge without enlarging', async () => {
 		const dir = scratchDir();
 		const input = join(dir, 'wide.png');
 		const output = join(dir, 'out.jpg');
@@ -46,12 +64,10 @@ describe('writeImagePreviewJpeg', () => {
 			.png()
 			.toFile(input);
 
-		await writeImagePreviewJpeg(input, output);
+		await writeImagePreviewJpeg(input, output, 1920);
 		const meta = await sharp(output).metadata();
-		expect(meta.format).toBe('jpeg');
-		expect(meta.width).toBe(IMAGE_PREVIEW_MAX_EDGE);
-		expect(meta.height).toBe(IMAGE_PREVIEW_MAX_EDGE / 2);
-		expect(isImagePreviewByteSizeOk(statSync(output).size)).toBe(true);
+		expect(meta.width).toBe(1600);
+		expect(meta.height).toBe(800);
 	});
 
 	test('does not enlarge tiny sources', async () => {

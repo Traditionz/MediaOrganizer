@@ -100,7 +100,34 @@ export function lightboxSlideY(action: LightboxNavAction, distance = 64): number
 	return mag;
 }
 
-export function lightboxSlideMs(opts: { reducedMotion: boolean; hasOffset: boolean }): number {
-	if (opts.reducedMotion || !opts.hasOffset) return 0;
+export function lightboxSlideMs(reducedMotion: boolean, hasOffset: boolean): number {
+	if (reducedMotion || !hasOffset) return 0;
 	return 240;
+}
+
+/** Vertical travel for gallery slides. Scales with viewport so the motion is obvious. */
+export function lightboxSlideDistance(viewportHeight: number): number {
+	if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return 64;
+	return Math.max(64, Math.round(viewportHeight * 0.28));
+}
+
+export interface LightboxFlyParams {
+	x: number;
+	y: number;
+	duration: number;
+	opacity: number;
+}
+
+/** Incoming slide: lock x so flex leftovers cannot become a sideways fly. */
+export function lightboxFlyIn(enterY: number, duration: number): LightboxFlyParams {
+	const y = Number.isFinite(enterY) ? enterY : 0;
+	const ms = Number.isFinite(duration) && duration > 0 ? duration : 0;
+	return { x: 0, y, duration: ms, opacity: 0.35 };
+}
+
+/** Outgoing slide: opposite Y, still no X. */
+export function lightboxFlyOut(enterY: number, duration: number): LightboxFlyParams {
+	const y = Number.isFinite(enterY) ? -enterY : 0;
+	const ms = Number.isFinite(duration) && duration > 0 ? duration : 0;
+	return { x: 0, y, duration: ms, opacity: 0.35 };
 }

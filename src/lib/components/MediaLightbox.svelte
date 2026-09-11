@@ -10,9 +10,12 @@
 	import {
 		lightboxCanNext,
 		lightboxCanPrev,
+		lightboxFlyIn,
+		lightboxFlyOut,
 		lightboxHotkey,
 		lightboxKeysReserved,
 		lightboxPosition,
+		lightboxSlideDistance,
 		lightboxSlideMs,
 		lightboxSlideY,
 		resolveLightboxNeighbor
@@ -49,11 +52,13 @@
 	const showNav = $derived(items.length > 1 && currentIndex >= 0);
 	const positionLabel = $derived(lightboxPosition(items.length, currentIndex));
 	const slideMs = $derived(
-		lightboxSlideMs({
-			reducedMotion: browser && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-			hasOffset: enterY !== 0
-		})
+		lightboxSlideMs(
+			browser && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+			enterY !== 0
+		)
 	);
+	const flyIn = $derived(lightboxFlyIn(enterY, slideMs));
+	const flyOut = $derived(lightboxFlyOut(enterY, slideMs));
 
 	function maybeQualify(watched: number, total: number) {
 		if (recorded || !item) return;
@@ -112,7 +117,7 @@
 		if (!item) return;
 		const next = resolveLightboxNeighbor(items, item.id, action);
 		if (!next) return;
-		enterY = lightboxSlideY(action);
+		enterY = lightboxSlideY(action, lightboxSlideDistance(browser ? window.innerHeight : 0));
 		recorded = false;
 		intrinsic = null;
 		userScale = 1;
@@ -229,77 +234,87 @@
 
 {#if item}
 	<div
-		class="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/80 p-6"
+		class="fixed inset-0 z-50 overflow-hidden bg-black/80"
 		transition:fade={{ duration: 140 }}
 		role="dialog"
 		aria-modal="true"
 		aria-label={item.original_name}
 		tabindex="-1"
 	>
-		{#key item.id}
-			<div
-				class="slide-stage"
-				in:fly={{ y: enterY, duration: slideMs, opacity: 0.35 }}
-				out:fly={{ y: -enterY, duration: slideMs, opacity: 0.35 }}
-			>
-				{#if item.media_type === 'image'}
-					<div
-						class="frame relative inline-flex max-h-[86vh] max-w-[92vw] overflow-hidden rounded-lg"
-						data-lightbox-frame
-					>
-						<img
-							{@attach attachImageDwell}
-							src={`/api/media/${item.id}`}
-							alt={item.original_name}
-							class="max-h-[86vh] max-w-[92vw] object-contain"
-						/>
-						{@render chrome(item)}
-					</div>
-				{:else}
-					<div
-						class={[
-							'frame video-resize relative overflow-hidden rounded-lg bg-black shadow-2xl',
-							resizing && 'is-resizing'
-						]}
-						style:width={`${videoWidth}px`}
-						style:height={`${videoHeight}px`}
-						class:select-none={resizing}
-						data-lightbox-frame
-					>
-						<CustomPlayer
-							src={`/api/media/${item.id}`}
-							mediaId={item.id}
-							onmetadata={(meta) => {
-								intrinsic = { w: meta.w, h: meta.h };
-							}}
-							onwatchprogress={(watched, total) => {
-								void maybeQualify(watched, total);
-							}}
-						/>
-						<button
-							type="button"
-							class="hud-btn resize-handle absolute right-1 bottom-2 z-30 flex h-5 w-5 cursor-se-resize items-end justify-end rounded-sm border border-white/30 bg-white/15 p-0.5 text-white/90 hover:bg-white/25"
-							aria-label="Resize video"
-							onpointerdown={startResize}
-							onpointermove={onResizeMove}
-							onpointerup={endResize}
-							onpointercancel={endResize}
+		<div class="slide-host">
+			{#key item.id}
+				<div class="slide-stage" in:fly={flyIn} out:fly={flyOut}>
+					{#if item.media_type === 'image'}
+						<div
+							class="frame relative inline-flex max-h-[86vh] max-w-[92vw] overflow-hidden rounded-lg"
+							data-lightbox-frame
 						>
-							<MoveDiagonal2 class="h-3 w-3" />
-						</button>
-						{@render chrome(item)}
-					</div>
-				{/if}
-			</div>
-		{/key}
+							<img
+								{@attach attachImageDwell}
+								src={`/api/media/${item.id}`}
+								alt={item.original_name}
+								class="max-h-[86vh] max-w-[92vw] object-contain"
+							/>
+							{@render chrome(item)}
+						</div>
+					{:else}
+						<div
+							class={[
+								'frame video-resize relative overflow-hidden rounded-lg bg-black shadow-2xl',
+								resizing && 'is-resizing'
+							]}
+							style:width={`${videoWidth}px`}
+							style:height={`${videoHeight}px`}
+							class:select-none={resizing}
+							data-lightbox-frame
+						>
+							<CustomPlayer
+								src={`/api/media/${item.id}`}
+								mediaId={item.id}
+								onmetadata={(meta) => {
+									intrinsic = { w: meta.w, h: meta.h };
+								}}
+								onwatchprogress={(watched, total) => {
+									void maybeQualify(watched, total);
+								}}
+							/>
+							<button
+								type="button"
+								class="hud-btn resize-handle absolute right-1 bottom-2 z-30 flex h-5 w-5 cursor-se-resize items-end justify-end rounded-sm border border-white/30 bg-white/15 p-0.5 text-white/90 hover:bg-white/25"
+								aria-label="Resize video"
+								onpointerdown={startResize}
+								onpointermove={onResizeMove}
+								onpointerup={endResize}
+								onpointercancel={endResize}
+							>
+								<MoveDiagonal2 class="h-3 w-3" />
+							</button>
+							{@render chrome(item)}
+						</div>
+					{/if}
+				</div>
+			{/key}
+		</div>
 	</div>
 {/if}
 
 <style>
+	.slide-host {
+		position: relative;
+		width: 100%;
+		height: 100%;
+	}
 	.slide-stage {
+		position: absolute;
+		inset: 0;
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		padding: 1.5rem;
+		pointer-events: none;
+	}
+	.slide-stage :global(.frame) {
+		pointer-events: auto;
 	}
 	.hud {
 		opacity: 0;

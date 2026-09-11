@@ -3,7 +3,6 @@ import { statSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import type { RequestHandler } from './$types';
 import {
-	ensureImageThumbnail,
 	ensurePreviewThumbnail,
 	getThumbnailPath,
 	openFileReadStream,
@@ -18,31 +17,38 @@ export const GET: RequestHandler = async ({ params, cookies }) => {
 	const id = params.id;
 	if (!id) throw error(400, 'Invalid media id');
 
-	let thumb = getThumbnailPath(profile.id, id);
-	if (!thumb) {
-		const generated = await ensureImageThumbnail(profile.id, id);
-		if (generated) thumb = getThumbnailPath(profile.id, id);
-	}
-	if (!thumb) {
+	try {
+		let thumb = getThumbnailPath(profile.id, id);
+		if (!thumb) {
+			const generated = await ensurePreviewThumbnail(profile.id, id);
+			if (generated) thumb = getThumbnailPath(profile.id, id);
+		}
+		if (!thumb) {
+			return new Response('Thumbnail not found', {
+				status: 404,
+				headers: { 'Cache-Control': 'no-store' }
+			});
+		}
+
+		const size = statSync(thumb.path).size;
+		const nodeStream = openFileReadStream(thumb.path);
+		// SAFETY: Node Readable.toWeb() is a WHATWG ReadableStream accepted by Response.
+		const webStream = Readable.toWeb(nodeStream) as ReadableStream;
+
+		return new Response(webStream, {
+			status: 200,
+			headers: {
+				'Content-Type': thumb.mime,
+				'Content-Length': String(size),
+				'Cache-Control': 'private, max-age=86400'
+			}
+		});
+	} catch {
 		return new Response('Thumbnail not found', {
 			status: 404,
 			headers: { 'Cache-Control': 'no-store' }
 		});
 	}
-
-	const size = statSync(thumb.path).size;
-	const nodeStream = openFileReadStream(thumb.path);
-	// SAFETY: Node Readable.toWeb() is a WHATWG ReadableStream accepted by Response.
-	const webStream = Readable.toWeb(nodeStream) as ReadableStream;
-
-	return new Response(webStream, {
-		status: 200,
-		headers: {
-			'Content-Type': thumb.mime,
-			'Content-Length': String(size),
-			'Cache-Control': 'private, max-age=86400'
-		}
-	});
 };
 
 export const POST: RequestHandler = async ({ params, cookies }) => {

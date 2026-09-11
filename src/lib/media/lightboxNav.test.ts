@@ -4,10 +4,13 @@ import {
 	lightboxActionFromKey,
 	lightboxCanNext,
 	lightboxCanPrev,
+	lightboxFlyIn,
+	lightboxFlyOut,
 	lightboxHotkey,
 	lightboxHudVisible,
 	lightboxKeysReserved,
 	lightboxPosition,
+	lightboxSlideDistance,
 	lightboxSlideMs,
 	lightboxSlideY,
 	resolveLightboxNeighbor
@@ -142,9 +145,31 @@ describe('lightboxNav', () => {
 		expect(lightboxSlideY('next', -50)).toBe(50);
 		expect(lightboxSlideY('prev', 0)).toBe(0);
 		expect(lightboxSlideY('next', Number.NaN)).toBe(0);
-		expect(lightboxSlideMs({ reducedMotion: true, hasOffset: true })).toBe(0);
-		expect(lightboxSlideMs({ reducedMotion: false, hasOffset: false })).toBe(0);
-		expect(lightboxSlideMs({ reducedMotion: false, hasOffset: true })).toBe(240);
-		expect(lightboxSlideMs({ reducedMotion: true, hasOffset: false })).toBe(0);
+		expect(lightboxSlideMs(true, true)).toBe(0);
+		expect(lightboxSlideMs(false, false)).toBe(0);
+		expect(lightboxSlideMs(false, true)).toBe(240);
+		expect(lightboxSlideMs(true, false)).toBe(0);
+	});
+
+	test('lightboxSlideDistance scales with viewport height', () => {
+		expect(lightboxSlideDistance(0)).toBe(64);
+		expect(lightboxSlideDistance(-10)).toBe(64);
+		expect(lightboxSlideDistance(Number.NaN)).toBe(64);
+		expect(lightboxSlideDistance(Number.POSITIVE_INFINITY)).toBe(64);
+		expect(lightboxSlideDistance(200)).toBe(64);
+		expect(lightboxSlideDistance(1000)).toBe(280);
+	});
+
+	test('lightboxFlyIn and lightboxFlyOut keep motion on Y only', () => {
+		expect(lightboxFlyIn(0, 240)).toEqual({ x: 0, y: 0, duration: 240, opacity: 0.35 });
+		expect(lightboxFlyIn(64, 240)).toEqual({ x: 0, y: 64, duration: 240, opacity: 0.35 });
+		expect(lightboxFlyOut(64, 240)).toEqual({ x: 0, y: -64, duration: 240, opacity: 0.35 });
+		expect(lightboxFlyIn(-64, 240)).toEqual({ x: 0, y: -64, duration: 240, opacity: 0.35 });
+		expect(lightboxFlyOut(-64, 240)).toEqual({ x: 0, y: 64, duration: 240, opacity: 0.35 });
+		expect(lightboxFlyIn(Number.NaN, 240)).toEqual({ x: 0, y: 0, duration: 240, opacity: 0.35 });
+		expect(lightboxFlyOut(Number.NaN, 240)).toEqual({ x: 0, y: 0, duration: 240, opacity: 0.35 });
+		expect(lightboxFlyIn(40, 0)).toEqual({ x: 0, y: 40, duration: 0, opacity: 0.35 });
+		expect(lightboxFlyOut(40, -1)).toEqual({ x: 0, y: -40, duration: 0, opacity: 0.35 });
+		expect(lightboxFlyIn(40, Number.NaN)).toEqual({ x: 0, y: 40, duration: 0, opacity: 0.35 });
 	});
 });

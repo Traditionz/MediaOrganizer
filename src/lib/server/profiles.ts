@@ -1,5 +1,6 @@
 import { count, eq, sql } from 'drizzle-orm';
 import type { Profile } from '$lib/types';
+import { normalizeMediaCount, profileDeleteConfirmationError } from '$lib/profile/deleteConfirm';
 import registryDb, {
 	destroyProfileStorage,
 	getProfileDb,
@@ -101,25 +102,23 @@ export function setProfilePasscode(
 	return getProfile(id)!;
 }
 
-/** Deletes profile after confirming name + media count. */
+/** Deletes an empty profile immediately. Non-empty needs matching name + media count. */
 export function deleteProfile(
 	id: string,
-	confirmation: { name: string; mediaCount: number }
+	confirmation: { name: string; mediaCount: number } | null
 ): void {
 	const row = getProfileRow(id);
 	if (!row) throw new Error('Profile not found');
 
-	const expectedName = row.name.trim();
-	const providedName = confirmation.name.trim();
-	if (providedName.localeCompare(expectedName, undefined, { sensitivity: 'accent' }) !== 0) {
-		throw new Error('Profile name does not match');
-	}
-
 	const pdb = getProfileDb(id);
-	const actualCount = pdb.select({ c: count() }).from(media).get()?.c ?? 0;
-	if (!Number.isInteger(confirmation.mediaCount) || confirmation.mediaCount !== actualCount) {
-		throw new Error('Media count does not match');
-	}
+	const actualCount = normalizeMediaCount(pdb.select({ c: count() }).from(media).get()?.c ?? 0);
+	const confirmError = profileDeleteConfirmationError(
+		actualCount,
+		row.name,
+		confirmation?.name ?? null,
+		confirmation?.mediaCount ?? null
+	);
+	if (confirmError) throw new Error(confirmError);
 
 	registryDb.delete(profiles).where(eq(profiles.id, id)).run();
 	destroyProfileStorage(id);

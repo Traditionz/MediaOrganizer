@@ -3,11 +3,9 @@
 	import type { MediaItem } from '$lib/types';
 	import {
 		isSupportedMediaFile,
-		captureVideoThumbnail,
 		isVideoFile,
 		requestServerThumbnail,
 		uploadMediaFile,
-		uploadVideoThumbnail,
 		mapWithConcurrency,
 		isAbortError,
 		UPLOAD_CONCURRENCY
@@ -38,6 +36,7 @@
 	} from '$lib/dragUpload';
 	import { asFiniteNumber, asPlainObject, eventTargetHtml, own, ownString } from '$lib/parse';
 	import { passcodePatchBody } from '$lib/profile/passcodeEdit';
+	import { profileDeleteNeedsConfirm } from '$lib/profile/deleteConfirm';
 	import {
 		MEDIA_LAYOUT_GAP,
 		idsIntersectingBox,
@@ -320,7 +319,25 @@
 	}
 
 	async function deleteProfile(id: string) {
-		openDeleteProfileModal(id);
+		const count = id === library.activeProfile?.id ? library.totalCount : 0;
+		if (profileDeleteNeedsConfirm(count)) {
+			openDeleteProfileModal(id);
+			return;
+		}
+		try {
+			const res = await fetch('/api/profiles', {
+				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ id })
+			});
+			if (!res.ok) {
+				const errBody = await res.json().catch(() => ({}));
+				throw new Error(errBody.message || 'Failed to delete profile');
+			}
+			await invalidateAll();
+		} catch (err) {
+			ui.errorMessage = err instanceof Error ? err.message : 'Failed to delete profile';
+		}
 	}
 
 	async function createAlbum(name: string) {
@@ -1073,12 +1090,7 @@
 						if (signal?.aborted) return;
 
 						if (isVideoFile(file) && uploaded?.id) {
-							const mediaId = uploaded.id;
-							void (async () => {
-								const thumb = await captureVideoThumbnail(file);
-								if (thumb) await uploadVideoThumbnail(mediaId, thumb);
-								else await requestServerThumbnail(mediaId);
-							})().catch(() => {
+							void requestServerThumbnail(uploaded.id).catch(() => {
 								/* thumbnail backfill is optional */
 							});
 						}

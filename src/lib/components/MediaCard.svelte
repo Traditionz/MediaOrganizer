@@ -7,17 +7,10 @@
 	import { Spinner } from '$lib/components/ui/spinner/index.js';
 	import { beginMediaDrag, endInternalDrag, setCompactMediaDragImage } from '$lib/dragSession';
 	import { formatViewCount } from '$lib/media/views';
+	import { galleryStillSrc, galleryThumbUrl, isCurrentThumbSrc } from '$lib/media/thumbnail';
 	import { getAppState } from '$lib/state';
 	import { enqueueThumbnailJob } from '$lib/thumbnailQueue';
-	import {
-		captureVideoThumbnailFromUrl,
-		formatDate,
-		formatDuration,
-		persistMediaDuration,
-		probeVideoDurationFromUrl,
-		requestServerThumbnail,
-		uploadVideoThumbnail
-	} from '$lib/utils';
+	import { formatDate, formatDuration, requestServerThumbnail } from '$lib/utils';
 
 	interface Props {
 		item: MediaItem;
@@ -47,9 +40,9 @@
 
 	const originalSrc = $derived(`/api/media/${item.id}`);
 	let thumbEpoch = $state(0);
-	let failedThumbId = $state<string | null>(null);
-	const thumbSrc = $derived(`/api/media/${item.id}/thumbnail?v=${thumbEpoch}`);
-	const imageSrc = $derived(failedThumbId === item.id ? originalSrc : thumbSrc);
+	let failedSrc = $state<string | null>(null);
+	const thumbSrc = $derived(galleryThumbUrl(item.id, thumbEpoch));
+	const stillSrc = $derived(galleryStillSrc(thumbSrc, failedSrc, originalSrc));
 	const albumLabel = $derived.by(() => {
 		const names = item.album_names;
 		if (!names?.length) return null;
@@ -72,7 +65,6 @@
 	let localThumb = $state(false);
 	let generatingThumbnail = $state(false);
 	let thumbStarted = false;
-	let durationStarted = false;
 	let posterErrors = 0;
 	const MAX_POSTER_ERRORS = 2;
 
@@ -110,10 +102,7 @@
 		const mediaId = item.id;
 		enqueueThumbnailJob(async () => {
 			try {
-				const blob = await captureVideoThumbnailFromUrl(`/api/media/${mediaId}`);
-				let ok = false;
-				if (blob) ok = await uploadVideoThumbnail(mediaId, blob);
-				if (!ok) ok = await requestServerThumbnail(mediaId);
+				const ok = await requestServerThumbnail(mediaId);
 				if (!ok) return;
 				localThumb = true;
 				thumbEpoch += 1;
@@ -130,31 +119,11 @@
 		});
 	}
 
-	function startLazyDuration() {
-		if (durationStarted) return;
-		if (item.media_type !== 'video') return;
-		if (item.duration != null && Number.isFinite(item.duration) && item.duration > 0) return;
-		durationStarted = true;
-
-		const mediaId = item.id;
-		enqueueThumbnailJob(async () => {
-			try {
-				const duration = await probeVideoDurationFromUrl(`/api/media/${mediaId}`);
-				if (duration == null) return;
-				const ok = await persistMediaDuration(mediaId, duration);
-				if (!ok) return;
-				try {
-					getAppState().library.setMediaDuration(mediaId, duration);
-				} catch {
-					/* outside app context */
-				}
-			} catch {
-				/* leave without badge */
-			}
-		});
-	}
-
-	function onPosterError() {
+	function onPosterError(e: Event) {
+		const el = e.currentTarget;
+		if (!(el instanceof HTMLImageElement)) return;
+		const src = el.getAttribute('src') ?? '';
+		if (!isCurrentThumbSrc(src, thumbSrc) && !isCurrentThumbSrc(el.src, thumbSrc)) return;
 		if (posterErrors >= MAX_POSTER_ERRORS) return;
 		posterErrors += 1;
 		localThumb = false;
@@ -163,27 +132,26 @@
 		startLazyThumbnail(true);
 	}
 
-	function onImageError() {
-		if (failedThumbId === item.id) return;
-		failedThumbId = item.id;
+	function onImageError(e: Event) {
+		const el = e.currentTarget;
+		if (!(el instanceof HTMLImageElement)) return;
+		const src = el.getAttribute('src') ?? '';
+		if (!isCurrentThumbSrc(src, thumbSrc) && !isCurrentThumbSrc(el.src, thumbSrc)) return;
+		failedSrc = thumbSrc;
 	}
 
 	function attachCard(node: HTMLDivElement) {
 		cardEl = node;
 		const needsThumb = item.media_type === 'video' && !item.has_thumbnail && !localThumb;
-		const needsDuration =
-			item.media_type === 'video' &&
-			!(item.duration != null && Number.isFinite(item.duration) && item.duration > 0);
 
-		if (!needsThumb && !needsDuration) {
+		if (!needsThumb) {
 			return () => {
 				if (cardEl === node) cardEl = undefined;
 			};
 		}
 
 		const runVisibleWork = () => {
-			if (needsThumb) startLazyThumbnail();
-			if (needsDuration) startLazyDuration();
+			startLazyThumbnail();
 		};
 
 		if (!('IntersectionObserver' in globalThis)) {
@@ -238,51 +206,37 @@
 		}
 	}}
 >
-	{#if item.media_type === 'image'}
-		<img
-			src={imageSrc}
-			alt={item.original_name}
-			class="h-full w-full object-cover"
-			loading="lazy"
-			decoding="async"
-			draggable="false"
-			onerror={onImageError}
-		/>
-	{:else if showPoster}
-		<img
-			src={thumbSrc}
-			alt={item.original_name}
-			class="h-full w-full object-cover"
-			loading="lazy"
-			decoding="async"
-			draggable="false"
-			onerror={onPosterError}
-		/>
-		<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
-			<span class="mo-media-chip flex h-10 w-10 items-center justify-center rounded-full shadow">
-				<Play class="ml-0.5 h-5 w-5" fill="currentColor" />
-			</span>
-		</div>
-	{:else if generatingThumbnail}
-		<div
-			class="bg-border flex h-full w-full flex-col items-center justify-center gap-2"
-			aria-busy="true"
-			aria-label="Generating thumbnail"
-		>
-			<Spinner class="text-muted-foreground size-6" />
-			<span class="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
-				Thumbnail
-			</span>
-		</div>
-	{:else}
-		<div class="bg-border relative h-full w-full">
+	<div class="relative h-full w-full">
+		{#if item.media_type === 'image' || showPoster}
+			<img
+				src={stillSrc}
+				alt={item.original_name}
+				class="h-full w-full object-cover"
+				decoding="async"
+				draggable="false"
+				onerror={item.media_type === 'image' ? onImageError : onPosterError}
+			/>
+		{/if}
+		{#if item.media_type !== 'image'}
 			<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
 				<span class="mo-media-chip flex h-10 w-10 items-center justify-center rounded-full shadow">
 					<Play class="ml-0.5 h-5 w-5" fill="currentColor" />
 				</span>
 			</div>
-		</div>
-	{/if}
+		{/if}
+		{#if generatingThumbnail && !showPoster}
+			<div
+				class="bg-border/80 absolute inset-0 flex flex-col items-center justify-center gap-2"
+				aria-busy="true"
+				aria-label="Generating thumbnail"
+			>
+				<Spinner class="text-muted-foreground size-6" />
+				<span class="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
+					Thumbnail
+				</span>
+			</div>
+		{/if}
+	</div>
 
 	<span
 		class="mo-media-chip pointer-events-none absolute top-2 right-2 z-10 flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] leading-none font-medium tabular-nums"

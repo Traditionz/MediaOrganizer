@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { parseConfirmMediaCount, validateDeleteProfileConfirm } from '$lib/profile/deleteConfirm';
+import {
+	normalizeMediaCount,
+	parseConfirmMediaCount,
+	profileDeleteConfirmationError,
+	profileDeleteNeedsConfirm,
+	validateDeleteProfileConfirm
+} from '$lib/profile/deleteConfirm';
 
 describe('parseConfirmMediaCount', () => {
 	test('accepts non-negative integers', () => {
@@ -62,5 +68,53 @@ describe('validateDeleteProfileConfirm', () => {
 				mediaCount: 0
 			})
 		).toBe('Media count does not match');
+	});
+});
+
+describe('normalizeMediaCount', () => {
+	test('coerces sqlite count shapes to a whole number', () => {
+		expect(normalizeMediaCount(0)).toBe(0);
+		expect(normalizeMediaCount('0')).toBe(0);
+		expect(normalizeMediaCount(0n)).toBe(0);
+		expect(normalizeMediaCount(12)).toBe(12);
+		expect(normalizeMediaCount('12')).toBe(12);
+		expect(normalizeMediaCount(null)).toBe(0);
+		expect(normalizeMediaCount(undefined)).toBe(0);
+		expect(normalizeMediaCount('')).toBe(0);
+		expect(Number.isNaN(normalizeMediaCount(-1))).toBe(true);
+		expect(Number.isNaN(normalizeMediaCount('nope'))).toBe(true);
+		expect(Number.isNaN(normalizeMediaCount(1.5))).toBe(true);
+	});
+});
+
+describe('profileDeleteNeedsConfirm', () => {
+	test('skips empty libraries and confirms the rest', () => {
+		expect(profileDeleteNeedsConfirm(0)).toBe(false);
+		expect(profileDeleteNeedsConfirm(1)).toBe(true);
+		expect(profileDeleteNeedsConfirm(12)).toBe(true);
+		expect(profileDeleteNeedsConfirm(Number.NaN)).toBe(true);
+		expect(profileDeleteNeedsConfirm(-1)).toBe(true);
+		expect(profileDeleteNeedsConfirm(1.5)).toBe(true);
+	});
+});
+
+describe('profileDeleteConfirmationError', () => {
+	test('skips checks when the library is empty', () => {
+		expect(profileDeleteConfirmationError(0, 'Home', null, null)).toBeNull();
+		expect(profileDeleteConfirmationError(0, 'Home', 'Home', 0)).toBeNull();
+		expect(profileDeleteConfirmationError(Number('0'), 'Home', null, null)).toBeNull();
+	});
+
+	test('requires matching name and count when media exists', () => {
+		expect(profileDeleteConfirmationError(3, 'Home', null, null)).toBe('Confirmation required');
+		expect(profileDeleteConfirmationError(Number.NaN, 'Home', 'Home', 0)).toBe(
+			'Confirmation required'
+		);
+		expect(profileDeleteConfirmationError(-1, 'Home', 'Home', 0)).toBe('Confirmation required');
+		expect(profileDeleteConfirmationError(3, 'Home', 'Home', 3)).toBeNull();
+		expect(profileDeleteConfirmationError(3, 'Home', 'Nope', 3)).toBe(
+			'Profile name does not match'
+		);
+		expect(profileDeleteConfirmationError(3, 'Home', 'Home', 2)).toBe('Media count does not match');
 	});
 });

@@ -2,9 +2,10 @@ export const MIN_THUMBNAIL_BYTES = 800;
 export const MIN_IMAGE_PREVIEW_BYTES = 32;
 export const MAX_THUMBNAIL_BYTES = 5 * 1024 * 1024;
 
-/** Longest edge for gallery preview JPEGs (matches video ffmpeg scale=480). */
-export const IMAGE_PREVIEW_MAX_EDGE = 480;
-export const IMAGE_PREVIEW_JPEG_QUALITY = 72;
+/** One gallery JPEG per item. Long edge matches the source, capped so 4K stays cheap. */
+export const THUMB_MAX_EDGE = 1920;
+export const THUMB_FALLBACK_EDGE = 1280;
+export const THUMB_JPEG_QUALITY = 86;
 
 export function isThumbnailByteSizeOk(size: number): boolean {
 	return Number.isFinite(size) && size >= MIN_THUMBNAIL_BYTES && size <= MAX_THUMBNAIL_BYTES;
@@ -48,4 +49,54 @@ export function thumbnailSeekCandidates(duration: number): number[] {
 		out.push(v);
 	}
 	return out;
+}
+
+/** Even pixel edge, capped. Junk / missing → HD fallback. */
+export function evenThumbEdge(edge: number): number {
+	if (!Number.isFinite(edge) || edge <= 0) return THUMB_FALLBACK_EDGE;
+	const even = Math.floor(edge / 2) * 2;
+	if (even < 2) return 2;
+	return Math.min(THUMB_MAX_EDGE, even);
+}
+
+/** Thumb long edge follows the source so 720p/1080p look like themselves. */
+export function thumbEdgeForSource(
+	width: number | null | undefined,
+	height: number | null | undefined
+): number {
+	const long = Math.max(Number(width) || 0, Number(height) || 0);
+	if (!Number.isFinite(long) || long <= 0) return THUMB_FALLBACK_EDGE;
+	return evenThumbEdge(long);
+}
+
+export function previewThumbKey(id: string): string {
+	return `${id}-thumb`;
+}
+
+export function previewThumbTmpName(id: string): string {
+	return `${id}.thumb.tmp`;
+}
+
+export function galleryThumbUrl(id: string, epoch: number): string {
+	const v = Number.isFinite(epoch) ? epoch : 0;
+	return `/api/media/${id}/thumbnail?v=${v}`;
+}
+
+export function galleryStillSrc(
+	thumbSrc: string,
+	failedSrc: string | null,
+	originalSrc: string
+): string {
+	if (failedSrc === thumbSrc) return originalSrc;
+	return thumbSrc;
+}
+
+export function previewFfmpegScale(maxEdge: number): string {
+	return `scale=${evenThumbEdge(maxEdge)}:-2`;
+}
+
+export function isCurrentThumbSrc(imgSrc: string, thumbSrc: string): boolean {
+	if (!imgSrc || !thumbSrc) return false;
+	if (imgSrc === thumbSrc) return true;
+	return imgSrc.endsWith(thumbSrc);
 }

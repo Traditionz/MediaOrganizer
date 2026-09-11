@@ -49,10 +49,11 @@ test.describe('preferences', () => {
 	test('sort by duration control is available', async ({ page }) => {
 		await uploadFiles(page, [fixtures.photoA, fixtures.vacation]);
 		await waitForUploadIdle(page);
-		const sortBy = page.getByRole('combobox', { name: 'Sort by' });
+		const sortBy = page.getByRole('button', { name: 'Sort by' });
 		await expect(sortBy).toBeVisible();
-		await sortBy.selectOption('duration');
-		await expect(sortBy).toHaveValue('duration');
+		await sortBy.click();
+		await page.getByRole('menuitemradio', { name: 'Duration' }).click();
+		await expect(sortBy).toContainText('Duration');
 		await page.getByRole('button', { name: /Sort direction/ }).click();
 		await expect(page.getByRole('button', { name: /Sort direction: Ascending/ })).toBeVisible();
 	});

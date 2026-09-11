@@ -18,6 +18,9 @@ import type { MediaRow } from './schema';
 import {
 	isImagePreviewByteSizeOk,
 	isThumbnailByteSizeOk,
+	previewThumbKey,
+	previewThumbTmpName,
+	thumbEdgeForSource,
 	thumbnailSeekCandidates
 } from '$lib/media/thumbnail';
 import {
@@ -94,7 +97,7 @@ function isValidThumbnail(profileId: string, thumbnailKey: string | null | undef
 	const path = filePathForKey(profileId, thumbnailKey);
 	if (!existsSync(path)) return false;
 	try {
-		return isThumbnailByteSizeOk(statSync(path).size);
+		return isImagePreviewByteSizeOk(statSync(path).size);
 	} catch {
 		return false;
 	}
@@ -763,10 +766,12 @@ export function purgeExpiredTrash(profileId: string, days: number = TRASH_RETENT
 	return ids.length;
 }
 
-export function getThumbnailPath(
-	profileId: string,
-	id: string
-): { path: string; mime: string } | null {
+export type PreviewThumbFile = {
+	path: string;
+	mime: string;
+};
+
+export function getThumbnailPath(profileId: string, id: string): PreviewThumbFile | null {
 	const db = getProfileDb(profileId);
 	const row = db
 		.select({ thumbnailKey: media.thumbnailKey })
@@ -780,6 +785,10 @@ export function getThumbnailPath(
 	}
 	const path = filePathForKey(profileId, row.thumbnailKey);
 	return { path, mime: 'image/jpeg' };
+}
+
+export function getPreviewThumbPath(profileId: string, id: string): PreviewThumbFile | null {
+	return getThumbnailPath(profileId, id);
 }
 
 export async function saveThumbnail(
@@ -846,7 +855,9 @@ export async function ensureImageThumbnail(profileId: string, id: string): Promi
 		.select({
 			id: media.id,
 			storageKey: media.storageKey,
-			mediaType: media.mediaType
+			mediaType: media.mediaType,
+			width: media.width,
+			height: media.height
 		})
 		.from(media)
 		.where(eq(media.id, id))
@@ -857,12 +868,12 @@ export async function ensureImageThumbnail(profileId: string, id: string): Promi
 	if (!existsSync(input)) return false;
 
 	const { writeImagePreviewJpeg } = await import('./imageThumb');
-	const thumbKey = `${id}-thumb`;
+	const thumbKey = previewThumbKey(id);
 	const dest = filePathForKey(profileId, thumbKey);
-	const tmp = tmpPathForKey(profileId, `${id}.thumb.tmp`);
+	const tmp = tmpPathForKey(profileId, previewThumbTmpName(id));
 
 	try {
-		await writeImagePreviewJpeg(input, tmp);
+		await writeImagePreviewJpeg(input, tmp, thumbEdgeForSource(row.width, row.height));
 		if (!existsSync(tmp) || !isImagePreviewByteSizeOk(statSync(tmp).size)) {
 			try {
 				if (existsSync(tmp)) unlinkSync(tmp);
@@ -911,7 +922,9 @@ export async function ensureVideoThumbnail(profileId: string, id: string): Promi
 			id: media.id,
 			storageKey: media.storageKey,
 			mediaType: media.mediaType,
-			duration: media.duration
+			duration: media.duration,
+			width: media.width,
+			height: media.height
 		})
 		.from(media)
 		.where(eq(media.id, id))
@@ -924,13 +937,14 @@ export async function ensureVideoThumbnail(profileId: string, id: string): Promi
 	const { probeVideoDuration } = await import('./compress');
 	const { extractJpegFrame } = await import('./videoThumb');
 	const duration = normalizeDuration(row.duration) ?? (await probeVideoDuration(input)) ?? 0;
-	const thumbKey = `${id}-thumb`;
+	const thumbKey = previewThumbKey(id);
 	const dest = filePathForKey(profileId, thumbKey);
-	const tmp = tmpPathForKey(profileId, `${id}.thumb.tmp`);
+	const tmp = tmpPathForKey(profileId, previewThumbTmpName(id));
+	const edge = thumbEdgeForSource(row.width, row.height);
 
 	for (const seek of thumbnailSeekCandidates(duration)) {
 		try {
-			await extractJpegFrame(input, tmp, seek);
+			await extractJpegFrame(input, tmp, seek, edge);
 			if (!existsSync(tmp) || !isThumbnailByteSizeOk(statSync(tmp).size)) {
 				try {
 					if (existsSync(tmp)) unlinkSync(tmp);

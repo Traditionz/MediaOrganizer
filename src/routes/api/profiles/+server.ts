@@ -70,18 +70,20 @@ export const DELETE: RequestHandler = async ({ request, cookies }) => {
 	const confirmName = body ? (ownString(body, 'confirmName') ?? '') : '';
 	const confirmMediaCount = body ? asFiniteNumber(own(body, 'confirmMediaCount')) : null;
 	if (!id) throw error(400, 'Profile id is required');
-	if (!confirmName.trim()) throw error(400, 'Profile name confirmation is required');
-	if (confirmMediaCount == null || !Number.isInteger(confirmMediaCount)) {
-		throw error(400, 'Media count confirmation is required');
-	}
 
 	const existing = getProfile(id);
 	if (!existing) throw error(404, 'Profile not found');
 
+	const confirmation =
+		confirmName.trim() && confirmMediaCount != null && Number.isInteger(confirmMediaCount)
+			? { name: confirmName, mediaCount: confirmMediaCount }
+			: null;
+
 	try {
-		deleteProfile(id, { name: confirmName, mediaCount: confirmMediaCount });
+		deleteProfile(id, confirmation);
 	} catch (err) {
 		const message = err instanceof Error ? err.message : 'Failed to delete profile';
+		if (message === 'Confirmation required') throw error(400, message);
 		if (message.includes('does not match')) throw error(403, message);
 		if (message.includes('not found')) throw error(404, message);
 		throw error(500, message);

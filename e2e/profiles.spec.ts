@@ -2,12 +2,15 @@ import { expect, test } from '@playwright/test';
 import {
 	clickMenuItem,
 	createProfile,
+	fixtures,
 	gotoFresh,
 	library,
 	openProfileGate,
 	openProfileMenu,
 	uniqueName,
-	unlockProfile
+	unlockProfile,
+	uploadFiles,
+	waitForUploadIdle
 } from './helpers';
 
 test.describe('profiles', () => {
@@ -132,7 +135,7 @@ test.describe('profiles', () => {
 		await expect(page.locator('aside').getByText(first)).toBeVisible();
 	});
 
-	test('delete current profile returns to gate when last', async ({ page }) => {
+	test('delete current empty profile returns to gate without confirm', async ({ page }) => {
 		await openProfileGate(page);
 		const name = uniqueName('DeleteMe');
 		await createProfile(page, name);
@@ -140,20 +143,17 @@ test.describe('profiles', () => {
 		await openProfileMenu(page, name);
 		await clickMenuItem(page, 'Delete current profile');
 
-		const dialog = page.getByRole('dialog');
-		await expect(dialog.getByRole('heading', { name: 'Delete profile' })).toBeVisible();
-		await dialog.getByPlaceholder(name).fill(name);
-		await dialog.getByPlaceholder('Total media items').fill('0');
-		await dialog.getByRole('button', { name: 'Delete' }).click();
-
+		await expect(page.getByRole('dialog')).toHaveCount(0);
 		await expect(page.getByText('Choose a profile to continue')).toBeVisible({ timeout: 15_000 });
 		await expect(library(page)).toHaveCount(0);
 	});
 
-	test('delete profile validates name and count', async ({ page }) => {
+	test('delete profile validates name and count when media exists', async ({ page }) => {
 		await openProfileGate(page);
 		const name = uniqueName('ValidateDel');
 		await createProfile(page, name);
+		await uploadFiles(page, fixtures.photoA);
+		await waitForUploadIdle(page);
 
 		await openProfileMenu(page, name);
 		await clickMenuItem(page, 'Delete current profile');
@@ -162,7 +162,7 @@ test.describe('profiles', () => {
 		await expect(dialog.getByRole('heading', { name: 'Delete profile' })).toBeVisible();
 
 		await dialog.getByPlaceholder(name).fill('wrong-name');
-		await dialog.getByPlaceholder('Total media items').fill('0');
+		await dialog.getByPlaceholder('Total media items').fill('1');
 		await dialog.getByRole('button', { name: 'Delete' }).click();
 		await expect(dialog.getByText('Profile name does not match')).toBeVisible();
 
