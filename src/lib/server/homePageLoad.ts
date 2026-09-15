@@ -1,6 +1,7 @@
-import type { Album, MediaItem, Profile } from '$lib/types';
+import type { Album, LibraryAlbumFilter, MediaItem, Profile } from '$lib/types';
 import type { MediaListPage } from '$lib/media/page';
 import { emptyMediaListPage, MEDIA_PAGE_SIZE } from '$lib/media/page';
+import { mediaQueryAlbumId } from '$lib/media/filter';
 import type { MediaQuery } from '$lib/server/media';
 
 export interface HomePageData {
@@ -29,10 +30,19 @@ export interface HomePageLoadDeps {
 	purgeExpiredTrash: (profileId: string) => void;
 }
 
+export interface HomePageLoadOptions {
+	/** Matches client default album nav (Unassigned = null). */
+	initialAlbum?: LibraryAlbumFilter;
+}
+
 /** Pure home route load — keeps +page.server.ts thin and Bun-testable. */
-export function loadHomePageData(deps: HomePageLoadDeps): HomePageData {
+export function loadHomePageData(
+	deps: HomePageLoadDeps,
+	options: HomePageLoadOptions = {}
+): HomePageData {
 	const profiles = deps.listProfiles();
 	const activeProfile = deps.resolveActiveProfile();
+	const initialAlbum = options.initialAlbum ?? null;
 
 	if (!activeProfile) {
 		return {
@@ -54,6 +64,7 @@ export function loadHomePageData(deps: HomePageLoadDeps): HomePageData {
 	deps.purgeExpiredTrash(activeProfile.id);
 
 	const page = deps.listMedia(activeProfile.id, {
+		albumId: mediaQueryAlbumId(initialAlbum),
 		limit: MEDIA_PAGE_SIZE,
 		offset: 0,
 		sortBy: 'date',

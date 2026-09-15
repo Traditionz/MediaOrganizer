@@ -41,3 +41,10 @@ export function pasteTargetAlbumId(activeAlbum: LibraryAlbumFilter): string | nu
 	}
 	return activeAlbum;
 }
+
+/** Map library nav selection to listMedia `albumId` (trash uses trash flag, not album). */
+export function mediaQueryAlbumId(activeAlbum: LibraryAlbumFilter): string | null | 'all' {
+	if (activeAlbum === 'all' || activeAlbum === 'trash') return 'all';
+	if (activeAlbum === null) return null;
+	return activeAlbum;
+}

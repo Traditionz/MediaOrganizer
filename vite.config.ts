@@ -14,6 +14,12 @@ export default defineConfig({
 			adapter: adapter()
 		})
 	],
+	clearScreen: false,
+	server: {
+		watch: {
+			ignored: ['**/src-tauri/**']
+		}
+	},
 	ssr: {
 		external: ['better-sqlite3', 'sharp', 'ffmpeg-static']
 	},

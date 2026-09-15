@@ -449,6 +449,25 @@
 		scheduleHide();
 	}
 
+	function onVolumeKeydown(e: KeyboardEvent) {
+		e.stopPropagation();
+		if (e.key === 'ArrowLeft') {
+			e.preventDefault();
+			nudgeVolume(-PLAYER_VOLUME_STEP);
+		} else if (e.key === 'ArrowRight') {
+			e.preventDefault();
+			nudgeVolume(PLAYER_VOLUME_STEP);
+		} else if (e.key === 'Home') {
+			e.preventDefault();
+			applyVolume(0);
+			revealControls();
+		} else if (e.key === 'End') {
+			e.preventDefault();
+			applyVolume(1);
+			revealControls();
+		}
+	}
+
 	function toggleFullscreen() {
 		if (!playerEl) return;
 		if (document.fullscreenElement === playerEl) {
@@ -729,6 +748,7 @@
 					onpointermove={onVolumePointerMove}
 					onpointerup={onVolumePointerUp}
 					onpointercancel={onVolumePointerUp}
+					onkeydown={onVolumeKeydown}
 					onclick={(e) => e.stopPropagation()}
 				>
 					<div class="custom-volume-track">

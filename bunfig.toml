@@ -10,8 +10,6 @@ coveragePathIgnorePatterns = [
 	"src/lib/dragSession.ts",
 	"src/lib/server/db.ts",
 	"src/lib/server/schema.ts",
-	"src/lib/server/media.ts",
-	"src/lib/server/albums.ts",
 	"src/lib/server/compress.ts",
 	"src/lib/server/videoThumb.ts",
 	"src/lib/server/profiles.ts",

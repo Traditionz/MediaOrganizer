@@ -1,4 +1,5 @@
 import type { PageServerLoad } from './$types';
+import { defaultActiveAlbum } from '$lib/config/defaults';
 import { listProfiles } from '$lib/server/profiles';
 import { resolveProfileFromCookies } from '$lib/server/profileContext';
 import { listAlbums } from '$lib/server/albums';
@@ -12,18 +13,21 @@ import {
 import { loadHomePageData } from '$lib/server/homePageLoad';
 
 export const load: PageServerLoad = async ({ cookies, isDataRequest }) => {
-	return loadHomePageData({
-		listProfiles,
-		resolveActiveProfile: () =>
-			resolveProfileFromCookies(cookies, {
-				// Full document loads always require a fresh passcode for locked profiles.
-				allowPasscodeUnlock: isDataRequest
-			}),
-		listAlbums,
-		listMedia,
-		countAllMedia,
-		countTrashMedia,
-		countUnassignedMedia,
-		purgeExpiredTrash
-	});
+	return loadHomePageData(
+		{
+			listProfiles,
+			resolveActiveProfile: () =>
+				resolveProfileFromCookies(cookies, {
+					// Full document loads always require a fresh passcode for locked profiles.
+					allowPasscodeUnlock: isDataRequest
+				}),
+			listAlbums,
+			listMedia,
+			countAllMedia,
+			countTrashMedia,
+			countUnassignedMedia,
+			purgeExpiredTrash
+		},
+		{ initialAlbum: defaultActiveAlbum() }
+	);
 };

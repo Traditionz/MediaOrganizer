@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { filterMediaItems, pasteTargetAlbumId } from '$lib/media/filter';
+import { filterMediaItems, mediaQueryAlbumId, pasteTargetAlbumId } from '$lib/media/filter';
 import { makeMediaItem, resetMediaHelpers } from '../../../test/helpers/media';
 
 describe('media filter', () => {
@@ -81,5 +81,12 @@ describe('media filter', () => {
 		expect(pasteTargetAlbumId('all')).toBeNull();
 		expect(pasteTargetAlbumId(null)).toBeNull();
 		expect(pasteTargetAlbumId('trash')).toBeNull();
+	});
+
+	test('mediaQueryAlbumId maps nav filter for listMedia', () => {
+		expect(mediaQueryAlbumId(null)).toBeNull();
+		expect(mediaQueryAlbumId('all')).toBe('all');
+		expect(mediaQueryAlbumId('trash')).toBe('all');
+		expect(mediaQueryAlbumId('album-1')).toBe('album-1');
 	});
 });
