@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { loadHomePageData } from '$lib/server/homePageLoad';
+import { emptyHomePageData, loadHomePageData } from '$lib/server/homePageLoad';
 import { MEDIA_PAGE_SIZE, mediaListPageFromItems } from '$lib/media/page';
 import type { Album, MediaItem, Profile } from '$lib/types';
 import type { MediaQuery } from '$lib/server/media';
@@ -127,5 +127,28 @@ describe('loadHomePageData', () => {
 		expect(lastQuery?.albumId).toBe('all');
 		expect(data.media).toEqual([assignedMedia]);
 		expect(data.unassignedCount).toBe(0);
+	});
+
+	test('loads tags when listTags is provided', () => {
+		const data = loadHomePageData({
+			listProfiles: () => [profile],
+			resolveActiveProfile: () => profile,
+			listAlbums: () => [],
+			listMedia: () => mediaListPageFromItems([], 0, 0, MEDIA_PAGE_SIZE),
+			countAllMedia: () => 0,
+			countTrashMedia: () => 0,
+			countUnassignedMedia: () => 0,
+			purgeExpiredTrash: () => {},
+			listTags: () => [{ id: 't1', name: 'Ada', kind: 'person', created_at: '2026-01-01' }]
+		});
+		expect(data.tags).toEqual([
+			{ id: 't1', name: 'Ada', kind: 'person', created_at: '2026-01-01' }
+		]);
+	});
+
+	test('emptyHomePageData keeps tags empty', () => {
+		expect(emptyHomePageData([profile]).profiles).toEqual([profile]);
+		expect(emptyHomePageData().tags).toEqual([]);
+		expect(emptyHomePageData().activeProfile).toBeNull();
 	});
 });

@@ -1,4 +1,4 @@
-import type { Album, MediaItem, MediaType } from '$lib/types';
+import type { Album, MediaItem, MediaTag, MediaType, Tag, TagKind } from '$lib/types';
 import {
 	asFiniteNumber,
 	asPlainObject,
@@ -33,6 +33,14 @@ export function parseMediaItem(payload: JsonValue | undefined): MediaItem | null
 	const deletedRaw = own(bag, 'deleted_at');
 	const deleted_at = deletedRaw === null ? null : asString(deletedRaw);
 	const hasThumb = own(bag, 'has_thumbnail');
+	const favorite = own(bag, 'favorite') === true;
+	const captured_at = own(bag, 'captured_at');
+	const content_hash = own(bag, 'content_hash');
+	const camera_make = own(bag, 'camera_make');
+	const camera_model = own(bag, 'camera_model');
+	const gps_lat = asFiniteNumber(own(bag, 'gps_lat'));
+	const gps_lng = asFiniteNumber(own(bag, 'gps_lng'));
+	const source_path = own(bag, 'source_path');
 	return {
 		id,
 		original_name,
@@ -47,8 +55,57 @@ export function parseMediaItem(payload: JsonValue | undefined): MediaItem | null
 		view_count,
 		created_at,
 		deleted_at: deleted_at === undefined ? undefined : deleted_at,
-		has_thumbnail: hasThumb === true ? true : hasThumb === false ? false : undefined
+		has_thumbnail: hasThumb === true ? true : hasThumb === false ? false : undefined,
+		captured_at: captured_at === null ? null : asString(captured_at),
+		content_hash: content_hash === null ? null : asString(content_hash),
+		camera_make: camera_make === null ? null : asString(camera_make),
+		camera_model: camera_model === null ? null : asString(camera_model),
+		gps_lat,
+		gps_lng,
+		favorite,
+		source_path: source_path === null ? null : asString(source_path),
+		tags: parseMediaTags(own(bag, 'tags'))
 	};
+}
+
+function parseTagKind(value: JsonValue | undefined): TagKind | null {
+	const text = asString(value);
+	if (text === 'tag' || text === 'person') return text;
+	return null;
+}
+
+export function parseMediaTag(payload: JsonValue | undefined): MediaTag | null {
+	const bag = asPlainObject(payload);
+	if (!bag) return null;
+	const id = ownString(bag, 'id');
+	const name = ownString(bag, 'name');
+	const kind = parseTagKind(own(bag, 'kind'));
+	if (!id || !name || !kind) return null;
+	return { id, name, kind };
+}
+
+export function parseMediaTags(payload: JsonValue | undefined): MediaTag[] {
+	if (!Array.isArray(payload)) return [];
+	const out: MediaTag[] = [];
+	for (const entry of payload) {
+		const tag = parseMediaTag(entry);
+		if (tag) out.push(tag);
+	}
+	return out;
+}
+
+export function parseTag(payload: JsonValue | undefined): Tag | null {
+	const bag = asPlainObject(payload);
+	if (!bag) return null;
+	const id = ownString(bag, 'id');
+	const name = ownString(bag, 'name');
+	const kind = parseTagKind(own(bag, 'kind'));
+	const created_at = ownString(bag, 'created_at');
+	if (!id || !name || !kind || !created_at) return null;
+	const media_count = asFiniteNumber(own(bag, 'media_count'));
+	return media_count == null
+		? { id, name, kind, created_at }
+		: { id, name, kind, created_at, media_count };
 }
 
 /** Parse MediaItem[] from a JSON array payload. */
@@ -78,9 +135,7 @@ export function parseAlbum(payload: JsonValue | undefined): Album | null {
 	const created_at = ownString(bag, 'created_at');
 	if (!id || !name || !created_at) return null;
 	const media_count = asFiniteNumber(own(bag, 'media_count'));
-	return media_count == null
-		? { id, name, created_at }
-		: { id, name, created_at, media_count };
+	return media_count == null ? { id, name, created_at } : { id, name, created_at, media_count };
 }
 
 /** Insert or replace album by id. */

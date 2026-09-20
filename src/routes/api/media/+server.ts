@@ -10,7 +10,10 @@ import {
 	countUnassignedMedia,
 	deleteMedia,
 	duplicateMedia,
+	ensureImageThumbnail,
+	ensurePreviewThumbnail,
 	insertMediaFromStream,
+	getMediaMeta,
 	listMedia,
 	lookupMediaByNames,
 	purgeExpiredTrash,
@@ -18,9 +21,11 @@ import {
 	renameMedia,
 	restoreMedia,
 	recordMediaView,
+	setMediaFavorite,
 	softDeleteMedia,
 	updateMediaDuration
 } from '$lib/server/media';
+import { cropMediaImage, rotateMediaImage, trimMediaVideo } from '$lib/server/mediaEdit';
 import { importMediaFromFolder } from '$lib/server/folderImport';
 import { resolveProfileFromCookies } from '$lib/server/profileContext';
 import type { MediaType } from '$lib/types';
@@ -35,6 +40,12 @@ function requireProfile(cookies: Parameters<RequestHandler>[0]['cookies']) {
 	const profile = resolveProfileFromCookies(cookies);
 	if (!profile) throw error(401, 'Select a profile first');
 	return profile;
+}
+
+function requireMedia(profileId: string, id: string) {
+	const item = getMediaMeta(profileId, id);
+	if (!item) throw error(404, 'Media not found');
+	return item;
 }
 
 function extOf(name: string): string {
@@ -348,6 +359,70 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 	if (action === 'purge-trash') {
 		const purged = purgeExpiredTrash(profile.id);
 		return json({ ok: true, purged });
+	}
+
+	if (action === 'favorite') {
+		const ids = stringList(body ? own(body, 'ids') : undefined);
+		if (!ids.length) throw error(400, 'At least one media id is required');
+		const favorite = own(body ?? {}, 'favorite') !== false;
+		return json({ ok: true, items: setMediaFavorite(profile.id, ids, favorite) });
+	}
+
+	if (action === 'rotate') {
+		const id = body ? (ownString(body, 'id') ?? '') : '';
+		const degrees = ownNumber(body ?? {}, 'degrees');
+		if (!id) throw error(400, 'Media id is required');
+		if (degrees == null) throw error(400, 'Degrees is required');
+		try {
+			await rotateMediaImage(profile.id, id, degrees);
+			await ensureImageThumbnail(profile.id, id);
+			return json(requireMedia(profile.id, id));
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'Rotate failed';
+			if (message.includes('not found') || message.includes('missing')) throw error(404, message);
+			if (message.includes('only for') || message.includes('Rotate must'))
+				throw error(400, message);
+			throw error(500, message);
+		}
+	}
+
+	if (action === 'crop') {
+		const id = body ? (ownString(body, 'id') ?? '') : '';
+		if (!id) throw error(400, 'Media id is required');
+		const left = ownNumber(body ?? {}, 'left') ?? 0;
+		const top = ownNumber(body ?? {}, 'top') ?? 0;
+		const width = ownNumber(body ?? {}, 'width') ?? 0;
+		const height = ownNumber(body ?? {}, 'height') ?? 0;
+		const normalized = own(body ?? {}, 'normalized') === true;
+		try {
+			await cropMediaImage(profile.id, id, { left, top, width, height, normalized });
+			await ensureImageThumbnail(profile.id, id);
+			return json(requireMedia(profile.id, id));
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'Crop failed';
+			if (message.includes('not found') || message.includes('missing')) throw error(404, message);
+			if (message.includes('only for') || message.includes('Invalid')) throw error(400, message);
+			throw error(500, message);
+		}
+	}
+
+	if (action === 'trim') {
+		const id = body ? (ownString(body, 'id') ?? '') : '';
+		if (!id) throw error(400, 'Media id is required');
+		const start = ownNumber(body ?? {}, 'start') ?? 0;
+		const end = ownNumber(body ?? {}, 'end') ?? 0;
+		try {
+			await trimMediaVideo(profile.id, id, start, end);
+			await ensurePreviewThumbnail(profile.id, id);
+			const trimmed = getMediaMeta(profile.id, id);
+			if (!trimmed) throw error(404, 'Media not found');
+			return json(trimmed);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'Trim failed';
+			if (message.includes('not found') || message.includes('missing')) throw error(404, message);
+			if (message.includes('only for') || message.includes('Invalid')) throw error(400, message);
+			throw error(500, message);
+		}
 	}
 
 	const ids = stringList(body ? own(body, 'ids') : undefined);

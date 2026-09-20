@@ -10,6 +10,7 @@
 		gridCellSize,
 		gridTotalHeight
 	} from '$lib/media/virtualLayout';
+	import { groupMediaByMonth } from '$lib/media/timeline';
 	import MediaCard from './MediaCard.svelte';
 
 	interface Props {
@@ -20,6 +21,7 @@
 		onselect: (id: string, event: MouseEvent) => void;
 		onopen: (item: MediaItem) => void;
 		oncontextmenu?: (e: MouseEvent, item: MediaItem) => void;
+		groupByMonth?: boolean;
 	}
 
 	let {
@@ -29,7 +31,8 @@
 		columns = appDefaults.columns,
 		onselect,
 		onopen,
-		oncontextmenu
+		oncontextmenu,
+		groupByMonth = true
 	}: Props = $props();
 
 	let width = $state(800);
@@ -54,6 +57,7 @@
 		for (const item of items) map.set(item.id, item);
 		return map;
 	});
+	const sections = $derived(groupMediaByMonth(items));
 
 	function observeHost(node: HTMLElement) {
 		return attachMediaVirtualHost(node, (measure) => {
@@ -64,36 +68,69 @@
 	}
 </script>
 
-<div
-	{@attach observeHost}
-	class="relative w-full"
-	data-media-layout="grid"
-	style:height="{totalHeight}px"
->
-	{#each visible as layout (layout.id)}
-		{@const item = itemById.get(layout.id)}
-		{#if item}
-			<div
-				class="absolute overflow-hidden"
-				style:left="{layout.x}px"
-				style:top="{layout.y}px"
-				style:width="{layout.w}px"
-				style:height="{layout.h}px"
-			>
-				<MediaCard
-					{item}
-					variant="grid"
-					{selectMode}
-					{selectedIds}
-					selected={selectedIds.has(item.id)}
-					onclick={(e) => onselect(item.id, e)}
-					ondblclick={(e) => {
-						e.stopPropagation();
-						onopen(item);
-					}}
-					{oncontextmenu}
-				/>
-			</div>
-		{/if}
-	{/each}
-</div>
+{#if groupByMonth}
+	<div class="flex w-full flex-col gap-6" data-media-layout="timeline">
+		{#each sections as section (section.key)}
+			<section>
+				<h2
+					class="bg-background/90 text-foreground sticky top-0 z-10 py-2 text-sm font-semibold tracking-tight"
+				>
+					{section.label}
+				</h2>
+				<div class="grid gap-3" style:grid-template-columns="repeat({columns}, minmax(0, 1fr))">
+					{#each section.items as item (item.id)}
+						<div class="aspect-square min-h-0 overflow-hidden">
+							<MediaCard
+								{item}
+								variant="grid"
+								{selectMode}
+								{selectedIds}
+								selected={selectedIds.has(item.id)}
+								onclick={(e) => onselect(item.id, e)}
+								ondblclick={(e) => {
+									e.stopPropagation();
+									onopen(item);
+								}}
+								{oncontextmenu}
+							/>
+						</div>
+					{/each}
+				</div>
+			</section>
+		{/each}
+	</div>
+{:else}
+	<div
+		{@attach observeHost}
+		class="relative w-full"
+		data-media-layout="grid"
+		style:height="{totalHeight}px"
+	>
+		{#each visible as layout (layout.id)}
+			{@const item = itemById.get(layout.id)}
+			{#if item}
+				<div
+					class="absolute overflow-hidden"
+					style:left="{layout.x}px"
+					style:top="{layout.y}px"
+					style:width="{layout.w}px"
+					style:height="{layout.h}px"
+				>
+					<MediaCard
+						{item}
+						variant="grid"
+						{selectMode}
+						{selectedIds}
+						selected={selectedIds.has(item.id)}
+						onclick={(e) => onselect(item.id, e)}
+						ondblclick={(e) => {
+							e.stopPropagation();
+							onopen(item);
+						}}
+						{oncontextmenu}
+					/>
+				</div>
+			{/if}
+		{/each}
+	</div>
+{/if}

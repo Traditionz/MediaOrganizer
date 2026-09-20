@@ -49,6 +49,22 @@ describe('sortMediaItems', () => {
 		expect(sortMediaItems(items, 'date', 'asc').map((i) => i.id)).toEqual(['old', 'new']);
 	});
 
+	test('sorts by capture date when present', () => {
+		resetMediaHelpers();
+		const items = [
+			makeMediaItem({
+				id: 'old-capture',
+				captured_at: '2010-01-01T00:00:00Z',
+				created_at: '2026-02-01T00:00:00Z'
+			}),
+			makeMediaItem({ id: 'new-insert', created_at: '2026-01-01T00:00:00Z' })
+		];
+		expect(sortMediaItems(items, 'date', 'desc').map((i) => i.id)).toEqual([
+			'new-insert',
+			'old-capture'
+		]);
+	});
+
 	test('sorts by name and size', () => {
 		resetMediaHelpers();
 		const items = [

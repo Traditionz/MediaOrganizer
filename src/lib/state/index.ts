@@ -6,6 +6,11 @@ export {
 	PreferencesState,
 	LibraryState,
 	SelectionState,
-	UiState,
-	type LibraryLoad
+	UiState
 } from './app.svelte';
+export {
+	libraryLoadFromPageData,
+	firstPaintShowsProfileGate,
+	type LibraryLoad,
+	type LibraryPageSnapshot
+} from './libraryLoad';

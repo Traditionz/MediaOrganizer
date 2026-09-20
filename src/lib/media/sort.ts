@@ -1,4 +1,5 @@
 import type { MediaItem } from '$lib/types';
+import { mediaDateIso } from './captureDate';
 
 export type MediaSortBy = 'date' | 'name' | 'duration' | 'size';
 export type MediaSortDir = 'asc' | 'desc';
@@ -22,7 +23,7 @@ function cmpStrings(a: string, b: string): number {
 
 /** Stable secondary key so equal primaries keep a deterministic order. */
 function tieBreak(a: MediaItem, b: MediaItem): number {
-	const byDate = b.created_at.localeCompare(a.created_at);
+	const byDate = mediaDateIso(b).localeCompare(mediaDateIso(a));
 	if (byDate !== 0) return byDate;
 	return a.id.localeCompare(b.id);
 }
@@ -39,7 +40,7 @@ function compareMedia(
 			return a.size - b.size || tieBreak(a, b);
 		case 'date':
 		default:
-			return b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id);
+			return mediaDateIso(b).localeCompare(mediaDateIso(a)) || a.id.localeCompare(b.id);
 	}
 }
 

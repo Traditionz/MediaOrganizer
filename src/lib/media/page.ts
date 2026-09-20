@@ -34,7 +34,10 @@ export function mediaListPageFromItems(
 	};
 }
 
-export function parseMediaListLimit(raw: string | null | undefined, fallback = MEDIA_PAGE_SIZE): number {
+export function parseMediaListLimit(
+	raw: string | null | undefined,
+	fallback = MEDIA_PAGE_SIZE
+): number {
 	if (raw == null || raw === '') return fallback;
 	const n = Number(raw);
 	if (!Number.isFinite(n)) return fallback;

@@ -10,17 +10,23 @@ import {
 import { pipeline } from 'node:stream/promises';
 import { Readable, Transform } from 'node:stream';
 import { and, count, eq, exists, inArray, isNotNull, isNull, notExists, sql } from 'drizzle-orm';
-import type { MediaItem, MediaType } from '$lib/types';
-import {
-	MEDIA_PAGE_SIZE,
-	mediaListPageFromItems,
-	type MediaListPage
-} from '$lib/media/page';
+import type { MediaItem, MediaTag, MediaType } from '$lib/types';
+import { MEDIA_PAGE_SIZE, mediaListPageFromItems, type MediaListPage } from '$lib/media/page';
+import { mediaMatchesSearch } from '$lib/media/searchMatch';
 import type { MediaSortBy, MediaSortDir } from '$lib/media/sort';
-import { durationSortValue } from '$lib/media/sort';
+import { sortMediaItems } from '$lib/media/sort';
+import {
+	isDuplicateFilter,
+	isLibraryRuleViewId,
+	parseTagFilterId,
+	RECENT_DAYS
+} from '$lib/media/libraryNav';
 import { filePathForKey, getProfileDb, newId, tmpPathForKey } from './db';
-import { albumMedia, albums, media } from './schema';
+import { albumMedia, albums, media, mediaTags } from './schema';
 import type { MediaRow } from './schema';
+import { probeMediaFile } from './mediaProbe';
+import { loadTagsForMedia } from './tags';
+import { writeStoreZip } from './zipExport';
 import {
 	isImagePreviewByteSizeOk,
 	isThumbnailByteSizeOk,
@@ -50,6 +56,15 @@ export {
 
 /** Soft-deleted items older than this are purged on page load. */
 export const TRASH_RETENTION_DAYS = 30;
+
+export class DuplicateContentError extends Error {
+	readonly existingId: string;
+
+	constructor(existingId: string, name: string) {
+		super(`Duplicate content: ${name}`);
+		this.existingId = existingId;
+	}
+}
 
 export interface MediaQuery {
 	albumId?: string | null | 'all';
@@ -129,7 +144,8 @@ function mapRow(
 	profileId: string,
 	row: MediaRow,
 	albumIds: string[],
-	albumNames: string[]
+	albumNames: string[],
+	itemTags: MediaTag[]
 ): MediaItem {
 	return {
 		id: row.id,
@@ -146,18 +162,26 @@ function mapRow(
 		created_at: normalizeCreated(row.createdAt),
 		deleted_at: row.deletedAt ? normalizeCreated(row.deletedAt) : null,
 		// Trust DB key on list paths; repair happens on thumbnail GET/serve.
-		has_thumbnail: Boolean(row.thumbnailKey)
+		has_thumbnail: Boolean(row.thumbnailKey),
+		captured_at: row.capturedAt ? normalizeCreated(row.capturedAt) : null,
+		content_hash: row.contentHash ?? null,
+		camera_make: row.cameraMake ?? null,
+		camera_model: row.cameraModel ?? null,
+		gps_lat: row.gpsLat ?? null,
+		gps_lng: row.gpsLng ?? null,
+		favorite: row.favorite === 1,
+		source_path: row.sourcePath ?? null,
+		tags: itemTags
 	};
 }
 
 function attachAlbums(profileId: string, rows: MediaRow[]): MediaItem[] {
-	const membership = loadAlbumMembership(
-		profileId,
-		rows.map((r) => r.id)
-	);
+	const ids = rows.map((r) => r.id);
+	const membership = loadAlbumMembership(profileId, ids);
+	const tagMap = loadTagsForMedia(profileId, ids);
 	return rows.map((row) => {
 		const entry = membership.get(row.id) ?? { ids: [], names: [] };
-		return mapRow(profileId, row, entry.ids, entry.names);
+		return mapRow(profileId, row, entry.ids, entry.names, tagMap.get(row.id) ?? []);
 	});
 }
 
@@ -179,15 +203,50 @@ function buildMediaWhere(profileId: string, query: MediaQuery) {
 	if (!query.trash && query.albumId !== undefined && query.albumId !== 'all') {
 		if (query.albumId === null) {
 			clauses.push(notExists(db.select().from(albumMedia).where(eq(albumMedia.mediaId, media.id))));
-		} else {
+		} else if (isLibraryRuleViewId(query.albumId)) {
+			if (query.albumId === 'favorites') {
+				clauses.push(eq(media.favorite, 1));
+			} else if (query.albumId === 'untagged') {
+				clauses.push(notExists(db.select().from(mediaTags).where(eq(mediaTags.mediaId, media.id))));
+			} else if (query.albumId === 'map') {
+				clauses.push(and(isNotNull(media.gpsLat), isNotNull(media.gpsLng)));
+			} else if (query.albumId === 'recent') {
+				clauses.push(
+					sql`datetime(COALESCE(${media.capturedAt}, ${media.createdAt})) >= datetime('now', ${`-${RECENT_DAYS} days`})`
+				);
+			}
+		} else if (isDuplicateFilter(query.albumId)) {
+			clauses.push(isNotNull(media.contentHash));
+			clauses.push(sql`${media.contentHash} != ''`);
 			clauses.push(
-				exists(
-					db
-						.select()
-						.from(albumMedia)
-						.where(and(eq(albumMedia.mediaId, media.id), eq(albumMedia.albumId, query.albumId)))
-				)
+				sql`EXISTS (
+					SELECT 1 FROM media AS other
+					WHERE other.content_hash = ${media.contentHash}
+						AND other.id != ${media.id}
+						AND other.deleted_at IS NULL
+				)`
 			);
+		} else {
+			const tagId = parseTagFilterId(query.albumId);
+			if (tagId) {
+				clauses.push(
+					exists(
+						db
+							.select()
+							.from(mediaTags)
+							.where(and(eq(mediaTags.mediaId, media.id), eq(mediaTags.tagId, tagId)))
+					)
+				);
+			} else {
+				clauses.push(
+					exists(
+						db
+							.select()
+							.from(albumMedia)
+							.where(and(eq(albumMedia.mediaId, media.id), eq(albumMedia.albumId, query.albumId)))
+					)
+				);
+			}
 		}
 	}
 
@@ -196,10 +255,14 @@ function buildMediaWhere(profileId: string, query: MediaQuery) {
 	}
 
 	if (query.dateFrom) {
-		clauses.push(sql`date(${media.createdAt}) >= date(${query.dateFrom})`);
+		clauses.push(
+			sql`date(COALESCE(${media.capturedAt}, ${media.createdAt})) >= date(${query.dateFrom})`
+		);
 	}
 	if (query.dateTo) {
-		clauses.push(sql`date(${media.createdAt}) <= date(${query.dateTo})`);
+		clauses.push(
+			sql`date(COALESCE(${media.capturedAt}, ${media.createdAt})) <= date(${query.dateTo})`
+		);
 	}
 
 	return and(...clauses);
@@ -231,8 +294,8 @@ function sqlOrderFor(query: MediaQuery) {
 		case 'date':
 		default:
 			return asc
-				? sql`${media.createdAt} ASC, ${media.id} ASC`
-				: sql`${media.createdAt} DESC, ${media.id} DESC`;
+				? sql`COALESCE(${media.capturedAt}, ${media.createdAt}) ASC, ${media.id} ASC`
+				: sql`COALESCE(${media.capturedAt}, ${media.createdAt}) DESC, ${media.id} DESC`;
 	}
 }
 
@@ -241,35 +304,7 @@ function sortDecryptedItems(
 	sortBy: MediaSortBy,
 	sortDir: MediaSortDir
 ): MediaItem[] {
-	const copy = [...items];
-	copy.sort((a, b) => {
-		if (sortBy === 'duration') {
-			const da = durationSortValue(a.duration);
-			const db = durationSortValue(b.duration);
-			if (da == null && db == null) {
-				return b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id);
-			}
-			if (da == null) return 1;
-			if (db == null) return -1;
-			const byDuration = sortDir === 'desc' ? db - da : da - db;
-			return byDuration || b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id);
-		}
-		if (sortBy === 'name') {
-			const byName = a.original_name.localeCompare(b.original_name, undefined, {
-				sensitivity: 'base',
-				numeric: true
-			});
-			const base = byName || b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id);
-			return sortDir === 'desc' ? -base : base;
-		}
-		if (sortBy === 'size') {
-			const base = a.size - b.size || b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id);
-			return sortDir === 'desc' ? -base : base;
-		}
-		const base = b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id);
-		return sortDir === 'asc' ? -base : base;
-	});
-	return copy;
+	return sortMediaItems(items, sortBy, sortDir);
 }
 
 export function listMedia(profileId: string, query: MediaQuery = {}): MediaListPage {
@@ -279,14 +314,14 @@ export function listMedia(profileId: string, query: MediaQuery = {}): MediaListP
 	const offset = Math.max(0, Math.floor(query.offset ?? 0));
 	const sortBy = query.sortBy ?? 'date';
 	const sortDir = query.sortDir ?? 'desc';
-	const search = query.search?.trim().toLowerCase() ?? '';
-	const needsMemoryPass = Boolean(search) || sortBy === 'name';
+	const search = query.search ?? '';
+	const needsMemoryPass = Boolean(search.trim()) || sortBy === 'name';
 
 	if (needsMemoryPass) {
 		const rows = db.select().from(media).where(where).orderBy(sqlOrderFor(query)).all();
 		let items = attachAlbums(profileId, rows);
-		if (search) {
-			items = items.filter((item) => item.original_name.toLowerCase().includes(search));
+		if (search.trim()) {
+			items = items.filter((item) => mediaMatchesSearch(item, search));
 		}
 		items = sortDecryptedItems(items, sortBy, sortDir);
 		const total = items.length;
@@ -444,6 +479,8 @@ export async function insertMediaFromStream(
 		height: number | null;
 		duration?: number | null;
 		contentLength?: number | null;
+		sourcePath?: string | null;
+		skipDuplicateHash?: boolean;
 		body: ReadableStream<Uint8Array> | Readable;
 	}
 ): Promise<MediaItem> {
@@ -485,6 +522,42 @@ export async function insertMediaFromStream(
 		size = statSync(tmp).size;
 		renameSync(tmp, dest);
 
+		let capturedAt: string | null = null;
+		let contentHash: string | null = null;
+		let cameraMake: string | null = null;
+		let cameraModel: string | null = null;
+		let gpsLat: number | null = null;
+		let gpsLng: number | null = null;
+		let width = input.width;
+		let height = input.height;
+		let probedDuration = duration;
+		try {
+			const probe = await probeMediaFile(dest, input.mediaType, new Date().toISOString());
+			contentHash = probe.hash || null;
+			capturedAt = probe.capturedAt;
+			cameraMake = probe.cameraMake;
+			cameraModel = probe.cameraModel;
+			gpsLat = probe.gpsLat;
+			gpsLng = probe.gpsLng;
+			if (width == null) width = probe.width;
+			if (height == null) height = probe.height;
+			if (probedDuration == null) probedDuration = probe.duration;
+		} catch {
+			capturedAt = new Date().toISOString();
+		}
+
+		if (input.skipDuplicateHash && contentHash) {
+			const existing = findActiveByHash(profileId, contentHash);
+			if (existing) {
+				try {
+					if (existsSync(dest)) unlinkSync(dest);
+				} catch {
+					/* ignore */
+				}
+				throw new DuplicateContentError(existing.id, existing.original_name);
+			}
+		}
+
 		db.transaction((tx) => {
 			tx.insert(media)
 				.values({
@@ -494,10 +567,18 @@ export async function insertMediaFromStream(
 					mimeType: input.mimeType,
 					mediaType: input.mediaType,
 					size,
-					width: input.width,
-					height: input.height,
+					width,
+					height,
 					storageKey,
-					duration
+					duration: probedDuration,
+					capturedAt,
+					contentHash,
+					cameraMake,
+					cameraModel,
+					gpsLat,
+					gpsLng,
+					favorite: 0,
+					sourcePath: input.sourcePath ?? null
 				})
 				.run();
 			if (input.albumId) {
@@ -521,12 +602,13 @@ export async function insertMediaFromStream(
 			await ensureImageThumbnail(profileId, id);
 		}
 	}
-	if (input.mediaType === 'video' && duration == null) {
+	const meta = getMediaMeta(profileId, id);
+	if (input.mediaType === 'video' && meta?.duration == null) {
 		enqueueDurationBackfill(profileId);
 	}
 
 	return (
-		getMediaMeta(profileId, id) ?? {
+		meta ?? {
 			id,
 			original_name: input.originalName,
 			mime_type: input.mimeType,
@@ -539,7 +621,16 @@ export async function insertMediaFromStream(
 			duration,
 			view_count: 0,
 			created_at: new Date().toISOString(),
-			has_thumbnail: false
+			has_thumbnail: false,
+			captured_at: null,
+			content_hash: null,
+			camera_make: null,
+			camera_model: null,
+			gps_lat: null,
+			gps_lng: null,
+			favorite: false,
+			source_path: input.sourcePath ?? null,
+			tags: []
 		}
 	);
 }
@@ -822,7 +913,15 @@ export function duplicateMedia(
 					height: row.height,
 					storageKey: destKey,
 					thumbnailKey: thumbKey,
-					duration: normalizeDuration(row.duration)
+					duration: normalizeDuration(row.duration),
+					capturedAt: row.capturedAt,
+					contentHash: row.contentHash,
+					cameraMake: row.cameraMake,
+					cameraModel: row.cameraModel,
+					gpsLat: row.gpsLat,
+					gpsLng: row.gpsLng,
+					favorite: 0,
+					sourcePath: null
 				})
 				.run();
 			if (albumId) {
@@ -1101,8 +1200,7 @@ export async function ensureVideoThumbnail(profileId: string, id: string): Promi
 	const dest = filePathForKey(profileId, thumbKey);
 	const tmp = tmpPathForKey(profileId, previewThumbTmpName(id));
 	// Unknown source dims → small gallery poster (1280 is wasteful for cards).
-	const edge =
-		row.width || row.height ? thumbEdgeForSource(row.width, row.height) : 480;
+	const edge = row.width || row.height ? thumbEdgeForSource(row.width, row.height) : 480;
 
 	for (const seek of thumbnailSeekCandidates(duration)) {
 		try {
@@ -1160,6 +1258,66 @@ export function countUnassignedMedia(profileId: string): number {
 			)
 			.get()?.c ?? 0
 	);
+}
+
+export function findActiveByHash(profileId: string, hash: string): MediaItem | undefined {
+	if (!hash) return undefined;
+	const db = getProfileDb(profileId);
+	const row = db
+		.select()
+		.from(media)
+		.where(and(eq(media.contentHash, hash), isNull(media.deletedAt)))
+		.get();
+	if (!row) return undefined;
+	return attachAlbums(profileId, [row])[0];
+}
+
+export type SourcePathHashIndex = {
+	paths: string[];
+	hashes: string[];
+};
+
+export function listSourcePathsAndHashes(profileId: string): SourcePathHashIndex {
+	const db = getProfileDb(profileId);
+	const rows = db
+		.select({ sourcePath: media.sourcePath, contentHash: media.contentHash })
+		.from(media)
+		.where(isNull(media.deletedAt))
+		.all();
+	const paths: string[] = [];
+	const hashes: string[] = [];
+	for (const row of rows) {
+		if (row.sourcePath) paths.push(row.sourcePath);
+		if (row.contentHash) hashes.push(row.contentHash);
+	}
+	return { paths, hashes };
+}
+
+export function setMediaFavorite(profileId: string, ids: string[], favorite: boolean): MediaItem[] {
+	if (!ids.length) return [];
+	const db = getProfileDb(profileId);
+	db.update(media)
+		.set({ favorite: favorite ? 1 : 0 })
+		.where(inArray(media.id, ids))
+		.run();
+	return getMediaByIds(profileId, ids);
+}
+
+export async function exportMediaZip(
+	profileId: string,
+	ids: string[],
+	outPath: string
+): Promise<number> {
+	const items = getMediaByIds(profileId, ids);
+	const sources = [];
+	for (const item of items) {
+		const row = getMediaRow(profileId, item.id);
+		if (!row) continue;
+		const path = filePathForKey(profileId, row.storageKey);
+		if (!existsSync(path)) continue;
+		sources.push({ name: item.original_name, path });
+	}
+	return writeStoreZip(sources, outPath);
 }
 
 export function openFileReadStream(path: string, options?: { start?: number; end?: number }) {

@@ -2,7 +2,7 @@ import { createReadStream, existsSync, readdirSync, statSync } from 'node:fs';
 import { basename, extname, join, resolve } from 'node:path';
 import type { MediaItem, MediaType } from '$lib/types';
 import { DATA_DIR } from './dbUtil';
-import { insertMediaFromStream } from './media';
+import { DuplicateContentError, insertMediaFromStream } from './media';
 
 const VIDEO_EXT = new Set(['.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi']);
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.avif', '.bmp', '.heic']);
@@ -41,7 +41,11 @@ function assertImportPathAllowed(rawPath: string): string {
 	if (!st.isDirectory()) throw new Error('Path must be a folder');
 	// Block importing the live library storage tree into itself.
 	const dataRoot = resolve(DATA_DIR);
-	if (resolved === dataRoot || resolved.startsWith(dataRoot + '\\') || resolved.startsWith(dataRoot + '/')) {
+	if (
+		resolved === dataRoot ||
+		resolved.startsWith(dataRoot + '\\') ||
+		resolved.startsWith(dataRoot + '/')
+	) {
 		throw new Error('Cannot import from the app data directory');
 	}
 	return resolved;
@@ -96,10 +100,16 @@ export async function importMediaFromFolder(
 				height: null,
 				duration: null,
 				contentLength: size,
-				body: createReadStream(filePath)
+				body: createReadStream(filePath),
+				sourcePath: originalName,
+				skipDuplicateHash: true
 			});
 			imported.push(item);
 		} catch (err) {
+			if (err instanceof DuplicateContentError) {
+				skipped.push(filePath);
+				continue;
+			}
 			errors.push({
 				path: filePath,
 				message: err instanceof Error ? err.message : 'Import failed'

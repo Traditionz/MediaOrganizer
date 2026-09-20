@@ -22,12 +22,14 @@
 	} from '$lib/media/lightboxNav';
 	import { eventTargetHtml } from '$lib/parse';
 	import { formatBytes, formatDate } from '$lib/utils';
+	import { mediaDateIso } from '$lib/media/captureDate';
 	import { fade, fly } from 'svelte/transition';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import ChevronUp from '@lucide/svelte/icons/chevron-up';
 	import MoveDiagonal2 from '@lucide/svelte/icons/move-diagonal-2';
 	import X from '@lucide/svelte/icons/x';
 	import CustomPlayer from './CustomPlayer.svelte';
+	import MediaLightboxInspector from './MediaLightboxInspector.svelte';
 
 	interface Props {
 		item: MediaItem | null;
@@ -35,9 +37,26 @@
 		onclose: () => void;
 		onnavigate?: (next: MediaItem) => void;
 		onview?: (id: string, count: number) => void;
+		onrotate?: (id: string) => void;
+		onfavorite?: (id: string, favorite: boolean) => void;
+		ontrim?: (id: string, start: number, end: number) => void;
+		oncrop?: (
+			id: string,
+			box: { left: number; top: number; width: number; height: number; normalized: boolean }
+		) => void;
 	}
 
-	let { item, items = [], onclose, onnavigate, onview }: Props = $props();
+	let {
+		item,
+		items = [],
+		onclose,
+		onnavigate,
+		onview,
+		onrotate,
+		onfavorite,
+		ontrim,
+		oncrop
+	}: Props = $props();
 
 	let recorded = false;
 	let intrinsic = $state<{ w: number; h: number } | null>(null);
@@ -45,6 +64,7 @@
 	let resizing = $state(false);
 	let resizeStart = $state<{ x: number; y: number; scale: number } | null>(null);
 	let enterY = $state(0);
+	let showInfo = $state(false);
 
 	const currentIndex = $derived(item ? items.findIndex((entry) => entry.id === item.id) : -1);
 	const canPrev = $derived(lightboxCanPrev(currentIndex, items.length));
@@ -193,7 +213,7 @@
 		>
 			<h2 class="truncate text-sm font-semibold">{current.original_name}</h2>
 			<p class="mt-0.5 truncate text-[11px] text-white/75">
-				{albumSummary} · {formatDate(current.created_at)} · {formatBytes(current.size)} · {formatViewCount(
+				{albumSummary} · {formatDate(mediaDateIso(current))} · {formatBytes(current.size)} · {formatViewCount(
 					current.view_count
 				)}
 				{#if positionLabel}
@@ -209,6 +229,55 @@
 		>
 			<X class="size-4" />
 		</button>
+		<button
+			type="button"
+			class="mo-media-chip absolute top-2 right-12 flex h-8 items-center rounded-full px-2 text-xs"
+			onclick={() => (showInfo = !showInfo)}
+		>
+			Info
+		</button>
+		{#if current.media_type === 'image' && onrotate}
+			<button
+				type="button"
+				class="mo-media-chip absolute top-12 right-2 flex h-8 items-center rounded-full px-2 text-xs"
+				onclick={() => onrotate(current.id)}
+			>
+				Rotate
+			</button>
+		{/if}
+		{#if onfavorite}
+			<button
+				type="button"
+				class="mo-media-chip absolute top-12 right-24 flex h-8 items-center rounded-full px-2 text-xs"
+				onclick={() => onfavorite(current.id, !current.favorite)}
+			>
+				{current.favorite ? 'Unfavorite' : 'Favorite'}
+			</button>
+		{/if}
+		{#if showInfo}
+			<div
+				class="mo-media-chip pointer-events-auto absolute top-24 left-2 max-h-[60vh] max-w-sm overflow-auto rounded-lg px-3 py-2 text-left text-[11px] leading-5 text-white/90"
+			>
+				<p>Taken {formatDate(mediaDateIso(current))}</p>
+				<p>Added {formatDate(current.created_at)}</p>
+				{#if current.camera_make || current.camera_model}
+					<p>{[current.camera_make, current.camera_model].filter(Boolean).join(' ')}</p>
+				{/if}
+				{#if current.gps_lat != null && current.gps_lng != null}
+					<p>GPS {current.gps_lat.toFixed(5)}, {current.gps_lng.toFixed(5)}</p>
+				{/if}
+				{#if current.content_hash}
+					<p class="break-all">SHA-256 {current.content_hash}</p>
+				{/if}
+				{#if current.tags?.length}
+					<p>Tags {current.tags.map((t) => t.name).join(', ')}</p>
+				{/if}
+				<p>{current.mime_type} · {current.width ?? '?'}×{current.height ?? '?'}</p>
+				{#key current.id}
+					<MediaLightboxInspector item={current} {oncrop} {ontrim} />
+				{/key}
+			</div>
+		{/if}
 		{#if showNav}
 			<button
 				type="button"

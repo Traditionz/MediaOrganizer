@@ -10,6 +10,7 @@ import {
 	listMedia,
 	purgeExpiredTrash
 } from '$lib/server/media';
+import { listTags } from '$lib/server/tags';
 import { loadHomePageData } from '$lib/server/homePageLoad';
 
 export const load: PageServerLoad = async ({ cookies, isDataRequest }) => {
@@ -26,7 +27,8 @@ export const load: PageServerLoad = async ({ cookies, isDataRequest }) => {
 			countAllMedia,
 			countTrashMedia,
 			countUnassignedMedia,
-			purgeExpiredTrash
+			purgeExpiredTrash,
+			listTags
 		},
 		{ initialAlbum: defaultActiveAlbum() }
 	);

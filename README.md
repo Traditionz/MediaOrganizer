@@ -13,11 +13,11 @@ Each **profile** has its own albums and media. Passcodes are **optional** per pr
 
 ## Requirements (what you need)
 
-| Tool          | Why                     | Version                       |
-| ------------- | ----------------------- | ----------------------------- |
-| **Git**       | Clone / get the project | Any recent                    |
-| **Bun**       | Runtime + packages      | **1.4+**                      |
-| **A browser** | Use the UI              | Chrome, Firefox, Edge, Safari |
+| Tool                | Why                       | Version                            |
+| ------------------- | ------------------------- | ---------------------------------- |
+| **Git**             | Clone / get the project   | Any recent                         |
+| **Bun**             | Runtime + packages        | **1.4+**                           |
+| **A browser**       | Use the UI                | Chrome, Firefox, Edge, Safari      |
 | **Rust** (optional) | Desktop shell (`tauri:*`) | Stable toolchain + MSVC on Windows |
 
 No Docker, npm, or MongoDB install is required. Node is not required for day-to-day use (Bun runs the app). Production `bun run start` uses the Node adapter output (`node build`). Desktop packaging also needs **Node** on PATH at runtime (shell spawns `node` against the bundled server).
@@ -141,14 +141,14 @@ Open [http://localhost:5173](http://localhost:5173).
 
 ## How storage works (local efficiency)
 
-| Piece                            | Location                                      | Notes                                              |
-| -------------------------------- | --------------------------------------------- | -------------------------------------------------- |
-| Profile registry                 | `data/registry.db`                            | Profile names + optional passcode hashes           |
-| Albums + media metadata          | `data/profiles/{id}/media.db`                 | Per-profile SQLite                                 |
-| Images / videos + thumbnails     | `data/profiles/{id}/files/`                   | Streamed; supports multi‑GB MP4                    |
-| Upload                           | HTTP body → disk stream                       | Does not load whole files into RAM                 |
-| Playback                         | File stream + HTTP Range                      | Efficient seeking for large videos                 |
-| Library list                     | Paginated (`limit`/`offset`, default 120)     | Scroll loads more; filters/sort run on the server  |
+| Piece                        | Location                                  | Notes                                             |
+| ---------------------------- | ----------------------------------------- | ------------------------------------------------- |
+| Profile registry             | `data/registry.db`                        | Profile names + optional passcode hashes          |
+| Albums + media metadata      | `data/profiles/{id}/media.db`             | Per-profile SQLite                                |
+| Images / videos + thumbnails | `data/profiles/{id}/files/`               | Streamed; supports multi‑GB MP4                   |
+| Upload                       | HTTP body → disk stream                   | Does not load whole files into RAM                |
+| Playback                     | File stream + HTTP Range                  | Efficient seeking for large videos                |
+| Library list                 | Paginated (`limit`/`offset`, default 120) | Scroll loads more; filters/sort run on the server |
 
 Back up the whole `data/` folder to keep your library.
 
@@ -188,13 +188,13 @@ Browser + `bun run dev` stays the easy path. Optional **Tauri 2** wraps the same
 
 ### Prerequisites (one-time)
 
-| Tool | Why | Check |
-| ---- | --- | ----- |
-| **Bun 1.4+** | App + Vite | `bun --version` |
-| **Rust stable** | Compile the shell | `rustc --version` |
-| **MSVC** (Windows only) | Linker for `x86_64-pc-windows-msvc` | See below |
-| **Node 20+** | Packaged app spawns `node` at runtime | `node --version` |
-| **WebView2** | Windows webview (usually preinstalled) | — |
+| Tool                    | Why                                    | Check             |
+| ----------------------- | -------------------------------------- | ----------------- |
+| **Bun 1.4+**            | App + Vite                             | `bun --version`   |
+| **Rust stable**         | Compile the shell                      | `rustc --version` |
+| **MSVC** (Windows only) | Linker for `x86_64-pc-windows-msvc`    | See below         |
+| **Node 20+**            | Packaged app spawns `node` at runtime  | `node --version`  |
+| **WebView2**            | Windows webview (usually preinstalled) | —                 |
 
 **A. Rust** — [https://rustup.rs/](https://rustup.rs/). After install, **reopen the terminal** (or Cursor) so `~/.cargo/bin` is on `PATH`.
 
@@ -261,15 +261,15 @@ At runtime the shell starts `node` on `http://127.0.0.1:4173` and loads that URL
 
 ### Troubleshooting
 
-| Problem | Fix |
-| ------- | --- |
-| `resource path resources\server doesn't exist` | Ensure `src-tauri/resources/server/` exists (placeholder `.gitkeep`). Re-pull or `mkdir -p src-tauri/resources/server && touch src-tauri/resources/server/.gitkeep`. |
-| `rustc: not installed` / command not found | Install rustup; reopen terminal; or `export PATH="$HOME/.cargo/bin:$PATH"`. |
-| `linking with link.exe failed` / Git `link --help` | Install VS Build Tools with C++ workload; reopen terminal. |
-| Port `1420` in use | Stop other Vite/Tauri processes, or change `devUrl` + `beforeDevCommand` port in `src-tauri/tauri.conf.json`. |
-| Drag-and-drop dead in desktop window | Shell must call `disable_drag_drop_handler()` (already in `src-tauri/src/lib.rs`). Restart `tauri:dev` after Rust changes. |
-| Packaged app blank / server missing | Run full `bun run tauri:build` (not only `cargo build`). Confirm `node` works on PATH. |
-| Want browser instead | `bun run dev` → [http://localhost:5173](http://localhost:5173). |
+| Problem                                            | Fix                                                                                                                                                                  |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `resource path resources\server doesn't exist`     | Ensure `src-tauri/resources/server/` exists (placeholder `.gitkeep`). Re-pull or `mkdir -p src-tauri/resources/server && touch src-tauri/resources/server/.gitkeep`. |
+| `rustc: not installed` / command not found         | Install rustup; reopen terminal; or `export PATH="$HOME/.cargo/bin:$PATH"`.                                                                                          |
+| `linking with link.exe failed` / Git `link --help` | Install VS Build Tools with C++ workload; reopen terminal.                                                                                                           |
+| Port `1420` in use                                 | Stop other Vite/Tauri processes, or change `devUrl` + `beforeDevCommand` port in `src-tauri/tauri.conf.json`.                                                        |
+| Drag-and-drop dead in desktop window               | Shell must call `disable_drag_drop_handler()` (already in `src-tauri/src/lib.rs`). Restart `tauri:dev` after Rust changes.                                           |
+| Packaged app blank / server missing                | Run full `bun run tauri:build` (not only `cargo build`). Confirm `node` works on PATH.                                                                               |
+| Want browser instead                               | `bun run dev` → [http://localhost:5173](http://localhost:5173).                                                                                                      |
 
 ---
 
@@ -335,8 +335,8 @@ Empty area: **Paste**, **Upload…**, **Import folder…** (in Trash: **Empty tr
 
 The toolbar **Upload settings** group (separate from filters) has:
 
-| Setting             | Default | Effect                                                                                                                                                                                            |
-| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Setting             | Default | Effect                                                                                                                                                                                    |
+| ------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Warn duplicates** | on      | If a file name already exists (HMAC lookup), ask: **Skip duplicates** (default) or **Upload as duplicates**. Skipping into an album links the existing library item. Off = skip silently. |
 
 ### Compression
@@ -359,18 +359,18 @@ Uploads are stored as-is. There is **no** background or on-upload recompress.
 
 ## Project scripts
 
-| Command             | Description                                      |
-| ------------------- | ------------------------------------------------ |
-| `bun run dev`       | Dev server with HMR                              |
-| `bun run build`     | Production build (adapter-node)                  |
-| `bun run start`     | Run production server (`node build`)             |
-| `bun run preview`   | Vite preview of the production build             |
-| `bun run check`     | Typecheck / Svelte check                         |
-| `bun run format`    | Format with Oxfmt                                |
-| `bun run lint`      | Oxlint (anti-slop + defaults)                    |
-| `bun run reinstall` | Reinstall deps + sync types                      |
-| `bun run tauri:dev` | Optional desktop shell around Vite (needs Rust)  |
-| `bun run tauri:build` | Package desktop app (needs Rust + Node)        |
+| Command               | Description                                     |
+| --------------------- | ----------------------------------------------- |
+| `bun run dev`         | Dev server with HMR                             |
+| `bun run build`       | Production build (adapter-node)                 |
+| `bun run start`       | Run production server (`node build`)            |
+| `bun run preview`     | Vite preview of the production build            |
+| `bun run check`       | Typecheck / Svelte check                        |
+| `bun run format`      | Format with Oxfmt                               |
+| `bun run lint`        | Oxlint (anti-slop + defaults)                   |
+| `bun run reinstall`   | Reinstall deps + sync types                     |
+| `bun run tauri:dev`   | Optional desktop shell around Vite (needs Rust) |
+| `bun run tauri:build` | Package desktop app (needs Rust + Node)         |
 
 ---
 

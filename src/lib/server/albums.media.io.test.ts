@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Readable } from 'node:stream';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import {
 	createAlbum,
 	deleteAlbum,
@@ -8,7 +8,7 @@ import {
 	listAlbums,
 	renameAlbum
 } from '$lib/server/albums';
-import { destroyProfileStorage, filePathForKey, newId } from '$lib/server/db';
+import { destroyProfileStorage, filePathForKey, newId, tmpPathForKey } from '$lib/server/db';
 import { resetNameCryptoKeyCache } from '$lib/server/nameCrypto';
 import {
 	addMediaToAlbum,
@@ -28,7 +28,10 @@ import {
 	renameMedia,
 	restoreMedia,
 	softDeleteMedia,
-	updateMediaDuration
+	setMediaFavorite,
+	updateMediaDuration,
+	exportMediaZip,
+	findActiveByHash
 } from '$lib/server/media';
 
 function streamOf(text: string): Readable {
@@ -64,7 +67,11 @@ describe('albums + media I/O', () => {
 
 		const dup = duplicateAlbum(profileId, a.id);
 		expect(dup.name).toMatch(/^B \(/);
-		expect(listAlbums(profileId).map((x) => x.name).sort()).toEqual(
+		expect(
+			listAlbums(profileId)
+				.map((x) => x.name)
+				.sort()
+		).toEqual(
 			[dup.name, 'B'].sort((x, y) => x.localeCompare(y, undefined, { sensitivity: 'base' }))
 		);
 
@@ -222,5 +229,55 @@ describe('albums + media I/O', () => {
 
 		const all = listMedia(profileId, { albumId: 'all', limit: 120, offset: 0 });
 		expect(all.total).toBe(2);
+	});
+
+	test('favorite, hash skip, smart albums', async () => {
+		const a = await insertMediaFromStream(profileId, {
+			originalName: 'same.bin',
+			mimeType: 'image/jpeg',
+			mediaType: 'image',
+			albumId: null,
+			width: 1,
+			height: 1,
+			body: streamOf('same-bytes')
+		});
+		expect(a.content_hash).toBeTruthy();
+		await expect(
+			insertMediaFromStream(profileId, {
+				originalName: 'copy.bin',
+				mimeType: 'image/jpeg',
+				mediaType: 'image',
+				albumId: null,
+				width: 1,
+				height: 1,
+				body: streamOf('same-bytes'),
+				skipDuplicateHash: true
+			})
+		).rejects.toThrow('Duplicate content');
+
+		const b = await insertMediaFromStream(profileId, {
+			originalName: 'same2.bin',
+			mimeType: 'image/jpeg',
+			mediaType: 'image',
+			albumId: null,
+			width: 1,
+			height: 1,
+			body: streamOf('same-bytes')
+		});
+		expect(b.content_hash).toBe(a.content_hash);
+		expect(listMedia(profileId, { albumId: 'duplicates' }).total).toBe(2);
+
+		const fav = setMediaFavorite(profileId, [a.id], true);
+		expect(fav[0]?.favorite).toBe(true);
+		expect(listMedia(profileId, { albumId: 'favorites' }).items.map((m) => m.id)).toContain(a.id);
+		expect(listMedia(profileId, { albumId: 'untagged' }).total).toBe(2);
+		expect(listMedia(profileId, { albumId: 'recent' }).total).toBeGreaterThan(0);
+		expect(listMedia(profileId, { albumId: 'map' }).total).toBe(0);
+		expect(listMedia(profileId, { albumId: 'tag:missing' }).total).toBe(0);
+		expect(setMediaFavorite(profileId, [], true)).toEqual([]);
+		expect(findActiveByHash(profileId, '')).toBeUndefined();
+		expect(findActiveByHash(profileId, a.content_hash ?? '')?.id).toBe(a.id);
+		const zipPath = tmpPathForKey(profileId, 'export.zip');
+		expect(await exportMediaZip(profileId, [a.id, b.id], zipPath)).toBeGreaterThan(80);
 	});
 });

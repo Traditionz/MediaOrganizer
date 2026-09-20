@@ -1,7 +1,8 @@
 import { createContext } from 'svelte';
 import type { LibraryAlbumFilter } from '$lib/types';
 import { PreferencesState } from './preferences.svelte';
-import { LibraryState, type LibraryLoad } from './library.svelte';
+import { LibraryState } from './library.svelte';
+import type { LibraryLoad } from './libraryLoad';
 import { SelectionState } from './selection.svelte';
 import { UiState } from './ui.svelte';
 
@@ -29,8 +30,10 @@ export class AppState {
 	}
 }
 
-export function createAppState(): AppState {
-	return new AppState();
+export function createAppState(initial?: LibraryLoad): AppState {
+	const state = new AppState();
+	if (initial) state.sync(initial);
+	return state;
 }
 
 export function setAppState(state: AppState): AppState {
@@ -42,5 +45,4 @@ export function getAppState(): AppState {
 	return getAppStateContext();
 }
 
-export type { LibraryLoad };
 export { PreferencesState, LibraryState, SelectionState, UiState };

@@ -11,6 +11,8 @@
 	import { getAppState } from '$lib/state';
 	import { enqueueThumbnailJob } from '$lib/thumbnailQueue';
 	import { formatDate, formatDuration, requestServerThumbnail } from '$lib/utils';
+	import { mediaDateIso } from '$lib/media/captureDate';
+	import Heart from '@lucide/svelte/icons/heart';
 
 	interface Props {
 		item: MediaItem;
@@ -276,7 +278,12 @@
 		class="mo-media-chip absolute inset-x-0 bottom-0 rounded-none border-x-0 border-b-0 px-2.5 py-2 opacity-0 transition-opacity group-hover:opacity-100"
 		class:opacity-100={selected}
 	>
-		<p class="truncate text-xs font-medium">{item.original_name}</p>
+		<p class="flex items-center gap-1 truncate text-xs font-medium">
+			{#if item.favorite}
+				<Heart class="size-3 shrink-0 fill-current" aria-hidden="true" />
+			{/if}
+			<span class="truncate">{item.original_name}</span>
+		</p>
 		<div class="mt-1 flex items-center justify-between gap-2 text-[10px] text-white/70">
 			{#if showAlbumChip && albumLabel}
 				<Badge variant="secondary" class="max-w-[70%] truncate" title={albumTitle}>
@@ -285,7 +292,7 @@
 			{:else}
 				<span></span>
 			{/if}
-			<span>{formatDate(item.created_at)}</span>
+			<span>{formatDate(mediaDateIso(item))}</span>
 		</div>
 	</div>
 

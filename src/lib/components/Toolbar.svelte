@@ -58,6 +58,10 @@
 		trashCount?: number;
 		onuploadClick: () => void;
 		ontheme: (theme: ThemeMode) => void;
+		onexport?: () => void;
+		onfavorite?: () => void;
+		onhealth?: () => void;
+		onfolderClick?: () => void;
 	}
 
 	let {
@@ -95,7 +99,11 @@
 		trashMode = false,
 		trashCount = 0,
 		onuploadClick,
-		ontheme
+		ontheme,
+		onexport,
+		onfavorite,
+		onhealth,
+		onfolderClick
 	}: Props = $props();
 
 	const showSelectionActions = $derived(selectMode || selectedCount > 0);
@@ -132,6 +140,21 @@
 			<Button size="sm" variant="destructive" disabled={!selectedCount} onclick={ondelete}>
 				Move to trash
 			</Button>
+			{#if onfavorite}
+				<Button
+					size="sm"
+					variant="secondary"
+					disabled={!selectedCount}
+					onclick={() => onfavorite()}
+				>
+					Favorite
+				</Button>
+			{/if}
+			{#if onexport}
+				<Button size="sm" variant="outline" disabled={!selectedCount} onclick={() => onexport()}>
+					Export zip
+				</Button>
+			{/if}
 		{/if}
 		<Button size="sm" variant="outline" onclick={onclearSelection}>Clear</Button>
 		<Button size="sm" variant="ghost" onclick={ontoggleSelect}>Done</Button>
@@ -153,6 +176,15 @@
 				{/if}
 				Upload
 			</Button>
+			{#if onfolderClick}
+				<Button size="sm" variant="outline" onclick={() => onfolderClick()}>Folder</Button>
+			{/if}
+			{#if onexport}
+				<Button size="sm" variant="outline" onclick={() => onexport()}>Export zip</Button>
+			{/if}
+			{#if onhealth}
+				<Button size="sm" variant="outline" onclick={() => onhealth()}>Library health</Button>
+			{/if}
 		{/if}
 	{/if}
 

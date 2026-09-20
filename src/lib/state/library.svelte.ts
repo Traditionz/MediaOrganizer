@@ -1,25 +1,20 @@
-import type { Album, LibraryAlbumFilter, MediaItem, Profile } from '$lib/types';
+import type { Album, LibraryAlbumFilter, MediaItem, Profile, Tag } from '$lib/types';
 import { defaultActiveAlbum } from '$lib/config/defaults';
 import { pasteTargetAlbumId as resolvePasteTargetAlbumId } from '$lib/media/filter.js';
 import type { MediaSortBy, MediaSortDir } from '$lib/media/sort.js';
 import { MEDIA_PAGE_SIZE, type MediaListPage } from '$lib/media/page';
-import { asFiniteNumber, asPlainObject, own, ownNumber, stringList, type JsonValue } from '$lib/parse';
+import {
+	asFiniteNumber,
+	asPlainObject,
+	own,
+	ownNumber,
+	stringList,
+	type JsonValue
+} from '$lib/parse';
 import type { PreferencesState } from './preferences.svelte';
+import type { LibraryLoad } from './libraryLoad';
 
-export type LibraryLoad = {
-	albums: Album[];
-	media: MediaItem[];
-	mediaTotal?: number;
-	mediaHasMore?: boolean;
-	trash?: MediaItem[];
-	trashCount?: number;
-	trashLoaded?: boolean;
-	totalCount: number;
-	unassignedCount?: number;
-	pageSize?: number;
-	profiles: Profile[];
-	activeProfile: Profile | null;
-};
+export type { LibraryLoad };
 
 function mediaTypeParam(showImages: boolean, showVideos: boolean): 'all' | 'image' | 'video' {
 	if (showImages && !showVideos) return 'image';
@@ -79,6 +74,7 @@ export class LibraryState {
 	profiles = $state.raw<Profile[]>([]);
 	activeProfile = $state.raw<Profile | null>(null);
 	activeAlbum = $state<LibraryAlbumFilter>(defaultActiveAlbum());
+	tags = $state.raw<Tag[]>([]);
 
 	/** Client-confirmed thumbs (survives refresh before server reflects thumbnail_key). */
 	private thumbReady = new Set<string>();
@@ -110,6 +106,7 @@ export class LibraryState {
 		this.pageSize = data.pageSize ?? MEDIA_PAGE_SIZE;
 		this.profiles = data.profiles;
 		this.activeProfile = data.activeProfile;
+		this.tags = data.tags ?? [];
 	}
 
 	setActiveAlbum(id: LibraryAlbumFilter) {
@@ -276,16 +273,12 @@ export class LibraryState {
 		if (!this.hasMore) return;
 		this.loadingMore = true;
 		try {
-			const res = await fetch(
-				this.buildListUrl({ offset: this.media.length, trash: false })
-			);
+			const res = await fetch(this.buildListUrl({ offset: this.media.length, trash: false }));
 			const page = parseMediaListPage(await readJsonValue(res), this.pageSize);
 			const existing = new Set(this.media.map((item) => item.id));
 			const appended = page.items
 				.filter((item) => !existing.has(item.id))
-				.map((item) =>
-					this.thumbReady.has(item.id) ? { ...item, has_thumbnail: true } : item
-				);
+				.map((item) => (this.thumbReady.has(item.id) ? { ...item, has_thumbnail: true } : item));
 			this.media = [...this.media, ...appended];
 			this.mediaTotal = page.total;
 			this.hasMore = page.hasMore;
@@ -321,6 +314,20 @@ export class LibraryState {
 		}
 	}
 
+	async refreshTags() {
+		const res = await fetch('/api/tags');
+		const payload = await readJsonValue(res);
+		if (!Array.isArray(payload)) return;
+		const next: Tag[] = [];
+		for (const entry of payload) {
+			const bag = asPlainObject(entry);
+			if (!bag) continue;
+			// SAFETY: GET /api/tags returns Tag[].
+			next.push(entry as Tag);
+		}
+		this.tags = next;
+	}
+
 	async refreshCounts() {
 		const res = await fetch('/api/media?meta=1');
 		const bag = asPlainObject(await readJsonValue(res));
@@ -335,7 +342,12 @@ export class LibraryState {
 
 	/** Full reload of current query + albums + counts (rare: profile switch / purge). */
 	async refresh() {
-		await Promise.all([this.reloadQuery(), this.refreshAlbums(), this.refreshCounts()]);
+		await Promise.all([
+			this.reloadQuery(),
+			this.refreshAlbums(),
+			this.refreshCounts(),
+			this.refreshTags()
+		]);
 		if (this.activeAlbum === 'trash') await this.ensureTrashLoaded(true);
 	}
 

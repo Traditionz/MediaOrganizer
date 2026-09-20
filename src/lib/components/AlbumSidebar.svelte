@@ -8,6 +8,11 @@
 	import Search from '@lucide/svelte/icons/search';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import User from '@lucide/svelte/icons/user';
+	import Heart from '@lucide/svelte/icons/heart';
+	import Clock from '@lucide/svelte/icons/clock';
+	import MapPin from '@lucide/svelte/icons/map-pin';
+	import Copy from '@lucide/svelte/icons/copy';
+	import TagIcon from '@lucide/svelte/icons/tag';
 	import { albumListQueryNorm, albumNameMatchesQuery, exactAlbumNameMatch } from '$lib/albumNaming';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
@@ -15,7 +20,8 @@
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
-	import type { Album, LibraryAlbumFilter, Profile } from '$lib/types';
+	import type { Album, LibraryAlbumFilter, Profile, Tag } from '$lib/types';
+	import { tagFilterId } from '$lib/media/libraryNav';
 	import { endInternalDrag, getInternalDrag, isInternalDragActive } from '$lib/dragSession';
 	import { asString, eventHtml, parseJsonText } from '$lib/parse';
 	import ContextMenu, { type ContextMenuItem } from './ContextMenu.svelte';
@@ -40,6 +46,9 @@
 		ondeleteProfile: (id: string) => Promise<void>;
 		onhome: () => Promise<void> | void;
 		oneditPasscode: () => void;
+		tags?: Tag[];
+		oncreateTag?: (name: string, kind: 'tag' | 'person') => Promise<void>;
+		ondeleteTag?: (id: string) => Promise<void>;
 	}
 
 	const MEDIA_MIME = 'application/x-media-ids';
@@ -63,7 +72,10 @@
 		oncreateProfile,
 		ondeleteProfile,
 		onhome,
-		oneditPasscode
+		oneditPasscode,
+		tags = [],
+		oncreateTag,
+		ondeleteTag
 	}: Props = $props();
 
 	let newName = $state('');
@@ -77,6 +89,8 @@
 	let renameName = $state('');
 	let albumQuery = $state('');
 	let listFilterSource = $state<'add' | 'search'>('search');
+	let tagName = $state('');
+	let personName = $state('');
 	let contextMenu = $state<{
 		open: boolean;
 		x: number;
@@ -98,6 +112,8 @@
 			newName
 		)
 	);
+	const tagItems = $derived(tags.filter((t) => t.kind === 'tag'));
+	const peopleItems = $derived(tags.filter((t) => t.kind === 'person'));
 
 	const contextAlbum = $derived(
 		contextMenu.albumId ? (albums.find((a) => a.id === contextMenu.albumId) ?? null) : null
@@ -269,6 +285,21 @@
 			cancelCreate();
 		} catch {
 			/* keep input open so the user can retry */
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function submitTag(kind: 'tag' | 'person') {
+		const name = (kind === 'person' ? personName : tagName).trim();
+		if (!name || busy || !oncreateTag) return;
+		busy = true;
+		try {
+			await oncreateTag(name, kind);
+			if (kind === 'person') personName = '';
+			else tagName = '';
+		} catch {
+			/* keep input */
 		} finally {
 			busy = false;
 		}
@@ -590,6 +621,171 @@
 				Trash
 				<Badge variant="secondary" class="ml-auto">{trashCount}</Badge>
 			</Button>
+
+			<Button
+				type="button"
+				variant="ghost"
+				class={[
+					'mt-1 w-full justify-start gap-2 font-medium',
+					activeAlbum === 'favorites' && 'bg-accent text-accent-foreground'
+				]}
+				onclick={() => onselect('favorites')}
+			>
+				<Heart class="h-5 w-5" />
+				Favorites
+			</Button>
+			<Button
+				type="button"
+				variant="ghost"
+				class={[
+					'mt-1 w-full justify-start gap-2 font-medium',
+					activeAlbum === 'recent' && 'bg-accent text-accent-foreground'
+				]}
+				onclick={() => onselect('recent')}
+			>
+				<Clock class="h-5 w-5" />
+				Recent
+			</Button>
+			<Button
+				type="button"
+				variant="ghost"
+				class={[
+					'mt-1 w-full justify-start gap-2 font-medium',
+					activeAlbum === 'untagged' && 'bg-accent text-accent-foreground'
+				]}
+				onclick={() => onselect('untagged')}
+			>
+				<TagIcon class="h-5 w-5" />
+				Untagged
+			</Button>
+			<Button
+				type="button"
+				variant="ghost"
+				class={[
+					'mt-1 w-full justify-start gap-2 font-medium',
+					activeAlbum === 'map' && 'bg-accent text-accent-foreground'
+				]}
+				onclick={() => onselect('map')}
+			>
+				<MapPin class="h-5 w-5" />
+				Map
+			</Button>
+			<Button
+				type="button"
+				variant="ghost"
+				class={[
+					'mt-1 w-full justify-start gap-2 font-medium',
+					activeAlbum === 'duplicates' && 'bg-accent text-accent-foreground'
+				]}
+				onclick={() => onselect('duplicates')}
+			>
+				<Copy class="h-5 w-5" />
+				Duplicates
+			</Button>
+
+			<div class="mt-4 mb-2 rounded-lg px-2 py-1">
+				<span class="text-muted-foreground text-xs font-semibold tracking-wide uppercase"
+					>People</span
+				>
+			</div>
+			<form
+				class="mb-2"
+				onsubmit={(e) => {
+					e.preventDefault();
+					void submitTag('person');
+				}}
+			>
+				<Input
+					placeholder="Person name"
+					aria-label="New person"
+					bind:value={personName}
+					disabled={busy}
+				/>
+			</form>
+			<ul class="mb-2 flex flex-col gap-0.5 p-0">
+				{#each peopleItems as person (person.id)}
+					<li>
+						<div
+							class={[
+								'group flex items-center gap-0.5 rounded-lg',
+								activeAlbum === tagFilterId(person.id) && 'bg-accent text-accent-foreground'
+							]}
+						>
+							<Button
+								type="button"
+								variant="ghost"
+								class="min-w-0 flex-1 justify-start gap-2 font-medium"
+								onclick={() => onselect(tagFilterId(person.id))}
+							>
+								<User class="h-4 w-4" />
+								<span class="truncate">{person.name}</span>
+								<Badge variant="secondary" class="ml-auto">{person.media_count ?? 0}</Badge>
+							</Button>
+							{#if ondeleteTag}
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon-xs"
+									class="opacity-0 group-hover:opacity-100"
+									aria-label="Delete person {person.name}"
+									onclick={() => ondeleteTag(person.id)}
+								>
+									<Trash2 class="h-4 w-4" />
+								</Button>
+							{/if}
+						</div>
+					</li>
+				{/each}
+			</ul>
+
+			<div class="mt-2 mb-2 rounded-lg px-2 py-1">
+				<span class="text-muted-foreground text-xs font-semibold tracking-wide uppercase">Tags</span
+				>
+			</div>
+			<form
+				class="mb-2"
+				onsubmit={(e) => {
+					e.preventDefault();
+					void submitTag('tag');
+				}}
+			>
+				<Input placeholder="Tag name" aria-label="New tag" bind:value={tagName} disabled={busy} />
+			</form>
+			<ul class="mb-2 flex flex-col gap-0.5 p-0">
+				{#each tagItems as tag (tag.id)}
+					<li>
+						<div
+							class={[
+								'group flex items-center gap-0.5 rounded-lg',
+								activeAlbum === tagFilterId(tag.id) && 'bg-accent text-accent-foreground'
+							]}
+						>
+							<Button
+								type="button"
+								variant="ghost"
+								class="min-w-0 flex-1 justify-start gap-2 font-medium"
+								onclick={() => onselect(tagFilterId(tag.id))}
+							>
+								<TagIcon class="h-4 w-4" />
+								<span class="truncate">{tag.name}</span>
+								<Badge variant="secondary" class="ml-auto">{tag.media_count ?? 0}</Badge>
+							</Button>
+							{#if ondeleteTag}
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon-xs"
+									class="opacity-0 group-hover:opacity-100"
+									aria-label="Delete tag {tag.name}"
+									onclick={() => ondeleteTag(tag.id)}
+								>
+									<Trash2 class="h-4 w-4" />
+								</Button>
+							{/if}
+						</div>
+					</li>
+				{/each}
+			</ul>
 
 			<div class="mt-4 mb-2 rounded-lg px-2 py-1">
 				<span class="text-muted-foreground text-xs font-semibold tracking-wide uppercase"

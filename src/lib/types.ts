@@ -2,6 +2,29 @@ export type MediaType = 'image' | 'video';
 export type ViewMode = 'grid' | 'collage';
 export type ThemeMode = 'light' | 'dark';
 export type PasscodeModalMode = 'unlock' | 'create' | 'delete' | 'passcode';
+export type TagKind = 'tag' | 'person';
+
+export interface MediaTag {
+	id: string;
+	name: string;
+	kind: TagKind;
+}
+
+export interface Tag {
+	id: string;
+	name: string;
+	kind: TagKind;
+	created_at: string;
+	media_count?: number;
+}
+
+export interface WatchedFolder {
+	id: string;
+	path: string;
+	recursive: boolean;
+	last_scan_at: string | null;
+	created_at: string;
+}
 
 export interface Profile {
 	id: string;
@@ -37,6 +60,15 @@ export interface MediaItem {
 	deleted_at?: string | null;
 	/** True when a generated gallery preview image exists */
 	has_thumbnail?: boolean;
+	captured_at?: string | null;
+	content_hash?: string | null;
+	camera_make?: string | null;
+	camera_model?: string | null;
+	gps_lat?: number | null;
+	gps_lng?: number | null;
+	favorite?: boolean;
+	source_path?: string | null;
+	tags?: MediaTag[];
 }
 
 /** Library nav: concrete album id, all, unassigned (null), or trash */

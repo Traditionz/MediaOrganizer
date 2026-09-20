@@ -23,6 +23,7 @@
 	import MediaGrid from '$lib/components/MediaGrid.svelte';
 	import MediaCollage from '$lib/components/MediaCollage.svelte';
 	import MediaLightbox from '$lib/components/MediaLightbox.svelte';
+	import MediaMap from '$lib/components/MediaMap.svelte';
 	import ContextMenu, { type ContextMenuItem } from '$lib/components/ContextMenu.svelte';
 	import TransferPanel from '$lib/components/TransferPanel.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -45,8 +46,20 @@
 		parseImportedMedia,
 		parseMediaItem,
 		parseMediaItems,
-		parseOkMediaItems
+		parseOkMediaItems,
+		parseTag
 	} from '$lib/library/mutationHandlers';
+	import { UndoStack, invertUndo, type UndoAction } from '$lib/media/undo';
+	import { resolveLibraryHotkey, nextGridSelectionId } from '$lib/media/libraryHotkeys';
+	import { isSpecialLibraryFilter, parseTagFilterId, tagFilterId } from '$lib/media/libraryNav';
+	import {
+		WATCH_POLL_MS,
+		emptyLibraryDetail,
+		emptyLibraryHeadline,
+		formatLibraryHealth,
+		nextFavoriteFlag,
+		resolveMediaExportHref
+	} from '$lib/media/libraryUi';
 	import { parseIdsFromOk, type LibraryState } from '$lib/state/library.svelte';
 	import { passcodePatchBody } from '$lib/profile/passcodeEdit';
 	import { profileDeleteNeedsConfirm } from '$lib/profile/deleteConfirm';
@@ -64,7 +77,12 @@
 	import type { SelectionRect } from '$lib/selection/geometry.js';
 	import { applyMarqueeHits, marqueeSelectionAnchor } from '$lib/selection/marquee.js';
 	import { fade } from 'svelte/transition';
-	import { createAppState, setAppState } from '$lib/state';
+	import {
+		createAppState,
+		firstPaintShowsProfileGate,
+		libraryLoadFromPageData,
+		setAppState
+	} from '$lib/state';
 	import type { MediaSortBy } from '$lib/media/sort.js';
 
 	interface Props {
@@ -73,15 +91,28 @@
 
 	let { data }: Props = $props();
 
-	const app = setAppState(createAppState());
+	// svelte-ignore state_referenced_locally
+	// Seed before first paint. $effect.pre handles later data updates; this read is the SSR snapshot.
+	const app = setAppState(createAppState(libraryLoadFromPageData(data)));
 	const { prefs, library, selection, ui } = app;
 
 	let durationBackfilledForProfile: string | null = null;
 	let selectionSurface = $state<HTMLElement | null>(null);
 	let marqueeAdditive = false;
 	let marqueeBaseIds: string[] = [];
-	let promptKind: 'rename' | 'import-folder' = 'rename';
+	let promptKind: 'rename' | 'import-folder' | 'watch-folder' | 'assign-tag' | 'assign-person' =
+		'rename';
+	let assignTargetIds: string[] = [];
 	let queryReloadTimer: ReturnType<typeof setTimeout> | null = null;
+	const undo = new UndoStack(30);
+	let folderInput = $state<HTMLInputElement | null>(null);
+
+	function attachFolderInput(node: HTMLInputElement) {
+		folderInput = node;
+		return () => {
+			if (folderInput === node) folderInput = null;
+		};
+	}
 
 	function scheduleQueryReload() {
 		if (queryReloadTimer) clearTimeout(queryReloadTimer);
@@ -104,7 +135,7 @@
 	}
 
 	async function refreshAlbumsAndCounts() {
-		await Promise.all([library.refreshAlbums(), library.refreshCounts()]);
+		await Promise.all([library.refreshAlbums(), library.refreshCounts(), library.refreshTags()]);
 	}
 
 	/** Keep marquee hit target at least viewport-tall so empty space below rows is draggable. */
@@ -138,21 +169,11 @@
 		return () => viewport.removeEventListener('scroll', onScroll);
 	});
 
+	$effect.pre(() => {
+		library.sync(libraryLoadFromPageData(data));
+	});
+
 	$effect(() => {
-		library.sync({
-			albums: data.albums,
-			media: data.media,
-			mediaTotal: data.mediaTotal,
-			mediaHasMore: data.mediaHasMore,
-			trash: data.trash,
-			trashCount: data.trashCount,
-			trashLoaded: data.trashLoaded,
-			totalCount: data.totalCount,
-			unassignedCount: data.unassignedCount,
-			pageSize: data.pageSize,
-			profiles: data.profiles,
-			activeProfile: data.activeProfile
-		});
 		const profileId = data.activeProfile?.id ?? null;
 		if (profileId && profileId !== durationBackfilledForProfile) {
 			durationBackfilledForProfile = profileId;
@@ -173,6 +194,16 @@
 				}
 			})();
 		}
+	});
+
+	$effect(() => {
+		const profileId = library.activeProfile?.id ?? null;
+		if (!profileId) return;
+		void scanWatched();
+		const timer = setInterval(() => {
+			void scanWatched();
+		}, WATCH_POLL_MS);
+		return () => clearInterval(timer);
 	});
 
 	$effect(() => {
@@ -474,7 +505,7 @@
 		await library.refreshCounts();
 	}
 
-	async function addMediaToAlbum(ids: string[], albumId: string) {
+	async function addMediaToAlbum(ids: string[], albumId: string, recordUndo = true) {
 		if (!ids.length || !albumId) return;
 		const res = await fetch('/api/media', {
 			method: 'PATCH',
@@ -483,13 +514,14 @@
 		});
 		if (res.ok) {
 			library.upsertMedia(parseOkMediaItems(await res.json()));
+			if (recordUndo) undo.push({ kind: 'album-add', ids, albumId });
 		}
 		selection.selectedIds.clear();
 		selection.selectionAnchor = null;
 		await refreshAlbumsAndCounts();
 	}
 
-	async function removeMediaFromAlbum(ids: string[], albumId: string) {
+	async function removeMediaFromAlbum(ids: string[], albumId: string, recordUndo = true) {
 		if (!ids.length || !albumId) return;
 		const res = await fetch('/api/media', {
 			method: 'PATCH',
@@ -499,6 +531,7 @@
 		if (res.ok) {
 			const items = parseOkMediaItems(await res.json());
 			library.upsertMedia(items);
+			if (recordUndo) undo.push({ kind: 'album-remove', ids, albumId });
 			if (library.activeAlbum === albumId) {
 				library.removeMediaIds(ids);
 			}
@@ -637,6 +670,10 @@
 	}
 
 	function downloadMedia(ids: string[]) {
+		if (ids.length > 1) {
+			window.location.href = `/api/media/export?ids=${ids.map(encodeURIComponent).join(',')}`;
+			return;
+		}
 		for (const id of ids) {
 			const a = document.createElement('a');
 			a.href = `/api/media/${id}?download`;
@@ -645,6 +682,282 @@
 			document.body.appendChild(a);
 			a.click();
 			a.remove();
+		}
+	}
+
+	async function applyUndoAction(action: UndoAction) {
+		const inverse = invertUndo(action);
+		if (inverse.kind === 'restore') {
+			await restoreSelected(inverse.ids, false);
+			return;
+		}
+		if (inverse.kind === 'trash') {
+			await runDeleteMedia(inverse.ids, false, false);
+			return;
+		}
+		if (inverse.kind === 'album-add') {
+			await addMediaToAlbum(inverse.ids, inverse.albumId, false);
+			return;
+		}
+		if (inverse.kind === 'album-remove') {
+			await removeMediaFromAlbum(inverse.ids, inverse.albumId, false);
+			return;
+		}
+		await setFavorite(inverse.ids, inverse.favorite, false);
+	}
+
+	async function undoLast() {
+		const action = undo.pop();
+		if (!action) return;
+		await applyUndoAction(action);
+	}
+
+	async function setFavorite(ids: string[], favorite: boolean, recordUndo = true) {
+		if (!ids.length) return;
+		const res = await fetch('/api/media', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ action: 'favorite', ids, favorite })
+		});
+		if (res.ok) {
+			library.upsertMedia(parseOkMediaItems(await res.json()));
+			if (recordUndo) undo.push({ kind: 'favorite', ids, favorite });
+		}
+	}
+
+	async function showLibraryHealth() {
+		try {
+			const res = await fetch('/api/library');
+			const body = asPlainObject(await res.json());
+			const missing = asFiniteNumber(own(body ?? {}, 'missingCount')) ?? 0;
+			const bytes = asFiniteNumber(own(body ?? {}, 'totalBytes')) ?? 0;
+			const count = asFiniteNumber(own(body ?? {}, 'mediaCount')) ?? 0;
+			let backedUp = false;
+			if (missing === 0) {
+				const backup = await fetch('/api/library', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ action: 'backup' })
+				});
+				backedUp = backup.ok;
+			}
+			ui.convertResultMessage = formatLibraryHealth({
+				mediaCount: count,
+				totalBytes: bytes,
+				missingCount: missing,
+				backedUp
+			});
+		} catch (err) {
+			ui.errorMessage = err instanceof Error ? err.message : 'Health check failed';
+		}
+	}
+
+	async function createTag(name: string, kind: 'tag' | 'person') {
+		const res = await fetch('/api/tags', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name, kind })
+		});
+		if (!res.ok) {
+			const body = await res.json().catch(() => ({}));
+			ui.errorMessage = body.message || 'Failed to create tag';
+			throw new Error(ui.errorMessage);
+		}
+		const tag = parseTag(await res.json());
+		await library.refreshTags();
+		return tag;
+	}
+
+	async function deleteTag(id: string) {
+		const res = await fetch('/api/tags', {
+			method: 'DELETE',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ id })
+		});
+		if (!res.ok) {
+			const body = await res.json().catch(() => ({}));
+			ui.errorMessage = body.message || 'Failed to delete tag';
+			return;
+		}
+		await library.refreshTags();
+		if (library.activeAlbum === tagFilterId(id)) {
+			await selectAlbumFilter('all');
+		}
+	}
+
+	async function assignTagByName(ids: string[], name: string, kind: 'tag' | 'person') {
+		const trimmed = name.trim();
+		if (!ids.length || !trimmed) return;
+		const existing = library.tags.find(
+			(tag) => tag.kind === kind && tag.name.toLowerCase() === trimmed.toLowerCase()
+		);
+		const tag = existing ?? (await createTag(trimmed, kind));
+		if (!tag) return;
+		const res = await fetch('/api/tags', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ action: 'assign', tagId: tag.id, ids })
+		});
+		if (!res.ok) {
+			const body = await res.json().catch(() => ({}));
+			ui.errorMessage = body.message || 'Failed to assign tag';
+			return;
+		}
+		library.upsertMedia(parseOkMediaItems(await res.json()));
+		await library.refreshTags();
+	}
+
+	async function unassignCurrentTag(ids: string[]) {
+		const tagId = parseTagFilterId(library.activeAlbum);
+		if (!tagId || !ids.length) return;
+		const res = await fetch('/api/tags', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ action: 'unassign', tagId, ids })
+		});
+		if (!res.ok) return;
+		library.upsertMedia(parseOkMediaItems(await res.json()));
+		if (library.activeAlbum === tagFilterId(tagId)) {
+			library.removeMediaIds(ids);
+		}
+		await library.refreshTags();
+	}
+
+	function openAssignPrompt(ids: string[], kind: 'tag' | 'person') {
+		assignTargetIds = ids;
+		promptKind = kind === 'person' ? 'assign-person' : 'assign-tag';
+		ui.promptModalBusy = false;
+		ui.promptModalError = '';
+		ui.promptModal = {
+			open: true,
+			title: kind === 'person' ? 'Add person' : 'Add tag',
+			label: kind === 'person' ? 'Person name' : 'Tag name',
+			initialValue: '',
+			mediaId: null
+		};
+	}
+
+	async function toggleFavoriteSelected() {
+		const ids = [...selection.selectedIds];
+		if (!ids.length) return;
+		const items = ids
+			.map((id) => library.media.find((item) => item.id === id))
+			.filter((item): item is MediaItem => Boolean(item));
+		await setFavorite(ids, nextFavoriteFlag(items));
+	}
+
+	function exportCurrent() {
+		const href = resolveMediaExportHref({
+			selectedIds: [...selection.selectedIds],
+			visibleIds: library.filteredMedia.map((item) => item.id),
+			activeAlbum: library.activeAlbum
+		});
+		if (href) window.location.href = href;
+	}
+
+	function pickFolder() {
+		folderInput?.click();
+	}
+
+	async function rotatePreview(id: string) {
+		const res = await fetch('/api/media', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ action: 'rotate', id, degrees: 90 })
+		});
+		if (!res.ok) return;
+		const updated = parseMediaItem(await res.json());
+		if (updated) {
+			library.upsertMedia([updated]);
+			if (ui.preview?.id === id) ui.preview = updated;
+		}
+	}
+
+	async function trimPreview(id: string, start: number, end: number) {
+		const res = await fetch('/api/media', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ action: 'trim', id, start, end })
+		});
+		if (!res.ok) return;
+		const updated = parseMediaItem(await res.json());
+		if (updated) {
+			library.upsertMedia([updated]);
+			if (ui.preview?.id === id) ui.preview = updated;
+		}
+	}
+
+	async function cropPreview(
+		id: string,
+		box: { left: number; top: number; width: number; height: number; normalized: boolean }
+	) {
+		const res = await fetch('/api/media', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ action: 'crop', id, ...box })
+		});
+		if (!res.ok) return;
+		const updated = parseMediaItem(await res.json());
+		if (updated) {
+			library.upsertMedia([updated]);
+			if (ui.preview?.id === id) ui.preview = updated;
+		}
+	}
+
+	function openWatchFolderPrompt() {
+		promptKind = 'watch-folder';
+		ui.promptModalBusy = false;
+		ui.promptModalError = '';
+		ui.promptModal = {
+			open: true,
+			title: 'Watch folder',
+			label: 'Absolute folder path',
+			initialValue: '',
+			mediaId: null
+		};
+	}
+
+	async function runWatchFolder(path: string) {
+		const trimmed = path.trim();
+		if (!trimmed) {
+			ui.promptModalError = 'Folder path is required';
+			return;
+		}
+		ui.promptModalBusy = true;
+		ui.promptModalError = '';
+		try {
+			const res = await fetch('/api/watch', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ path: trimmed })
+			});
+			if (!res.ok) {
+				const body = await res.json().catch(() => ({}));
+				throw new Error(body.message || 'Watch failed');
+			}
+			ui.closePromptModal();
+			await scanWatched();
+		} catch (err) {
+			ui.promptModalError = err instanceof Error ? err.message : 'Watch failed';
+			ui.promptModalBusy = false;
+		}
+	}
+
+	async function scanWatched() {
+		const res = await fetch('/api/watch', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ action: 'scan' })
+		});
+		if (!res.ok) return;
+		const imported = parseImportedMedia(await res.json());
+		if (imported.length) {
+			library.prependMedia(imported);
+			await refreshAlbumsAndCounts();
+			ui.convertResultMessage =
+				imported.length === 1
+					? 'Watched folder imported 1 file.'
+					: `Watched folder imported ${imported.length} files.`;
 		}
 	}
 
@@ -693,7 +1006,10 @@
 					disabled: !ui.clipboard?.ids.length
 				},
 				{ id: 'upload', label: 'Upload…' },
-				{ id: 'import-folder', label: 'Import folder…' }
+				{ id: 'pick-folder', label: 'Pick folder…' },
+				{ id: 'import-folder', label: 'Import folder by path…' },
+				{ id: 'watch-folder', label: 'Watch folder…' },
+				{ id: 'library-health', label: 'Library health' }
 			];
 		}
 
@@ -719,17 +1035,20 @@
 			{ id: 'duplicate', label: count > 1 ? `Duplicate ${count}` : 'Duplicate' },
 			{ id: 'add-to-album', label: 'Add to album…' }
 		];
-		if (
-			library.activeAlbum !== null &&
-			library.activeAlbum !== 'all' &&
-			library.activeAlbum !== 'trash'
-		) {
+		if (!isSpecialLibraryFilter(library.activeAlbum) && library.activeAlbum !== null) {
 			items.push({ id: 'remove-from-album', label: 'Remove from album' });
+		}
+		if (parseTagFilterId(library.activeAlbum)) {
+			items.push({ id: 'remove-tag', label: 'Remove tag' });
 		}
 		items.push(
 			{ id: 'copy-name', label: single ? 'Copy name' : 'Copy names' },
 			{ id: 'rename', label: 'Rename', disabled: !single },
+			{ id: 'favorite', label: 'Favorite' },
+			{ id: 'assign-tag', label: 'Add tag…' },
+			{ id: 'assign-person', label: 'Add person…' },
 			{ id: 'download', label: count > 1 ? `Download ${count}` : 'Download' },
+			{ id: 'export-zip', label: 'Export zip' },
 			{
 				id: 'compress',
 				label: count > 1 ? `Compress ${count} (AV1/AVIF)` : 'Compress (AV1/AVIF)'
@@ -850,12 +1169,45 @@
 			openImportFolderPrompt();
 			return;
 		}
+		if (id === 'pick-folder') {
+			pickFolder();
+			return;
+		}
+		if (id === 'watch-folder') {
+			openWatchFolderPrompt();
+			return;
+		}
+		if (id === 'library-health') {
+			await showLibraryHealth();
+			return;
+		}
+		if (id === 'favorite') {
+			await setFavorite(ids, true);
+			return;
+		}
+		if (id === 'export-zip') {
+			const href = resolveMediaExportHref({
+				selectedIds: ids,
+				visibleIds: [],
+				activeAlbum: 'all'
+			});
+			if (href) window.location.href = href;
+			return;
+		}
+		if (id === 'assign-tag') {
+			openAssignPrompt(ids, 'tag');
+			return;
+		}
+		if (id === 'assign-person') {
+			openAssignPrompt(ids, 'person');
+			return;
+		}
+		if (id === 'remove-tag') {
+			await unassignCurrentTag(ids);
+			return;
+		}
 		if (id === 'remove-from-album') {
-			if (
-				library.activeAlbum !== null &&
-				library.activeAlbum !== 'all' &&
-				library.activeAlbum !== 'trash'
-			) {
+			if (!isSpecialLibraryFilter(library.activeAlbum) && library.activeAlbum !== null) {
 				await removeMediaFromAlbum(ids, library.activeAlbum);
 			}
 			return;
@@ -867,48 +1219,62 @@
 
 	function onKeydown(e: KeyboardEvent) {
 		const target = eventTargetHtml(e);
-		if (
-			target &&
-			(target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
-		) {
+		const action = resolveLibraryHotkey(
+			{ key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey },
+			{
+				inputFocused: Boolean(
+					target &&
+					(target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+				),
+				blocked: Boolean(
+					ui.albumPicker.open ||
+					ui.confirmModal.open ||
+					ui.promptModal.open ||
+					ui.profileModal.open ||
+					ui.preview
+				),
+				selectedCount: selection.selectedIds.size,
+				hasClipboard: Boolean(ui.clipboard?.ids.length)
+			}
+		);
+		if (!action) return;
+		e.preventDefault();
+		if (action.kind === 'undo') {
+			void undoLast();
 			return;
 		}
-		if (
-			ui.albumPicker.open ||
-			ui.confirmModal.open ||
-			ui.promptModal.open ||
-			ui.profileModal.open ||
-			ui.preview
-		) {
+		if (action.kind === 'select-all') {
+			selection.selectedIds.clear();
+			for (const item of library.filteredMedia) selection.selectedIds.add(item.id);
+			selection.selectionAnchor = library.filteredMedia[0]?.id ?? null;
+			selection.selectMode = selection.selectedIds.size > 0;
 			return;
 		}
-		const mod = e.ctrlKey || e.metaKey;
-		const key = e.key.toLowerCase();
-
-		if (mod && key === 'c' && selection.selectedIds.size > 0) {
-			e.preventDefault();
+		if (action.kind === 'copy') {
 			ui.setClipboard([...selection.selectedIds], 'copy');
 			return;
 		}
-		if (mod && key === 'x' && selection.selectedIds.size > 0) {
-			e.preventDefault();
+		if (action.kind === 'cut') {
 			ui.setClipboard([...selection.selectedIds], 'cut');
 			return;
 		}
-		if (mod && key === 'v' && ui.clipboard?.ids.length) {
-			e.preventDefault();
-			pasteClipboard();
+		if (action.kind === 'paste') {
+			void pasteClipboard();
 			return;
 		}
-		if (e.key === 'F2' && selection.selectedIds.size === 1) {
-			e.preventDefault();
-			renameMediaItem([...selection.selectedIds][0]);
+		if (action.kind === 'rename') {
+			const id = [...selection.selectedIds][0];
+			if (id) void renameMediaItem(id);
 			return;
 		}
-		if (e.key === 'Delete' && selection.selectedIds.size > 0) {
-			e.preventDefault();
-			deleteSelected();
+		if (action.kind === 'delete') {
+			void deleteSelected();
+			return;
 		}
+		const ids = library.filteredMedia.map((item) => item.id);
+		const currentId = selection.selectionAnchor ?? [...selection.selectedIds][0] ?? null;
+		const nextId = nextGridSelectionId(ids, currentId, prefs.columns, action.key);
+		if (nextId) selection.selectOnly(nextId);
 	}
 
 	function hasInternalDrag(_dt: DataTransfer | null) {
@@ -993,7 +1359,7 @@
 		});
 	}
 
-	async function restoreSelected(ids?: string[]) {
+	async function restoreSelected(ids?: string[], recordUndo = true) {
 		const targetIds = ids ?? [...selection.selectedIds];
 		if (!targetIds.length) return;
 		const res = await fetch('/api/media', {
@@ -1003,6 +1369,7 @@
 		});
 		if (res.ok) {
 			library.restoreFromTrash(parseOkMediaItems(await res.json()));
+			if (recordUndo) undo.push({ kind: 'restore', ids: targetIds });
 		}
 		for (const mid of targetIds) selection.selectedIds.delete(mid);
 		selection.selectionAnchor = null;
@@ -1022,7 +1389,7 @@
 		});
 	}
 
-	async function runDeleteMedia(ids: string[], permanent = false) {
+	async function runDeleteMedia(ids: string[], permanent = false, recordUndo = true) {
 		if (!ids.length) return;
 		const res = await fetch('/api/media', {
 			method: 'DELETE',
@@ -1037,6 +1404,7 @@
 			library.removeMediaIds(removed.length ? removed : ids);
 		} else {
 			library.moveToTrash(parseOkMediaItems(payload));
+			if (recordUndo) undo.push({ kind: 'trash', ids });
 		}
 		await refreshAlbumsAndCounts();
 	}
@@ -1092,6 +1460,20 @@
 	async function handlePromptModalSubmit(value: string) {
 		if (promptKind === 'import-folder') {
 			await runImportFolder(value);
+			return;
+		}
+		if (promptKind === 'watch-folder') {
+			await runWatchFolder(value);
+			return;
+		}
+		if (promptKind === 'assign-tag') {
+			await assignTagByName(assignTargetIds, value, 'tag');
+			ui.closePromptModal();
+			return;
+		}
+		if (promptKind === 'assign-person') {
+			await assignTagByName(assignTargetIds, value, 'person');
+			ui.closePromptModal();
 			return;
 		}
 		if (!ui.promptModal.mediaId) return;
@@ -1501,14 +1883,14 @@
 <svelte:window onkeydown={onKeydown} ondragend={onWindowDragEnd} />
 <svelte:document ondrop={onDocumentDrop} />
 
-{#if !library.activeProfile}
+{#if firstPaintShowsProfileGate(data.activeProfile)}
 	<ProfileGate
-		profiles={library.profiles}
+		profiles={data.profiles}
 		onselect={selectProfile}
 		oncreate={createProfile}
 		onpasscode={openPasscodeEditor}
 	/>
-{:else}
+{:else if library.activeProfile}
 	<div
 		class="bg-muted text-foreground flex h-screen"
 		ondragenter={onDragEnter}
@@ -1526,12 +1908,17 @@
 			trashCount={library.trashCount}
 			profile={library.activeProfile}
 			profiles={library.profiles}
+			tags={library.tags}
 			onselect={selectAlbumFilter}
 			oncreate={createAlbum}
 			ondelete={deleteAlbum}
 			onrename={renameAlbum}
 			onduplicate={duplicateAlbum}
 			onaddMedia={addMediaToAlbum}
+			oncreateTag={async (name, kind) => {
+				await createTag(name, kind);
+			}}
+			ondeleteTag={deleteTag}
 			onswitchProfile={switchProfileWithPrompt}
 			oncreateProfile={createProfileWithPrompt}
 			ondeleteProfile={deleteProfile}
@@ -1598,6 +1985,10 @@
 				onrestore={() => restoreSelected()}
 				onemptyTrash={emptyTrash}
 				onuploadClick={() => ui.fileInput?.click()}
+				onfolderClick={pickFolder}
+				onexport={exportCurrent}
+				onfavorite={toggleFavoriteSelected}
+				onhealth={showLibraryHealth}
 				ontheme={(t) => prefs.setTheme(t)}
 			/>
 
@@ -1638,30 +2029,22 @@
 					onpointercancel={onContentPointerCancel}
 					oncontextmenu={openEmptyContextMenu}
 				>
-					{#if library.filteredMedia.length === 0}
+					{#if library.activeAlbum === 'map'}
+						<MediaMap
+							items={library.filteredMedia}
+							selectedIds={selection.selectedIds}
+							onselect={handleSelect}
+							onopen={openMedia}
+						/>
+					{:else if library.filteredMedia.length === 0}
 						<div
 							class="text-muted-foreground flex h-full min-h-64 flex-col items-center justify-center text-center"
 						>
 							<p class="text-foreground/80 text-lg font-medium">
-								{prefs.searchQuery.trim()
-									? 'No matching media'
-									: library.activeAlbum === 'trash'
-										? 'Trash is empty'
-										: library.activeAlbum === null
-											? 'No unassigned media'
-											: 'No media yet'}
+								{emptyLibraryHeadline(prefs.searchQuery, library.activeAlbum)}
 							</p>
 							<p class="mt-1 max-w-sm text-sm">
-								{#if prefs.searchQuery.trim()}
-									Try a different search, or clear the search box.
-								{:else if library.activeAlbum === 'trash'}
-									Deleted items stay here for 30 days, then are removed forever on page load.
-								{:else if library.activeAlbum === null}
-									Upload files here, or remove items from albums to see them in Unassigned.
-								{:else}
-									Drag and drop pictures or videos here, or use Upload. Double-click an item to
-									expand it.
-								{/if}
+								{emptyLibraryDetail(prefs.searchQuery, library.activeAlbum)}
 							</p>
 						</div>
 					{:else if prefs.viewMode === 'grid'}
@@ -1722,7 +2105,21 @@
 		class="hidden"
 		onchange={(e) => {
 			const files = e.currentTarget.files;
-			if (files?.length) uploadFiles(files);
+			if (files?.length) void uploadFiles(files);
+			e.currentTarget.value = '';
+		}}
+	/>
+
+	<input
+		{@attach attachFolderInput}
+		type="file"
+		accept="image/*,video/*,.mp4,.m4v,.mov,.webm,.mkv"
+		multiple
+		webkitdirectory
+		class="hidden"
+		onchange={(e) => {
+			const files = e.currentTarget.files;
+			if (files?.length) void uploadFiles(files);
 			e.currentTarget.value = '';
 		}}
 	/>
@@ -1734,6 +2131,10 @@
 			onclose={() => (ui.preview = null)}
 			onnavigate={(next) => (ui.preview = next)}
 			onview={applyRecordedView}
+			onrotate={rotatePreview}
+			onfavorite={(id, favorite) => setFavorite([id], favorite)}
+			ontrim={trimPreview}
+			oncrop={cropPreview}
 		/>
 	{/if}
 

@@ -1,4 +1,4 @@
-import type { Album, LibraryAlbumFilter, MediaItem, Profile } from '$lib/types';
+import type { Album, LibraryAlbumFilter, MediaItem, Profile, Tag } from '$lib/types';
 import type { MediaListPage } from '$lib/media/page';
 import { emptyMediaListPage, MEDIA_PAGE_SIZE } from '$lib/media/page';
 import { mediaQueryAlbumId } from '$lib/media/filter';
@@ -17,6 +17,7 @@ export interface HomePageData {
 	totalCount: number;
 	unassignedCount: number;
 	pageSize: number;
+	tags: Tag[];
 }
 
 export interface HomePageLoadDeps {
@@ -28,6 +29,7 @@ export interface HomePageLoadDeps {
 	countTrashMedia: (profileId: string) => number;
 	countUnassignedMedia: (profileId: string) => number;
 	purgeExpiredTrash: (profileId: string) => void;
+	listTags?: (profileId: string) => Tag[];
 }
 
 export interface HomePageLoadOptions {
@@ -57,7 +59,8 @@ export function loadHomePageData(
 			trashLoaded: false,
 			totalCount: 0,
 			unassignedCount: 0,
-			pageSize: MEDIA_PAGE_SIZE
+			pageSize: MEDIA_PAGE_SIZE,
+			tags: []
 		};
 	}
 
@@ -83,7 +86,8 @@ export function loadHomePageData(
 		trashLoaded: false,
 		totalCount: deps.countAllMedia(activeProfile.id),
 		unassignedCount: deps.countUnassignedMedia(activeProfile.id),
-		pageSize: MEDIA_PAGE_SIZE
+		pageSize: MEDIA_PAGE_SIZE,
+		tags: deps.listTags ? deps.listTags(activeProfile.id) : []
 	};
 }
 
@@ -100,7 +104,8 @@ export function emptyHomePageData(profiles: Profile[] = []): HomePageData {
 		trashLoaded: false,
 		totalCount: 0,
 		unassignedCount: 0,
-		pageSize: MEDIA_PAGE_SIZE
+		pageSize: MEDIA_PAGE_SIZE,
+		tags: []
 	};
 }
 

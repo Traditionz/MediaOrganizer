@@ -83,10 +83,72 @@ describe('media filter', () => {
 		expect(pasteTargetAlbumId('trash')).toBeNull();
 	});
 
-	test('mediaQueryAlbumId maps nav filter for listMedia', () => {
+	test('filterMediaItems smart albums, tags, capture date, search haystack', () => {
+		resetMediaHelpers();
+		const now = Date.parse('2026-09-20T00:00:00Z');
+		const items = [
+			makeMediaItem({
+				id: 'fav',
+				favorite: true,
+				captured_at: '2026-09-19T00:00:00Z',
+				created_at: '2020-01-01T00:00:00Z',
+				camera_make: 'Canon',
+				gps_lat: 1,
+				gps_lng: 2,
+				tags: [{ id: 't1', name: 'beach', kind: 'tag' }],
+				album_names: ['Trip']
+			}),
+			makeMediaItem({
+				id: 'plain',
+				created_at: '2020-01-01T00:00:00Z',
+				content_hash: 'aaa',
+				tags: []
+			}),
+			makeMediaItem({
+				id: 'dupe',
+				created_at: '2020-01-01T00:00:00Z',
+				content_hash: 'aaa'
+			})
+		];
+		const prefs = {
+			searchQuery: '',
+			showImages: true,
+			showVideos: true,
+			dateFrom: '',
+			dateTo: ''
+		};
+		expect(filterMediaItems(items, 'favorites', prefs, now).map((i) => i.id)).toEqual(['fav']);
+		expect(filterMediaItems(items, 'map', prefs, now).map((i) => i.id)).toEqual(['fav']);
+		expect(filterMediaItems(items, 'untagged', prefs, now).map((i) => i.id)).toEqual([
+			'plain',
+			'dupe'
+		]);
+		expect(filterMediaItems(items, 'tag:t1', prefs, now).map((i) => i.id)).toEqual(['fav']);
+		expect(
+			filterMediaItems(items, 'duplicates', prefs, now)
+				.map((i) => i.id)
+				.sort()
+		).toEqual(['dupe', 'plain']);
+		expect(
+			filterMediaItems(items, 'all', { ...prefs, searchQuery: 'canon' }, now).map((i) => i.id)
+		).toEqual(['fav']);
+		expect(
+			filterMediaItems(items, 'all', { ...prefs, dateFrom: '2026-09-01' }, now).map((i) => i.id)
+		).toEqual(['fav']);
+	});
+
+	test('pasteTargetAlbumId ignores smart/tag filters', () => {
+		expect(pasteTargetAlbumId('favorites')).toBeNull();
+		expect(pasteTargetAlbumId('duplicates')).toBeNull();
+		expect(pasteTargetAlbumId('tag:x')).toBeNull();
+	});
+
+	test('mediaQueryAlbumId keeps smart ids', () => {
 		expect(mediaQueryAlbumId(null)).toBeNull();
 		expect(mediaQueryAlbumId('all')).toBe('all');
 		expect(mediaQueryAlbumId('trash')).toBe('all');
 		expect(mediaQueryAlbumId('album-1')).toBe('album-1');
+		expect(mediaQueryAlbumId('favorites')).toBe('favorites');
+		expect(mediaQueryAlbumId('duplicates')).toBe('duplicates');
 	});
 });
