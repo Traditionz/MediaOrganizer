@@ -6,6 +6,7 @@
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Spinner } from '$lib/components/ui/spinner/index.js';
 	import { beginMediaDrag, endInternalDrag, setCompactMediaDragImage } from '$lib/dragSession';
+	import { MEDIA_IDS_MIME } from '$lib/mediaDropTargets';
 	import { formatViewCount } from '$lib/media/views';
 	import { galleryStillSrc, galleryThumbUrl, isCurrentThumbSrc } from '$lib/media/thumbnail';
 	import { getAppState } from '$lib/state';
@@ -22,11 +23,10 @@
 		onclick?: (e: MouseEvent) => void;
 		ondblclick?: (e: MouseEvent) => void;
 		oncontextmenu?: (e: MouseEvent, item: MediaItem) => void;
+		onfavorite?: (id: string, favorite: boolean) => void;
 		style?: string;
 		variant?: 'grid' | 'collage';
 	}
-
-	const MEDIA_MIME = 'application/x-media-ids';
 
 	let {
 		item,
@@ -36,6 +36,7 @@
 		onclick,
 		ondblclick,
 		oncontextmenu,
+		onfavorite,
 		style = '',
 		variant = 'grid'
 	}: Props = $props();
@@ -67,6 +68,7 @@
 	let localThumb = $state(false);
 	let generatingThumbnail = $state(false);
 	let thumbStarted = false;
+	let cancelThumb: (() => void) | null = null;
 	let posterErrors = 0;
 	const MAX_POSTER_ERRORS = 2;
 	let imageThumbErrors = 0;
@@ -80,7 +82,7 @@
 		const selected = selectedIds ? Array.from(selectedIds) : [];
 		const ids = selected.length > 1 && selected.includes(item.id) ? selected : [item.id];
 		beginMediaDrag(ids);
-		e.dataTransfer.setData(MEDIA_MIME, JSON.stringify(ids));
+		e.dataTransfer.setData(MEDIA_IDS_MIME, JSON.stringify(ids));
 		e.dataTransfer.setData('text/plain', `media:${ids.join(',')}`);
 		e.dataTransfer.effectAllowed = 'copyMove';
 		dragging = true;
@@ -104,7 +106,8 @@
 		generatingThumbnail = true;
 
 		const mediaId = item.id;
-		enqueueThumbnailJob(async () => {
+		cancelThumb?.();
+		cancelThumb = enqueueThumbnailJob(mediaId, async () => {
 			try {
 				const ok = await requestServerThumbnail(mediaId);
 				if (!ok) return;
@@ -158,6 +161,8 @@
 
 		if (!needsThumb) {
 			return () => {
+				cancelThumb?.();
+				cancelThumb = null;
 				if (cardEl === node) cardEl = undefined;
 			};
 		}
@@ -169,6 +174,8 @@
 		if (!('IntersectionObserver' in globalThis)) {
 			runVisibleWork();
 			return () => {
+				cancelThumb?.();
+				cancelThumb = null;
 				if (cardEl === node) cardEl = undefined;
 			};
 		}
@@ -186,6 +193,8 @@
 
 		return () => {
 			io.disconnect();
+			cancelThumb?.();
+			cancelThumb = null;
 			if (cardEl === node) cardEl = undefined;
 		};
 	}
@@ -279,15 +288,32 @@
 		class:opacity-100={selected}
 	>
 		<p class="flex items-center gap-1 truncate text-xs font-medium">
-			{#if item.favorite}
-				<Heart class="size-3 shrink-0 fill-current" aria-hidden="true" />
+			{#if onfavorite}
+				<button
+					type="button"
+					class="pointer-events-auto relative z-10 shrink-0"
+					aria-label={item.favorite === true ? 'Unfavorite' : 'Favorite'}
+					aria-pressed={item.favorite === true}
+					onpointerdown={(e) => e.stopPropagation()}
+					onclick={(e) => {
+						e.stopPropagation();
+						onfavorite(item.id, !(item.favorite === true));
+					}}
+				>
+					<Heart
+						class={['size-3', item.favorite === true ? 'mo-favorite-icon' : null]}
+						aria-hidden="true"
+					/>
+				</button>
+			{:else if item.favorite}
+				<Heart class="mo-favorite-icon size-3 shrink-0" aria-hidden="true" />
 			{/if}
-			<span class="truncate">{item.original_name}</span>
+			<span class="min-w-0 truncate">{item.original_name}</span>
 		</p>
 		<div class="mt-1 flex items-center justify-between gap-2 text-[10px] text-white/70">
 			{#if showAlbumChip && albumLabel}
 				<Badge variant="secondary" class="max-w-[70%] truncate" title={albumTitle}>
-					{albumLabel}
+					<span class="truncate">{albumLabel}</span>
 				</Badge>
 			{:else}
 				<span></span>

@@ -154,6 +154,25 @@
 		-webkit-backdrop-filter: blur(10px) saturate(1.2);
 		backdrop-filter: blur(10px) saturate(1.2);
 	}
+	.mo-media-chip-active {
+		background: color-mix(in oklch, white 28%, transparent);
+		border-color: color-mix(in oklch, white 55%, transparent);
+		box-shadow:
+			0 0 0 1px color-mix(in oklch, white 35%, transparent),
+			0 1px 0 color-mix(in oklch, white 18%, transparent) inset;
+	}
+	/* Gold fill + black stroke — Favorites nav + favorited hearts */
+	.mo-favorite-icon {
+		color: #111111;
+		fill: #d4a017;
+		stroke: #111111;
+	}
+	.copyable-text {
+		user-select: text;
+		-webkit-user-select: text;
+		cursor: text;
+		pointer-events: auto;
+	}
 }
 
 html,

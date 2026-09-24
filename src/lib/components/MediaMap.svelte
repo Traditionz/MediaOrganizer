@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type { MediaItem } from '$lib/types';
 	import { mediaMapPoints } from '$lib/media/mercator';
-	import { SvelteMap } from 'svelte/reactivity';
 
 	interface Props {
 		items: MediaItem[];
@@ -14,7 +13,7 @@
 
 	const points = $derived(mediaMapPoints(items));
 	const byId = $derived.by(() => {
-		const map = new SvelteMap<string, MediaItem>();
+		const map = new Map<string, MediaItem>();
 		for (const item of items) map.set(item.id, item);
 		return map;
 	});
@@ -42,6 +41,7 @@
 				style:left="{point.x * 100}%"
 				style:top="{point.y * 100}%"
 				title="{item.original_name} ({point.lat.toFixed(3)}, {point.lng.toFixed(3)})"
+				aria-label="{item.original_name} at {point.lat.toFixed(3)}, {point.lng.toFixed(3)}"
 				onclick={(e) => onselect(item.id, e)}
 				ondblclick={() => onopen(item)}
 			></button>

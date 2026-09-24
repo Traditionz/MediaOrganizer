@@ -5,13 +5,14 @@ import {
 	addMediaToAlbum,
 	backfillMissingDurations,
 	compressMedia,
+	InvalidVideoError,
 	countAllMedia,
+	countFavoriteMedia,
 	countTrashMedia,
 	countUnassignedMedia,
 	deleteMedia,
 	duplicateMedia,
 	ensureImageThumbnail,
-	ensurePreviewThumbnail,
 	insertMediaFromStream,
 	getMediaMeta,
 	listMedia,
@@ -25,7 +26,7 @@ import {
 	softDeleteMedia,
 	updateMediaDuration
 } from '$lib/server/media';
-import { cropMediaImage, rotateMediaImage, trimMediaVideo } from '$lib/server/mediaEdit';
+import { cropMediaImage, rotateMediaImage } from '$lib/server/mediaEdit';
 import { importMediaFromFolder } from '$lib/server/folderImport';
 import { resolveProfileFromCookies } from '$lib/server/profileContext';
 import type { MediaType } from '$lib/types';
@@ -102,6 +103,7 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 		return json({
 			totalCount: countAllMedia(profile.id),
 			trashCount: countTrashMedia(profile.id),
+			favoritesCount: countFavoriteMedia(profile.id),
 			unassignedCount: countUnassignedMedia(profile.id)
 		});
 	}
@@ -190,6 +192,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				return json(created, { status: 201 });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : 'Failed to duplicate media';
+				if (err instanceof InvalidVideoError) throw error(400, message);
 				if (message.includes('not found')) throw error(404, message);
 				throw error(500, message);
 			}
@@ -234,6 +237,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			return json(item, { status: 201 });
 		} catch (err) {
 			const message = err instanceof Error ? err.message : 'Upload failed';
+			if (err instanceof InvalidVideoError) throw error(400, message);
 			if (message.includes('not found')) throw error(404, message);
 			throw error(500, message);
 		}
@@ -274,6 +278,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		return json(item, { status: 201 });
 	} catch (err) {
 		const message = err instanceof Error ? err.message : 'Upload failed';
+		if (err instanceof InvalidVideoError) throw error(400, message);
 		if (message.includes('not found')) throw error(404, message);
 		throw error(500, message);
 	}
@@ -337,6 +342,7 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 				results.push(await compressMedia(profile.id, id, { preset }));
 			} catch (err) {
 				const message = err instanceof Error ? err.message : 'Compress failed';
+				if (err instanceof InvalidVideoError) throw error(400, message);
 				if (message.includes('not found')) throw error(404, message);
 				throw error(500, message);
 			}
@@ -400,25 +406,6 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 			return json(requireMedia(profile.id, id));
 		} catch (err) {
 			const message = err instanceof Error ? err.message : 'Crop failed';
-			if (message.includes('not found') || message.includes('missing')) throw error(404, message);
-			if (message.includes('only for') || message.includes('Invalid')) throw error(400, message);
-			throw error(500, message);
-		}
-	}
-
-	if (action === 'trim') {
-		const id = body ? (ownString(body, 'id') ?? '') : '';
-		if (!id) throw error(400, 'Media id is required');
-		const start = ownNumber(body ?? {}, 'start') ?? 0;
-		const end = ownNumber(body ?? {}, 'end') ?? 0;
-		try {
-			await trimMediaVideo(profile.id, id, start, end);
-			await ensurePreviewThumbnail(profile.id, id);
-			const trimmed = getMediaMeta(profile.id, id);
-			if (!trimmed) throw error(404, 'Media not found');
-			return json(trimmed);
-		} catch (err) {
-			const message = err instanceof Error ? err.message : 'Trim failed';
 			if (message.includes('not found') || message.includes('missing')) throw error(404, message);
 			if (message.includes('only for') || message.includes('Invalid')) throw error(400, message);
 			throw error(500, message);

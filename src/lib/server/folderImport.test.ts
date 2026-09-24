@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { destroyProfileStorage, newId } from '$lib/server/db';
 import { DATA_DIR } from '$lib/server/dbUtil';
@@ -55,25 +55,14 @@ describe('folderImport', () => {
 
 		const first = await importMediaFromFolder(profileId, dir);
 		expect(first.imported.map((item) => item.original_name).sort()).toEqual(
-			[
-				'clip.mov',
-				'clip.mp4',
-				'clip.webm',
-				'shot.avif',
-				'shot.gif',
-				'shot.png',
-				'shot.webp',
-				'x.jpg'
-			].sort()
+			['shot.avif', 'shot.gif', 'shot.png', 'shot.webp', 'x.jpg'].sort()
 		);
 		expect(first.imported.find((item) => item.original_name === 'shot.png')?.mime_type).toBe(
 			'image/png'
 		);
-		expect(first.imported.find((item) => item.original_name === 'clip.webm')?.mime_type).toBe(
-			'video/webm'
-		);
-		expect(first.imported.find((item) => item.original_name === 'clip.mov')?.mime_type).toBe(
-			'video/quicktime'
+		// Fake video bytes fail ffmpeg validity and are reported, not imported.
+		expect(first.errors.map((err) => basename(err.path)).sort()).toEqual(
+			['clip.mov', 'clip.mp4', 'clip.webm'].sort()
 		);
 
 		writeFileSync(join(dir, 'copy.png'), 'png-bytes');

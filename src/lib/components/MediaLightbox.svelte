@@ -20,16 +20,26 @@
 		lightboxSlideY,
 		resolveLightboxNeighbor
 	} from '$lib/media/lightboxNav';
+	import {
+		lightboxActionChipClass,
+		lightboxFavoriteChipClass,
+		lightboxInfoChipClass,
+		LIGHTBOX_CLOSE_CHIP
+	} from '$lib/media/lightboxHud';
+	import { lightboxFitSize } from '$lib/media/lightboxFit';
 	import { eventTargetHtml } from '$lib/parse';
 	import { formatBytes, formatDate } from '$lib/utils';
 	import { mediaDateIso } from '$lib/media/captureDate';
 	import { fade, fly } from 'svelte/transition';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import ChevronUp from '@lucide/svelte/icons/chevron-up';
+	import Heart from '@lucide/svelte/icons/heart';
 	import MoveDiagonal2 from '@lucide/svelte/icons/move-diagonal-2';
+	import RotateCw from '@lucide/svelte/icons/rotate-cw';
 	import X from '@lucide/svelte/icons/x';
 	import CustomPlayer from './CustomPlayer.svelte';
 	import MediaLightboxInspector from './MediaLightboxInspector.svelte';
+	import CopyableText from './CopyableText.svelte';
 
 	interface Props {
 		item: MediaItem | null;
@@ -39,7 +49,6 @@
 		onview?: (id: string, count: number) => void;
 		onrotate?: (id: string) => void;
 		onfavorite?: (id: string, favorite: boolean) => void;
-		ontrim?: (id: string, start: number, end: number) => void;
 		oncrop?: (
 			id: string,
 			box: { left: number; top: number; width: number; height: number; normalized: boolean }
@@ -54,7 +63,6 @@
 		onview,
 		onrotate,
 		onfavorite,
-		ontrim,
 		oncrop
 	}: Props = $props();
 
@@ -64,8 +72,9 @@
 	let resizing = $state(false);
 	let resizeStart = $state<{ x: number; y: number; scale: number } | null>(null);
 	let enterY = $state(0);
-	let showInfo = $state(false);
+	let infoItemId = $state<string | null>(null);
 
+	const showInfo = $derived(item != null && infoItemId === item.id);
 	const currentIndex = $derived(item ? items.findIndex((entry) => entry.id === item.id) : -1);
 	const canPrev = $derived(lightboxCanPrev(currentIndex, items.length));
 	const canNext = $derived(lightboxCanNext(currentIndex, items.length));
@@ -106,32 +115,23 @@
 		};
 	}
 
-	const MIN_W = 280;
-
 	const albumSummary = $derived(
 		item?.album_names?.length ? item.album_names.join(', ') : 'Unassigned'
 	);
 
-	const aspect = $derived.by(() => {
-		if (intrinsic) return intrinsic.h / intrinsic.w;
-		if (item?.width && item.height && item.width > 0) return item.height / item.width;
-		return 9 / 16;
-	});
+	const fit = $derived(
+		lightboxFitSize({
+			intrinsicW: intrinsic?.w,
+			intrinsicH: intrinsic?.h,
+			itemW: item?.width,
+			itemH: item?.height,
+			maxW: browser ? Math.max(1, window.innerWidth - 48) : 900,
+			maxH: browser ? Math.max(1, window.innerHeight - 48) : 500
+		})
+	);
 
-	const fitSize = $derived.by(() => {
-		const maxW = browser ? window.innerWidth * 0.88 : 900;
-		const maxH = browser ? window.innerHeight * 0.86 : 500;
-		const srcW = intrinsic?.w ?? item?.width ?? 1280;
-		const srcH = intrinsic?.h ?? item?.height ?? Math.round(srcW * aspect);
-		const scale = Math.min(1, maxW / srcW, maxH / srcH);
-		return {
-			w: Math.max(MIN_W, Math.round(srcW * scale)),
-			h: Math.max(Math.round(MIN_W * aspect), Math.round(srcH * scale))
-		};
-	});
-
-	const videoWidth = $derived(Math.round(fitSize.w * userScale));
-	const videoHeight = $derived(Math.round(videoWidth * aspect));
+	const videoWidth = $derived(Math.round(fit.w * userScale));
+	const videoHeight = $derived(Math.round(fit.h * userScale));
 
 	function go(action: 'prev' | 'next' | 'first' | 'last') {
 		if (!item) return;
@@ -184,9 +184,9 @@
 		const dx = e.clientX - resizeStart.x;
 		const dy = e.clientY - resizeStart.y;
 		const delta = (dx + dy) / 2;
-		const next = resizeStart.scale + delta / fitSize.w;
+		const next = resizeStart.scale + delta / fit.w;
 		const maxScale = browser
-			? Math.min((window.innerWidth * 0.9) / fitSize.w, (window.innerHeight * 0.88) / fitSize.h)
+			? Math.min((window.innerWidth * 0.9) / fit.w, (window.innerHeight * 0.88) / fit.h)
 			: 1.4;
 		userScale = Math.min(maxScale, Math.max(0.55, next));
 	}
@@ -207,103 +207,134 @@
 <svelte:window {onkeydown} />
 
 {#snippet chrome(current: MediaItem)}
-	<div class="hud pointer-events-none absolute inset-0 z-20">
-		<div
-			class="mo-media-chip absolute top-2 left-2 max-w-[min(100%-3.5rem,28rem)] rounded-lg px-2.5 py-1.5"
-		>
-			<h2 class="truncate text-sm font-semibold">{current.original_name}</h2>
-			<p class="mt-0.5 truncate text-[11px] text-white/75">
-				{albumSummary} · {formatDate(mediaDateIso(current))} · {formatBytes(current.size)} · {formatViewCount(
-					current.view_count
-				)}
-				{#if positionLabel}
-					<span aria-live="polite"> · {positionLabel}</span>
-				{/if}
-			</p>
+	<!-- Dialog overlay. pointer-events none so the media stays clickable; each control opts back in. -->
+	<div class="pointer-events-none absolute inset-0 z-40">
+		<div class="pointer-events-auto absolute top-3 right-3 z-40 flex items-center gap-1.5">
+			{#if onfavorite}
+				<button
+					type="button"
+					class={lightboxFavoriteChipClass(current.favorite === true)}
+					onclick={() => onfavorite(current.id, !current.favorite)}
+					aria-label={current.favorite ? 'Unfavorite' : 'Favorite'}
+					aria-pressed={current.favorite}
+				>
+					<Heart class={['size-3.5', current.favorite ? 'mo-favorite-icon' : null]} />
+				</button>
+			{/if}
+			{#if current.media_type === 'image' && onrotate}
+				<button
+					type="button"
+					class={lightboxActionChipClass()}
+					onclick={() => onrotate(current.id)}
+					aria-label="Rotate"
+				>
+					<RotateCw class="size-3.5" />
+					<span>Rotate</span>
+				</button>
+			{/if}
+			<button
+				type="button"
+				class={lightboxInfoChipClass(showInfo)}
+				onclick={() => {
+					infoItemId = infoItemId === current.id ? null : current.id;
+				}}
+				aria-label="Info"
+				aria-pressed={showInfo}
+			>
+				Info
+			</button>
+			<button type="button" class={LIGHTBOX_CLOSE_CHIP} onclick={onclose} aria-label="Close">
+				<X class="size-4" />
+			</button>
 		</div>
-		<button
-			type="button"
-			class="mo-media-chip absolute top-2 right-2 flex size-8 items-center justify-center rounded-full"
-			onclick={onclose}
-			aria-label="Close"
-		>
-			<X class="size-4" />
-		</button>
-		<button
-			type="button"
-			class="mo-media-chip absolute top-2 right-12 flex h-8 items-center rounded-full px-2 text-xs"
-			onclick={() => (showInfo = !showInfo)}
-		>
-			Info
-		</button>
-		{#if current.media_type === 'image' && onrotate}
-			<button
-				type="button"
-				class="mo-media-chip absolute top-12 right-2 flex h-8 items-center rounded-full px-2 text-xs"
-				onclick={() => onrotate(current.id)}
-			>
-				Rotate
-			</button>
-		{/if}
-		{#if onfavorite}
-			<button
-				type="button"
-				class="mo-media-chip absolute top-12 right-24 flex h-8 items-center rounded-full px-2 text-xs"
-				onclick={() => onfavorite(current.id, !current.favorite)}
-			>
-				{current.favorite ? 'Unfavorite' : 'Favorite'}
-			</button>
-		{/if}
 		{#if showInfo}
 			<div
-				class="mo-media-chip pointer-events-auto absolute top-24 left-2 max-h-[60vh] max-w-sm overflow-auto rounded-lg px-3 py-2 text-left text-[11px] leading-5 text-white/90"
+				class="mo-media-chip pointer-events-auto absolute top-16 right-3 left-3 z-40 max-h-[min(60vh,calc(100%-4rem))] overflow-auto rounded-lg px-3 py-2.5 text-left text-[11px] leading-5 text-white/90 sm:right-auto sm:max-w-sm"
 			>
-				<p>Taken {formatDate(mediaDateIso(current))}</p>
-				<p>Added {formatDate(current.created_at)}</p>
-				{#if current.camera_make || current.camera_model}
-					<p>{[current.camera_make, current.camera_model].filter(Boolean).join(' ')}</p>
-				{/if}
-				{#if current.gps_lat != null && current.gps_lng != null}
-					<p>GPS {current.gps_lat.toFixed(5)}, {current.gps_lng.toFixed(5)}</p>
-				{/if}
-				{#if current.content_hash}
-					<p class="break-all">SHA-256 {current.content_hash}</p>
-				{/if}
-				{#if current.tags?.length}
-					<p>Tags {current.tags.map((t) => t.name).join(', ')}</p>
-				{/if}
-				<p>{current.mime_type} · {current.width ?? '?'}×{current.height ?? '?'}</p>
+				<CopyableText class="block">
+					<dl class="space-y-1.5">
+						<div class="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-2 gap-y-0.5">
+							<dt class="text-white/55">Name</dt>
+							<dd class="min-w-0 break-all">{current.original_name}</dd>
+							<dt class="text-white/55">Taken</dt>
+							<dd class="min-w-0">{formatDate(mediaDateIso(current))}</dd>
+							<dt class="text-white/55">Added</dt>
+							<dd class="min-w-0">{formatDate(current.created_at)}</dd>
+							{#if current.camera_make || current.camera_model}
+								<dt class="text-white/55">Camera</dt>
+								<dd class="min-w-0">
+									{[current.camera_make, current.camera_model].filter(Boolean).join(' ')}
+								</dd>
+							{/if}
+							{#if current.gps_lat != null && current.gps_lng != null}
+								<dt class="text-white/55">GPS</dt>
+								<dd class="min-w-0 tabular-nums">
+									{current.gps_lat.toFixed(5)}, {current.gps_lng.toFixed(5)}
+								</dd>
+							{/if}
+							{#if current.content_hash}
+								<dt class="text-white/55">SHA-256</dt>
+								<dd class="min-w-0 break-all">{current.content_hash}</dd>
+							{/if}
+							{#if current.tags?.length}
+								<dt class="text-white/55">Tags</dt>
+								<dd class="min-w-0">{current.tags.map((t) => t.name).join(', ')}</dd>
+							{/if}
+							<dt class="text-white/55">File</dt>
+							<dd class="min-w-0">
+								{current.mime_type} · {current.width ?? '?'}×{current.height ?? '?'}
+							</dd>
+						</div>
+					</dl>
+				</CopyableText>
 				{#key current.id}
-					<MediaLightboxInspector item={current} {oncrop} {ontrim} />
+					<MediaLightboxInspector item={current} {oncrop} />
 				{/key}
 			</div>
 		{/if}
-		{#if showNav}
-			<button
-				type="button"
-				class="mo-media-chip absolute top-2 left-1/2 z-20 flex size-9 -translate-x-1/2 items-center justify-center rounded-full disabled:opacity-25"
-				disabled={!canPrev}
-				onclick={() => go('prev')}
-				aria-label="Previous media"
+
+		<!-- Layer 2: hover-reveal chrome -->
+		<div class="hud pointer-events-none absolute inset-0 z-20">
+			<div
+				class="name-chip hud-fade mo-media-chip absolute top-2 left-2 max-w-[min(100%-5rem,28rem)] rounded-lg px-2.5 py-1.5"
 			>
-				<ChevronUp class="size-5" />
-			</button>
-			<button
-				type="button"
-				class="mo-media-chip absolute bottom-2 left-1/2 z-20 flex size-9 -translate-x-1/2 items-center justify-center rounded-full disabled:opacity-25"
-				disabled={!canNext}
-				onclick={() => go('next')}
-				aria-label="Next media"
-			>
-				<ChevronDown class="size-5" />
-			</button>
-		{/if}
+				<h2 class="truncate text-sm font-semibold">{current.original_name}</h2>
+				<p class="mt-0.5 truncate text-[11px] text-white/75">
+					{albumSummary} · {formatDate(mediaDateIso(current))} · {formatBytes(current.size)} · {formatViewCount(
+						current.view_count
+					)}
+					{#if positionLabel}
+						<span aria-live="polite"> · {positionLabel}</span>
+					{/if}
+				</p>
+			</div>
+			{#if showNav}
+				<button
+					type="button"
+					class="hud-fade hud-nav-btn mo-media-chip absolute top-2 left-1/2 flex size-8 -translate-x-1/2 items-center justify-center rounded-full disabled:opacity-25"
+					disabled={!canPrev}
+					onclick={() => go('prev')}
+					aria-label="Previous media"
+				>
+					<ChevronUp class="size-5" />
+				</button>
+				<button
+					type="button"
+					class="hud-fade hud-nav-btn mo-media-chip absolute bottom-2 left-1/2 flex size-8 -translate-x-1/2 items-center justify-center rounded-full disabled:opacity-25"
+					disabled={!canNext}
+					onclick={() => go('next')}
+					aria-label="Next media"
+				>
+					<ChevronDown class="size-5" />
+				</button>
+			{/if}
+		</div>
 	</div>
 {/snippet}
 
 {#if item}
 	<div
-		class="fixed inset-0 z-50 overflow-hidden bg-black/80"
+		class="lightbox fixed inset-0 z-50 overflow-hidden bg-black/80"
 		transition:fade={{ duration: 140 }}
 		role="dialog"
 		aria-modal="true"
@@ -314,22 +345,22 @@
 			{#key item.id}
 				<div class="slide-stage" in:fly={flyIn} out:fly={flyOut}>
 					{#if item.media_type === 'image'}
-						<div
-							class="frame relative inline-flex max-h-[86vh] max-w-[92vw] overflow-hidden rounded-lg"
-							data-lightbox-frame
-						>
+						<div class="frame relative inline-flex" data-lightbox-frame>
 							<img
 								{@attach attachImageDwell}
 								src={`/api/media/${item.id}`}
 								alt={item.original_name}
-								class="max-h-[86vh] max-w-[92vw] object-contain"
+								width={fit.w}
+								height={fit.h}
+								style:width={`${fit.w}px`}
+								style:height={`${fit.h}px`}
+								class="block max-w-none rounded-lg object-contain"
 							/>
-							{@render chrome(item)}
 						</div>
 					{:else}
 						<div
 							class={[
-								'frame video-resize relative overflow-hidden rounded-lg bg-black shadow-2xl',
+								'frame video-resize relative overflow-visible rounded-lg bg-black shadow-2xl',
 								resizing && 'is-resizing'
 							]}
 							style:width={`${videoWidth}px`}
@@ -341,6 +372,7 @@
 								src={`/api/media/${item.id}`}
 								mediaId={item.id}
 								onmetadata={(meta) => {
+									if (intrinsic?.w === meta.w && intrinsic?.h === meta.h) return;
 									intrinsic = { w: meta.w, h: meta.h };
 								}}
 								onwatchprogress={(watched, total) => {
@@ -358,12 +390,12 @@
 							>
 								<MoveDiagonal2 class="h-3 w-3" />
 							</button>
-							{@render chrome(item)}
 						</div>
 					{/if}
 				</div>
 			{/key}
 		</div>
+		{@render chrome(item)}
 	</div>
 {/if}
 
@@ -385,26 +417,26 @@
 	.slide-stage :global(.frame) {
 		pointer-events: auto;
 	}
-	.hud {
+
+	.hud-fade {
 		opacity: 0;
 		transition: opacity 150ms ease;
-	}
-	.hud :global(button) {
 		pointer-events: none;
 	}
-	.frame:hover .hud,
-	.frame:focus-within .hud,
-	.frame.is-resizing .hud {
+	.lightbox:hover .hud-fade,
+	.lightbox:focus-within .hud-fade,
+	.lightbox:has(.is-resizing) .hud-fade {
 		opacity: 1;
 	}
-	.frame:hover .hud :global(button),
-	.frame:focus-within .hud :global(button),
-	.frame.is-resizing .hud :global(button),
-	.frame:hover .hud-btn,
-	.frame:focus-within .hud-btn,
-	.frame.is-resizing .hud-btn {
+	.lightbox:hover .hud-nav-btn,
+	.lightbox:focus-within .hud-nav-btn,
+	.lightbox:has(.is-resizing) .hud-nav-btn,
+	.lightbox:hover .name-chip,
+	.lightbox:focus-within .name-chip,
+	.lightbox:has(.is-resizing) .name-chip {
 		pointer-events: auto;
 	}
+
 	.hud-btn {
 		opacity: 0;
 		pointer-events: none;
@@ -414,19 +446,22 @@
 	.frame:focus-within .hud-btn,
 	.frame.is-resizing .hud-btn {
 		opacity: 1;
+		pointer-events: auto;
 	}
+
 	@media (hover: none) {
-		.hud,
+		.hud-fade,
 		.hud-btn {
 			opacity: 1;
 		}
-		.hud :global(button),
-		.hud-btn {
+		:global(.hud-nav-btn),
+		.hud-btn,
+		.name-chip {
 			pointer-events: auto;
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.hud,
+		.hud-fade,
 		.hud-btn {
 			transition: none;
 		}

@@ -1,17 +1,7 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import type { PageData } from './$types';
 	import type { LibraryAlbumFilter, MediaItem } from '$lib/types';
-	import {
-		isSupportedMediaFile,
-		isVideoFile,
-		captureVideoThumbnail,
-		uploadVideoThumbnail,
-		requestServerThumbnail,
-		uploadMediaFile,
-		mapWithConcurrency,
-		isAbortError,
-		UPLOAD_CONCURRENCY
-	} from '$lib/utils';
 	import { invalidateAll } from '$app/navigation';
 	import AlbumSidebar from '$lib/components/AlbumSidebar.svelte';
 	import ProfileGate from '$lib/components/ProfileGate.svelte';
@@ -24,32 +14,23 @@
 	import MediaCollage from '$lib/components/MediaCollage.svelte';
 	import MediaLightbox from '$lib/components/MediaLightbox.svelte';
 	import MediaMap from '$lib/components/MediaMap.svelte';
-	import ContextMenu, { type ContextMenuItem } from '$lib/components/ContextMenu.svelte';
+	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import TransferPanel from '$lib/components/TransferPanel.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import { isInternalDragActive } from '$lib/dragSession';
-	import {
-		applyOsFileDragLeave,
-		nextOsFileDragEnterDepth,
-		resetOsFileDragDepth,
-		shouldShowOsFileDragOverlay,
-		type DragZoneHost
-	} from '$lib/dragUpload';
+	import { type DragZoneHost } from '$lib/dragUpload';
 	import { asFiniteNumber, asPlainObject, eventTargetHtml, own } from '$lib/parse';
+	import { isCopyableTextSelection, readTextSelection } from '$lib/media/copyableText';
 	import {
-		albumsWithoutId,
-		albumsWithUpsert,
-		existingIdsFromNameLookup,
-		parseAlbum,
 		parseImportedMedia,
 		parseMediaItem,
 		parseMediaItems,
 		parseOkMediaItems,
 		parseTag
 	} from '$lib/library/mutationHandlers';
-	import { UndoStack, invertUndo, type UndoAction } from '$lib/media/undo';
+	import { invertUndo, type UndoAction } from '$lib/media/undo';
 	import { resolveLibraryHotkey, nextGridSelectionId } from '$lib/media/libraryHotkeys';
 	import { isSpecialLibraryFilter, parseTagFilterId, tagFilterId } from '$lib/media/libraryNav';
 	import {
@@ -57,10 +38,9 @@
 		emptyLibraryDetail,
 		emptyLibraryHeadline,
 		formatLibraryHealth,
-		nextFavoriteFlag,
 		resolveMediaExportHref
 	} from '$lib/media/libraryUi';
-	import { parseIdsFromOk, type LibraryState } from '$lib/state/library.svelte';
+	import { parseIdsFromOk } from '$lib/state/library.svelte';
 	import { passcodePatchBody } from '$lib/profile/passcodeEdit';
 	import { profileDeleteNeedsConfirm } from '$lib/profile/deleteConfirm';
 	import {
@@ -68,14 +48,8 @@
 		idsIntersectingBox,
 		libraryCardLayouts
 	} from '$lib/media/virtualLayout';
-	import {
-		cardsInSelectionBox,
-		computeSelectionRect,
-		isTinyRect,
-		pointerPointInElement
-	} from '$lib/selection/geometry.js';
-	import type { SelectionRect } from '$lib/selection/geometry.js';
-	import { applyMarqueeHits, marqueeSelectionAnchor } from '$lib/selection/marquee.js';
+	import { MarqueeController, shouldStartMarquee } from '$lib/selection/marqueeController';
+	import { buildContextMenuItems } from '$lib/media/contextMenuItems';
 	import { fade } from 'svelte/transition';
 	import {
 		createAppState,
@@ -83,6 +57,7 @@
 		libraryLoadFromPageData,
 		setAppState
 	} from '$lib/state';
+	import { syncLibraryFromLoad } from '$lib/state/librarySync.svelte';
 	import type { MediaSortBy } from '$lib/media/sort.js';
 
 	interface Props {
@@ -94,17 +69,28 @@
 	// svelte-ignore state_referenced_locally
 	// Seed before first paint. $effect.pre handles later data updates; this read is the SSR snapshot.
 	const app = setAppState(createAppState(libraryLoadFromPageData(data)));
-	const { prefs, library, selection, ui } = app;
+	const { prefs, library, selection, ui, undo, albums, favorites, upload, osFileDrag } = app;
 
 	let durationBackfilledForProfile: string | null = null;
 	let selectionSurface = $state<HTMLElement | null>(null);
-	let marqueeAdditive = false;
-	let marqueeBaseIds: string[] = [];
+	const marquee = new MarqueeController(selection, (surface, box) => {
+		const host = surface.querySelector<HTMLElement>('[data-media-layout]');
+		if (!host) return null;
+		const width = host.clientWidth;
+		if (!(width > 0)) return null;
+		const layouts = libraryCardLayouts(
+			library.filteredMedia,
+			prefs.viewMode,
+			prefs.columns,
+			width,
+			MEDIA_LAYOUT_GAP
+		);
+		return idsIntersectingBox(layouts, box, host.offsetLeft, host.offsetTop);
+	});
 	let promptKind: 'rename' | 'import-folder' | 'watch-folder' | 'assign-tag' | 'assign-person' =
 		'rename';
 	let assignTargetIds: string[] = [];
 	let queryReloadTimer: ReturnType<typeof setTimeout> | null = null;
-	const undo = new UndoStack(30);
 	let folderInput = $state<HTMLInputElement | null>(null);
 
 	function attachFolderInput(node: HTMLInputElement) {
@@ -122,6 +108,16 @@
 		}, 200);
 	}
 
+	$effect(() => {
+		return () => {
+			if (queryReloadTimer) {
+				clearTimeout(queryReloadTimer);
+				queryReloadTimer = null;
+			}
+			app.dispose();
+		};
+	});
+
 	async function selectAlbumFilter(id: LibraryAlbumFilter) {
 		selection.selectedIds.clear();
 		selection.selectionAnchor = null;
@@ -135,7 +131,7 @@
 	}
 
 	async function refreshAlbumsAndCounts() {
-		await Promise.all([library.refreshAlbums(), library.refreshCounts(), library.refreshTags()]);
+		await app.refreshLibraryLists();
 	}
 
 	/** Keep marquee hit target at least viewport-tall so empty space below rows is draggable. */
@@ -169,15 +165,12 @@
 		return () => viewport.removeEventListener('scroll', onScroll);
 	});
 
-	$effect.pre(() => {
-		library.sync(libraryLoadFromPageData(data));
-	});
+	syncLibraryFromLoad(library, () => libraryLoadFromPageData(data));
 
 	$effect(() => {
 		const profileId = data.activeProfile?.id ?? null;
 		if (profileId && profileId !== durationBackfilledForProfile) {
 			durationBackfilledForProfile = profileId;
-			// Duration metadata only.
 			void (async () => {
 				try {
 					const res = await fetch('/api/media', {
@@ -185,10 +178,11 @@
 						headers: { 'Content-Type': 'application/json' },
 						body: JSON.stringify({ action: 'backfill-durations' })
 					});
-					if (!res.ok) return;
-					const summary = asPlainObject(await res.json());
-					const updated = summary ? asFiniteNumber(own(summary, 'updated')) : null;
-					if ((updated ?? 0) > 0) await library.reloadQuery();
+					if (res.ok) {
+						const summary = asPlainObject(await res.json());
+						const updated = summary ? asFiniteNumber(own(summary, 'updated')) : null;
+						if ((updated ?? 0) > 0) await library.reloadQuery();
+					}
 				} catch {
 					/* duration backfill optional */
 				}
@@ -199,7 +193,9 @@
 	$effect(() => {
 		const profileId = library.activeProfile?.id ?? null;
 		if (!profileId) return;
-		void scanWatched();
+		untrack(() => {
+			void scanWatched();
+		});
 		const timer = setInterval(() => {
 			void scanWatched();
 		}, WATCH_POLL_MS);
@@ -431,20 +427,7 @@
 	}
 
 	async function createAlbum(name: string) {
-		const res = await fetch('/api/albums', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name })
-		});
-		if (!res.ok) {
-			const body = await res.json().catch(() => ({}));
-			ui.errorMessage = body.message || 'Failed to create album';
-			throw new Error(ui.errorMessage);
-		}
-		const album = parseAlbum(await res.json());
-		if (album) library.replaceAlbums(albumsWithUpsert(library.albums, album));
-		else await library.refreshAlbums();
-		await library.refreshCounts();
+		await albums.createAlbum(name);
 	}
 
 	async function deleteAlbum(id: string) {
@@ -459,86 +442,27 @@
 	}
 
 	async function runDeleteAlbum(id: string) {
-		await fetch('/api/albums', {
-			method: 'DELETE',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ id })
-		});
-		library.replaceAlbums(albumsWithoutId(library.albums, id));
-		if (library.activeAlbum === id) {
-			library.setActiveAlbum('all');
-			await library.reloadQuery();
-		}
-		await refreshAlbumsAndCounts();
+		await albums.runDeleteAlbum(id);
 	}
 
 	async function renameAlbum(id: string, name: string) {
-		const res = await fetch('/api/albums', {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ id, name })
-		});
-		if (!res.ok) {
-			const body = await res.json().catch(() => ({}));
-			ui.errorMessage = body.message || 'Failed to rename album';
-			throw new Error(ui.errorMessage);
-		}
-		const album = parseAlbum(await res.json());
-		if (album) library.replaceAlbums(albumsWithUpsert(library.albums, album));
-		else await library.refreshAlbums();
+		await albums.renameAlbum(id, name);
 	}
 
 	async function duplicateAlbum(id: string) {
-		const res = await fetch('/api/albums', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ action: 'duplicate', id })
-		});
-		if (!res.ok) {
-			const body = await res.json().catch(() => ({}));
-			ui.errorMessage = body.message || 'Failed to duplicate album';
-			return;
-		}
-		const album = parseAlbum(await res.json());
-		if (album) library.replaceAlbums(albumsWithUpsert(library.albums, album));
-		else await library.refreshAlbums();
-		await library.refreshCounts();
+		await albums.duplicateAlbum(id);
+	}
+
+	function loadedMedia(ids: string[]): MediaItem[] {
+		return library.loadedMedia(ids);
 	}
 
 	async function addMediaToAlbum(ids: string[], albumId: string, recordUndo = true) {
-		if (!ids.length || !albumId) return;
-		const res = await fetch('/api/media', {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ action: 'add-to-album', ids, albumId })
-		});
-		if (res.ok) {
-			library.upsertMedia(parseOkMediaItems(await res.json()));
-			if (recordUndo) undo.push({ kind: 'album-add', ids, albumId });
-		}
-		selection.selectedIds.clear();
-		selection.selectionAnchor = null;
-		await refreshAlbumsAndCounts();
+		await albums.addMediaToAlbum(ids, albumId, recordUndo);
 	}
 
 	async function removeMediaFromAlbum(ids: string[], albumId: string, recordUndo = true) {
-		if (!ids.length || !albumId) return;
-		const res = await fetch('/api/media', {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ action: 'remove-from-album', ids, albumId })
-		});
-		if (res.ok) {
-			const items = parseOkMediaItems(await res.json());
-			library.upsertMedia(items);
-			if (recordUndo) undo.push({ kind: 'album-remove', ids, albumId });
-			if (library.activeAlbum === albumId) {
-				library.removeMediaIds(ids);
-			}
-		}
-		selection.selectedIds.clear();
-		selection.selectionAnchor = null;
-		await refreshAlbumsAndCounts();
+		await albums.removeMediaFromAlbum(ids, albumId, recordUndo);
 	}
 
 	async function duplicateMedia(
@@ -562,14 +486,14 @@
 	}
 
 	async function renameMediaItem(id: string) {
-		const item = library.media.find((m) => m.id === id);
+		const item = library.findKnown(id);
 		if (!item) return;
 		promptKind = 'rename';
 		ui.openRenamePrompt(id, item.original_name);
 	}
 
 	async function runRenameMediaItem(id: string, name: string) {
-		const item = library.media.find((m) => m.id === id);
+		const item = library.findKnown(id);
 		if (!item) return;
 		const trimmed = name.trim();
 		if (!trimmed || trimmed === item.original_name) {
@@ -647,8 +571,8 @@
 	}
 
 	async function copyMediaNames(ids: string[]) {
-		const names = ids
-			.map((id) => library.media.find((m) => m.id === id)?.original_name)
+		const names = loadedMedia(ids)
+			.map((item) => item.original_name)
 			.filter((n): n is string => Boolean(n));
 		if (!names.length) return;
 		try {
@@ -713,16 +637,7 @@
 	}
 
 	async function setFavorite(ids: string[], favorite: boolean, recordUndo = true) {
-		if (!ids.length) return;
-		const res = await fetch('/api/media', {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ action: 'favorite', ids, favorite })
-		});
-		if (res.ok) {
-			library.upsertMedia(parseOkMediaItems(await res.json()));
-			if (recordUndo) undo.push({ kind: 'favorite', ids, favorite });
-		}
+		await favorites.setFavorite(ids, favorite, recordUndo);
 	}
 
 	async function showLibraryHealth() {
@@ -840,10 +755,7 @@
 	async function toggleFavoriteSelected() {
 		const ids = [...selection.selectedIds];
 		if (!ids.length) return;
-		const items = ids
-			.map((id) => library.media.find((item) => item.id === id))
-			.filter((item): item is MediaItem => Boolean(item));
-		await setFavorite(ids, nextFavoriteFlag(items));
+		await favorites.toggle(ids);
 	}
 
 	function exportCurrent() {
@@ -864,20 +776,6 @@
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ action: 'rotate', id, degrees: 90 })
-		});
-		if (!res.ok) return;
-		const updated = parseMediaItem(await res.json());
-		if (updated) {
-			library.upsertMedia([updated]);
-			if (ui.preview?.id === id) ui.preview = updated;
-		}
-	}
-
-	async function trimPreview(id: string, start: number, end: number) {
-		const res = await fetch('/api/media', {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ action: 'trim', id, start, end })
 		});
 		if (!res.ok) return;
 		const updated = parseMediaItem(await res.json());
@@ -987,77 +885,16 @@
 		}
 	}
 
-	const contextMenuItems = $derived.by((): ContextMenuItem[] => {
-		if (ui.contextMenu.kind === 'empty') {
-			if (library.activeAlbum === 'trash') {
-				return [
-					{
-						id: 'empty-trash',
-						label: 'Empty trash',
-						danger: true,
-						disabled: library.trashCount === 0
-					}
-				];
-			}
-			return [
-				{
-					id: 'paste',
-					label: 'Paste',
-					disabled: !ui.clipboard?.ids.length
-				},
-				{ id: 'upload', label: 'Upload…' },
-				{ id: 'pick-folder', label: 'Pick folder…' },
-				{ id: 'import-folder', label: 'Import folder by path…' },
-				{ id: 'watch-folder', label: 'Watch folder…' },
-				{ id: 'library-health', label: 'Library health' }
-			];
-		}
-
-		const count = ui.contextMenu.mediaIds.length;
-		const single = count === 1;
-
-		if (library.activeAlbum === 'trash') {
-			return [
-				{ id: 'restore', label: count > 1 ? `Restore ${count}` : 'Restore' },
-				{ id: 'download', label: count > 1 ? `Download ${count}` : 'Download' },
-				{ id: 'sep-1', label: '', separator: true },
-				{
-					id: 'delete-forever',
-					label: count > 1 ? `Delete ${count} forever` : 'Delete forever',
-					danger: true
-				}
-			];
-		}
-
-		const items: ContextMenuItem[] = [
-			{ id: 'copy', label: count > 1 ? `Copy ${count} items` : 'Copy' },
-			{ id: 'cut', label: count > 1 ? `Cut ${count} items` : 'Cut' },
-			{ id: 'duplicate', label: count > 1 ? `Duplicate ${count}` : 'Duplicate' },
-			{ id: 'add-to-album', label: 'Add to album…' }
-		];
-		if (!isSpecialLibraryFilter(library.activeAlbum) && library.activeAlbum !== null) {
-			items.push({ id: 'remove-from-album', label: 'Remove from album' });
-		}
-		if (parseTagFilterId(library.activeAlbum)) {
-			items.push({ id: 'remove-tag', label: 'Remove tag' });
-		}
-		items.push(
-			{ id: 'copy-name', label: single ? 'Copy name' : 'Copy names' },
-			{ id: 'rename', label: 'Rename', disabled: !single },
-			{ id: 'favorite', label: 'Favorite' },
-			{ id: 'assign-tag', label: 'Add tag…' },
-			{ id: 'assign-person', label: 'Add person…' },
-			{ id: 'download', label: count > 1 ? `Download ${count}` : 'Download' },
-			{ id: 'export-zip', label: 'Export zip' },
-			{
-				id: 'compress',
-				label: count > 1 ? `Compress ${count} (AV1/AVIF)` : 'Compress (AV1/AVIF)'
-			},
-			{ id: 'sep-1', label: '', separator: true },
-			{ id: 'delete', label: 'Move to trash', danger: true }
-		);
-		return items;
-	});
+	const contextMenuItems = $derived(
+		buildContextMenuItems({
+			kind: ui.contextMenu.kind,
+			mediaIds: ui.contextMenu.mediaIds,
+			activeAlbum: library.activeAlbum,
+			trashCount: library.trashCount,
+			hasClipboard: Boolean(ui.clipboard?.ids.length),
+			favoriteItems: loadedMedia(ui.contextMenu.mediaIds)
+		})
+	);
 
 	function openMediaContextMenu(e: MouseEvent, item: MediaItem) {
 		e.preventDefault();
@@ -1182,7 +1019,7 @@
 			return;
 		}
 		if (id === 'favorite') {
-			await setFavorite(ids, true);
+			await favorites.toggle(ids);
 			return;
 		}
 		if (id === 'export-zip') {
@@ -1234,7 +1071,8 @@
 					ui.preview
 				),
 				selectedCount: selection.selectedIds.size,
-				hasClipboard: Boolean(ui.clipboard?.ids.length)
+				hasClipboard: Boolean(ui.clipboard?.ids.length),
+				textSelected: isCopyableTextSelection(readTextSelection())
 			}
 		);
 		if (!action) return;
@@ -1324,9 +1162,7 @@
 	const albumPickerMemberIds = $derived.by(() => {
 		const ids = ui.albumPicker.mediaIds;
 		if (!ids.length) return new Set<string>();
-		const items = ids
-			.map((id) => library.media.find((m) => m.id === id))
-			.filter((m): m is NonNullable<typeof m> => Boolean(m));
+		const items = loadedMedia(ids);
 		if (!items.length) return new Set<string>();
 		let shared = new Set(items[0].album_ids);
 		for (let i = 1; i < items.length; i++) {
@@ -1480,229 +1316,16 @@
 		await runRenameMediaItem(ui.promptModal.mediaId, value);
 	}
 
-	let uploadDuplicateResolver: ((uploadDuplicates: boolean | null) => void) | null = null;
-
 	function resolveUploadDuplicatePrompt(uploadDuplicates: boolean | null) {
-		const resolve = uploadDuplicateResolver;
-		uploadDuplicateResolver = null;
-		resolve?.(uploadDuplicates);
-	}
-
-	function askUploadDuplicates(duplicateNames: string[]): Promise<boolean | null> {
-		const sample = duplicateNames.slice(0, 5).join(', ');
-		const extra = duplicateNames.length > 5 ? ` and ${duplicateNames.length - 5} more` : '';
-		const message =
-			duplicateNames.length === 1
-				? `"${duplicateNames[0]}" is already in your library. Skip it, or upload another copy as a duplicate?`
-				: `${duplicateNames.length} files already exist by name (${sample}${extra}). Skip them, or upload as duplicates?`;
-
-		return new Promise((resolve) => {
-			uploadDuplicateResolver = resolve;
-			ui.openConfirmModal({
-				kind: 'upload-duplicates',
-				title: 'Duplicates found',
-				message,
-				confirmLabel: 'Skip duplicates',
-				cancelLabel: 'Upload as duplicates'
-			});
-		});
-	}
-
-	/** Existing library ids matching file names (case-insensitive, one id per name). */
-	function existingIdsForDuplicateFiles(
-		found: Awaited<ReturnType<LibraryState['lookupNames']>>,
-		files: File[]
-	): string[] {
-		return existingIdsFromNameLookup(
-			found,
-			files.map((file) => file.name)
-		);
+		upload.resolveDuplicatePrompt(uploadDuplicates);
 	}
 
 	async function uploadFiles(fileList: FileList | File[]) {
-		const files = [...fileList].filter(isSupportedMediaFile);
-		if (!files.length) {
-			ui.errorMessage = 'Only image and video files are supported.';
-			return;
-		}
-
-		const found = await library.lookupNames(files.map((file) => file.name));
-		const uniqueFiles: File[] = [];
-		const duplicateFiles: File[] = [];
-		const seenInBatch = new Set<string>();
-
-		for (const file of files) {
-			const key = file.name.toLowerCase();
-			if ((found[key]?.length ?? 0) > 0 || seenInBatch.has(key)) {
-				duplicateFiles.push(file);
-			} else {
-				uniqueFiles.push(file);
-				seenInBatch.add(key);
-			}
-		}
-
-		const albumId = library.pasteTargetAlbumId();
-		let filesToUpload = uniqueFiles;
-		let uploadDupes = false;
-
-		if (duplicateFiles.length) {
-			if (prefs.warnDuplicateUploads) {
-				const choice = await askUploadDuplicates([...new Set(duplicateFiles.map((f) => f.name))]);
-				if (choice == null) return;
-				uploadDupes = choice;
-				if (uploadDupes) filesToUpload = [...uniqueFiles, ...duplicateFiles];
-			} else {
-				// Amazon Photos–style: skip duplicates by default when warn is off
-				uploadDupes = false;
-			}
-		}
-
-		// Skipping duplicates into an album: link existing library items instead of re-uploading
-		if (duplicateFiles.length && !uploadDupes && albumId) {
-			const existingIds = existingIdsForDuplicateFiles(found, duplicateFiles);
-			if (existingIds.length) {
-				const res = await fetch('/api/media', {
-					method: 'PATCH',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ action: 'add-to-album', ids: existingIds, albumId })
-				});
-				if (res.ok) {
-					library.upsertMedia(parseOkMediaItems(await res.json()));
-					await refreshAlbumsAndCounts();
-				}
-			}
-		}
-
-		if (!filesToUpload.length) {
-			await refreshAlbumsAndCounts();
-			if (duplicateFiles.length) {
-				const linked = albumId ? existingIdsForDuplicateFiles(found, duplicateFiles).length : 0;
-				ui.convertResultMessage =
-					linked > 0
-						? `Skipped ${duplicateFiles.length} duplicate(s); added ${linked} existing item(s) to album.`
-						: `Skipped ${duplicateFiles.length} duplicate name(s).`;
-			} else {
-				ui.errorMessage = 'Nothing to upload.';
-			}
-			return;
-		}
-
-		const transferFiles = filesToUpload.map((file) => ({
-			id: crypto.randomUUID(),
-			name: file.name,
-			kind: isVideoFile(file) ? ('video' as const) : ('image' as const),
-			progress: 0,
-			loaded: 0,
-			total: file.size,
-			status: 'queued' as const
-		}));
-
-		const jobId = ui.beginTransfer({
-			kind: 'upload',
-			label: filesToUpload.length === 1 ? filesToUpload[0].name : `${filesToUpload.length} files`,
-			fileCount: filesToUpload.length,
-			files: transferFiles
-		});
-
-		const errors: string[] = [];
-		const signal = ui.transferSignal(jobId);
-
-		try {
-			await mapWithConcurrency(
-				filesToUpload,
-				UPLOAD_CONCURRENCY,
-				async (file, i) => {
-					if (signal?.aborted) return;
-					const fileId = transferFiles[i].id;
-					ui.setFileProgress(jobId, fileId, { status: 'uploading' });
-					try {
-						const uploaded = await uploadMediaFile(file, {
-							albumId,
-							signal,
-							onProgress: ({ pct, loaded, total }) => {
-								ui.setFileProgress(jobId, fileId, {
-									progress: pct,
-									loaded,
-									total,
-									status: pct >= 95 ? 'saving' : 'uploading'
-								});
-							}
-						});
-
-						if (signal?.aborted) return;
-
-						library.prependMedia([uploaded]);
-
-						if (uploaded.id) {
-							void (async () => {
-								let ok = false;
-								if (isVideoFile(file)) {
-									const blob = await captureVideoThumbnail(file);
-									if (blob) ok = await uploadVideoThumbnail(uploaded.id, blob);
-								}
-								if (!ok) ok = await requestServerThumbnail(uploaded.id);
-								if (ok) library.markHasThumbnail(uploaded.id);
-							})().catch(() => {
-								/* thumbnail backfill is optional */
-							});
-						}
-						ui.setFileProgress(jobId, fileId, {
-							progress: 100,
-							loaded: file.size,
-							total: file.size,
-							status: 'done'
-						});
-					} catch (err) {
-						if ((err instanceof Error && isAbortError(err)) || signal?.aborted) {
-							ui.setFileProgress(jobId, fileId, { status: 'cancelled' });
-							return;
-						}
-						const message = err instanceof Error ? err.message : `Failed to upload ${file.name}`;
-						ui.setFileProgress(jobId, fileId, { status: 'error', progress: 100, error: message });
-						errors.push(message);
-					}
-				},
-				signal
-			);
-
-			if (ui.isTransferCancelled(jobId) || signal?.aborted) {
-				/* cancelled series — skip error/success toasts */
-			} else if (errors.length) {
-				ui.errorMessage =
-					errors.length === 1
-						? errors[0]
-						: `${errors.length} of ${filesToUpload.length} uploads failed: ${errors[0]}`;
-			} else if (duplicateFiles.length && !uploadDupes) {
-				const linked = albumId ? existingIdsForDuplicateFiles(found, duplicateFiles).length : 0;
-				ui.convertResultMessage =
-					linked > 0
-						? `Uploaded ${uniqueFiles.length} file(s); skipped ${duplicateFiles.length} duplicate(s) and added ${linked} to album.`
-						: `Uploaded ${uniqueFiles.length} file(s); skipped ${duplicateFiles.length} duplicate name(s).`;
-			}
-		} catch (err) {
-			if (!(err instanceof Error && isAbortError(err)) && !signal?.aborted) {
-				ui.errorMessage = err instanceof Error ? err.message : 'Upload failed';
-			}
-		} finally {
-			void refreshAlbumsAndCounts().catch(() => {
-				/* list refresh is best-effort after upload */
-			});
-			if (ui.isTransferCancelled(jobId) || signal?.aborted) {
-				await new Promise((resolve) => setTimeout(resolve, 900));
-				ui.endTransfer(jobId);
-				return;
-			}
-			if (errors.length) return;
-			await new Promise((resolve) => setTimeout(resolve, 1400));
-			ui.endTransfer(jobId);
-		}
+		await upload.uploadFiles(fileList);
 	}
 
-	let osFileDragDepth = 0;
-
 	function clearOsFileDragOverlay() {
-		osFileDragDepth = resetOsFileDragDepth();
-		ui.dragOver = false;
+		osFileDrag.clear();
 	}
 
 	function dragZoneHost(target: EventTarget | null): DragZoneHost | null {
@@ -1719,8 +1342,7 @@
 		}
 		e.preventDefault();
 		if (!e.dataTransfer?.types.includes('Files')) return;
-		osFileDragDepth = nextOsFileDragEnterDepth(osFileDragDepth);
-		ui.dragOver = shouldShowOsFileDragOverlay(osFileDragDepth);
+		osFileDrag.enter(true);
 	}
 
 	function onDragOver(e: DragEvent) {
@@ -1734,13 +1356,7 @@
 
 	function onDragLeave(e: DragEvent) {
 		if (hasInternalDrag(e.dataTransfer)) return;
-		const result = applyOsFileDragLeave(
-			osFileDragDepth,
-			dragZoneHost(e.currentTarget),
-			e.relatedTarget
-		);
-		osFileDragDepth = result.depth;
-		if (result.clear) ui.dragOver = false;
+		osFileDrag.leave(dragZoneHost(e.currentTarget), e.relatedTarget);
 	}
 
 	async function onDrop(e: DragEvent) {
@@ -1766,113 +1382,28 @@
 	function onContentPointerDown(e: PointerEvent) {
 		if (e.button !== 0) return;
 		const target = eventTargetHtml(e);
-		if (!target) return;
-		if (target.closest('.media-card')) return;
-		if (target.closest('[data-slot="scroll-area-scrollbar"]')) return;
-
+		if (!shouldStartMarquee(target)) return;
 		const surface = e.currentTarget;
 		if (!(surface instanceof HTMLElement)) return;
-
 		e.preventDefault();
-		const point = pointerPointInElement(e, surface);
-		marqueeAdditive = e.ctrlKey || e.metaKey;
-		marqueeBaseIds = marqueeAdditive ? [...selection.selectedIds] : [];
-		selection.selecting = true;
-		selection.selStart = point;
-		selection.selCurrent = point;
-		surface.setPointerCapture(e.pointerId);
-	}
-
-	function marqueeHitsFromLayout(surface: HTMLElement, box: SelectionRect): string[] | null {
-		const host = surface.querySelector<HTMLElement>('[data-media-layout]');
-		if (!host) return null;
-		const width = host.clientWidth;
-		if (!(width > 0)) return null;
-		const layouts = libraryCardLayouts(
-			library.filteredMedia,
-			prefs.viewMode,
-			prefs.columns,
-			width,
-			MEDIA_LAYOUT_GAP
-		);
-		return idsIntersectingBox(layouts, box, host.offsetLeft, host.offsetTop);
-	}
-
-	function syncMarqueeSelection(surface: HTMLElement) {
-		const box = computeSelectionRect(true, selection.selStart, selection.selCurrent);
-		if (!box || isTinyRect(box.w, box.h)) {
-			if (!marqueeAdditive) {
-				selection.selectedIds.clear();
-				selection.selectionAnchor = null;
-				selection.selectMode = false;
-			}
-			return;
-		}
-
-		const hits = marqueeHitsFromLayout(surface, box) ?? cardsInSelectionBox(surface, box);
-		applyMarqueeHits(selection.selectedIds, hits, {
-			additive: marqueeAdditive,
-			baseIds: marqueeBaseIds
-		});
-		if (hits.length > 0 || (marqueeAdditive && marqueeBaseIds.length > 0)) {
-			selection.selectMode = true;
-		}
-		selection.selectionAnchor = marqueeSelectionAnchor(hits, selection.selectionAnchor);
+		marquee.pointerDown(e, surface);
 	}
 
 	function onContentPointerMove(e: PointerEvent) {
-		if (!selection.selecting) return;
 		const surface = e.currentTarget;
 		if (!(surface instanceof HTMLElement)) return;
-		selection.selCurrent = pointerPointInElement(e, surface);
-		syncMarqueeSelection(surface);
-	}
-
-	function finishMarqueeSelection(e: PointerEvent) {
-		if (!selection.selecting) return;
-		const surface = e.currentTarget;
-		if (!(surface instanceof HTMLElement)) return;
-
-		const box = computeSelectionRect(true, selection.selStart, selection.selCurrent);
-		selection.selecting = false;
-
-		try {
-			if (surface.hasPointerCapture(e.pointerId)) {
-				surface.releasePointerCapture(e.pointerId);
-			}
-		} catch {
-			/* ignore */
-		}
-
-		if (!box || isTinyRect(box.w, box.h)) {
-			if (!(e.ctrlKey || e.metaKey)) {
-				selection.selectedIds.clear();
-				selection.selectionAnchor = null;
-				selection.selectMode = false;
-			}
-			return;
-		}
-
-		syncMarqueeSelection(surface);
+		marquee.pointerMove(e, surface);
 	}
 
 	function onContentPointerUp(e: PointerEvent) {
-		finishMarqueeSelection(e);
+		const surface = e.currentTarget;
+		if (!(surface instanceof HTMLElement)) return;
+		marquee.finish(e, surface);
 	}
 
 	function onContentPointerCancel(e: PointerEvent) {
-		if (!selection.selecting) return;
 		const surface = e.currentTarget;
-		selection.selecting = false;
-		if (surface instanceof HTMLElement) {
-			try {
-				if (surface.hasPointerCapture(e.pointerId)) {
-					surface.releasePointerCapture(e.pointerId);
-				}
-			} catch {
-				/* ignore */
-			}
-		}
+		marquee.cancel(e, surface instanceof HTMLElement ? surface : null);
 	}
 </script>
 
@@ -1906,6 +1437,7 @@
 			totalCount={library.totalCount}
 			unassignedCount={library.unassignedCount}
 			trashCount={library.trashCount}
+			favoritesCount={library.favoritesCount}
 			profile={library.activeProfile}
 			profiles={library.profiles}
 			tags={library.tags}
@@ -1915,6 +1447,12 @@
 			onrename={renameAlbum}
 			onduplicate={duplicateAlbum}
 			onaddMedia={addMediaToAlbum}
+			onfavoriteMedia={async (ids) => {
+				await favorites.toggle(ids);
+			}}
+			ontrashMedia={async (ids) => {
+				await runDeleteMedia(ids, false);
+			}}
 			oncreateTag={async (name, kind) => {
 				await createTag(name, kind);
 			}}
@@ -2056,6 +1594,7 @@
 							onselect={handleSelect}
 							onopen={openMedia}
 							oncontextmenu={openMediaContextMenu}
+							onfavorite={(id, favorite) => setFavorite([id], favorite)}
 						/>
 					{:else}
 						<MediaCollage
@@ -2066,6 +1605,7 @@
 							onselect={handleSelect}
 							onopen={openMedia}
 							oncontextmenu={openMediaContextMenu}
+							onfavorite={(id, favorite) => setFavorite([id], favorite)}
 						/>
 					{/if}
 
@@ -2133,7 +1673,6 @@
 			onview={applyRecordedView}
 			onrotate={rotatePreview}
 			onfavorite={(id, favorite) => setFavorite([id], favorite)}
-			ontrim={trimPreview}
 			oncrop={cropPreview}
 		/>
 	{/if}

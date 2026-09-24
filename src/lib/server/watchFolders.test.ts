@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { destroyProfileStorage, newId } from '$lib/server/db';
 import { DATA_DIR } from '$lib/server/dbUtil';
 import { resetNameCryptoKeyCache } from '$lib/server/nameCrypto';
@@ -69,8 +69,10 @@ describe('watchFolders', () => {
 
 		const folder = addWatchedFolder(profileId, dir, false);
 		const first = await scanWatchedFolders(profileId);
-		expect(first.imported.map((item) => item.original_name).sort()).toEqual(
-			['a.png', 'clip.mov', 'clip.webm'].sort()
+		expect(first.imported.map((item) => item.original_name)).toEqual(['a.png']);
+		// Fake video bytes fail ffmpeg validity and are reported, not imported.
+		expect(first.errors.map((err) => basename(err.path)).sort()).toEqual(
+			['clip.mov', 'clip.webm'].sort()
 		);
 		expect(first.imported.some((item) => item.original_name === 'hidden.jpg')).toBe(false);
 

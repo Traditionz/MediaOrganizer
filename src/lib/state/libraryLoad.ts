@@ -8,6 +8,7 @@ export type LibraryLoad = {
 	mediaHasMore?: boolean;
 	trash?: MediaItem[];
 	trashCount?: number;
+	favoritesCount?: number;
 	trashLoaded?: boolean;
 	totalCount: number;
 	unassignedCount?: number;
@@ -25,6 +26,7 @@ export type LibraryPageSnapshot = {
 	mediaHasMore: boolean;
 	trash: MediaItem[];
 	trashCount: number;
+	favoritesCount: number;
 	trashLoaded: boolean;
 	totalCount: number;
 	unassignedCount: number;
@@ -43,6 +45,7 @@ export function libraryLoadFromPageData(data: LibraryPageSnapshot): LibraryLoad 
 		mediaHasMore: data.mediaHasMore,
 		trash: data.trash,
 		trashCount: data.trashCount,
+		favoritesCount: data.favoritesCount,
 		trashLoaded: data.trashLoaded,
 		totalCount: data.totalCount,
 		unassignedCount: data.unassignedCount,

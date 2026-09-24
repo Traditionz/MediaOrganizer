@@ -1,17 +1,9 @@
 import { existsSync, renameSync, statSync, unlinkSync } from 'node:fs';
-import { extname } from 'node:path';
 import sharp from 'sharp';
-import {
-	clampCrop,
-	clampTrim,
-	isRotateDegrees,
-	rotateSize
-} from '$lib/media/editGeometry';
+import { clampCrop, isRotateDegrees, rotateSize } from '$lib/media/editGeometry';
 import { filePathForKey, getProfileDb, tmpPathForKey } from './db';
 import { media } from './schema';
 import { eq } from 'drizzle-orm';
-import { runFfmpeg } from './ffmpegMeta';
-import { probeFfmpegMeta } from './ffmpegMeta';
 
 export type MediaEditResult = {
 	width: number | null;
@@ -108,40 +100,4 @@ export async function cropMediaImage(
 		.run();
 	clearThumb(profileId, row.thumbnailKey);
 	return { width: box.width, height: box.height, duration: row.duration, size };
-}
-
-export async function trimMediaVideo(
-	profileId: string,
-	id: string,
-	start: number,
-	end: number
-): Promise<MediaEditResult> {
-	const { row, path, db } = requireRow(profileId, id);
-	if (row.mediaType !== 'video') throw new Error('Trim is only for videos');
-	const duration =
-		row.duration && row.duration > 0 ? row.duration : ((await probeFfmpegMeta(path)).duration ?? 0);
-	const range = clampTrim(start, end, duration);
-	if (!range) throw new Error('Invalid trim range');
-	const tmp = tmpPathForKey(profileId, `${id}.trim.tmp${extname(path) || '.mp4'}`);
-	await runFfmpeg([
-		'-y',
-		'-ss',
-		String(range.start),
-		'-to',
-		String(range.end),
-		'-i',
-		path,
-		'-c',
-		'copy',
-		tmp
-	]);
-	swapFile(tmp, path);
-	const size = statSync(path).size;
-	const nextDuration = range.end - range.start;
-	db.update(media)
-		.set({ size, duration: nextDuration, thumbnailKey: null })
-		.where(eq(media.id, id))
-		.run();
-	clearThumb(profileId, row.thumbnailKey);
-	return { width: row.width, height: row.height, duration: nextDuration, size };
 }

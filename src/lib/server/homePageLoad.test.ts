@@ -53,6 +53,9 @@ describe('loadHomePageData', () => {
 			countTrashMedia: () => {
 				throw new Error('should not count trash');
 			},
+			countFavoriteMedia: () => {
+				throw new Error('should not count favorites');
+			},
 			countUnassignedMedia: () => {
 				throw new Error('should not count unassigned');
 			},
@@ -90,6 +93,7 @@ describe('loadHomePageData', () => {
 			},
 			countAllMedia: (id) => (id === 'p1' ? 2 : 0),
 			countTrashMedia: (id) => (id === 'p1' ? 2 : 0),
+			countFavoriteMedia: () => 0,
 			countUnassignedMedia: (id) => (id === 'p1' ? 1 : 0),
 			purgeExpiredTrash: () => {}
 		});
@@ -101,6 +105,7 @@ describe('loadHomePageData', () => {
 		expect(data.mediaTotal).toBe(1);
 		expect(data.totalCount).toBe(2);
 		expect(data.unassignedCount).toBe(1);
+		expect(data.favoritesCount).toBe(0);
 		expect(data.media.some((m) => m.album_ids.length > 0)).toBe(false);
 	});
 
@@ -118,6 +123,7 @@ describe('loadHomePageData', () => {
 				},
 				countAllMedia: () => 1,
 				countTrashMedia: () => 0,
+				countFavoriteMedia: () => 0,
 				countUnassignedMedia: () => 0,
 				purgeExpiredTrash: () => {}
 			},
@@ -137,6 +143,7 @@ describe('loadHomePageData', () => {
 			listMedia: () => mediaListPageFromItems([], 0, 0, MEDIA_PAGE_SIZE),
 			countAllMedia: () => 0,
 			countTrashMedia: () => 0,
+			countFavoriteMedia: () => 3,
 			countUnassignedMedia: () => 0,
 			purgeExpiredTrash: () => {},
 			listTags: () => [{ id: 't1', name: 'Ada', kind: 'person', created_at: '2026-01-01' }]
@@ -144,11 +151,13 @@ describe('loadHomePageData', () => {
 		expect(data.tags).toEqual([
 			{ id: 't1', name: 'Ada', kind: 'person', created_at: '2026-01-01' }
 		]);
+		expect(data.favoritesCount).toBe(3);
 	});
 
 	test('emptyHomePageData keeps tags empty', () => {
 		expect(emptyHomePageData([profile]).profiles).toEqual([profile]);
 		expect(emptyHomePageData().tags).toEqual([]);
 		expect(emptyHomePageData().activeProfile).toBeNull();
+		expect(emptyHomePageData().favoritesCount).toBe(0);
 	});
 });

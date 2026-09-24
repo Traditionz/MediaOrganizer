@@ -32,4 +32,30 @@ describe('dragSession', () => {
 		expect(isInternalDragActive()).toBe(false);
 		expect(getInternalDrag()).toBeNull();
 	});
+
+	test('window dragend ends session after card unmount', () => {
+		const listeners = new Map<string, EventListener>();
+		const host = globalThis as typeof globalThis & { window?: Window };
+		const previous = host.window;
+		host.window = {
+			addEventListener(type: string, fn: EventListenerOrEventListenerObject) {
+				if (typeof fn === 'function') listeners.set(type, fn);
+			},
+			removeEventListener(type: string) {
+				listeners.delete(type);
+			}
+		} as Window;
+		try {
+			beginMediaDrag(['a']);
+			expect(isInternalDragActive()).toBe(true);
+			expect(listeners.has('dragend')).toBe(true);
+			expect(listeners.has('drop')).toBe(true);
+			listeners.get('dragend')?.(new Event('dragend'));
+			expect(isInternalDragActive()).toBe(false);
+			expect(listeners.size).toBe(0);
+		} finally {
+			if (previous) host.window = previous;
+			else delete host.window;
+		}
+	});
 });

@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type { MediaItem } from '$lib/types';
 	import { appDefaults } from '$lib/config/defaults';
-	import { SvelteMap } from 'svelte/reactivity';
 	import {
 		MEDIA_LAYOUT_GAP,
 		MEDIA_OVERSCAN_PX,
@@ -22,6 +21,7 @@
 		onselect: (id: string, event: MouseEvent) => void;
 		onopen: (item: MediaItem) => void;
 		oncontextmenu?: (e: MouseEvent, item: MediaItem) => void;
+		onfavorite?: (id: string, favorite: boolean) => void;
 	}
 
 	let {
@@ -31,7 +31,8 @@
 		columns = appDefaults.columns,
 		onselect,
 		onopen,
-		oncontextmenu
+		oncontextmenu,
+		onfavorite
 	}: Props = $props();
 
 	let width = $state(1200);
@@ -51,7 +52,7 @@
 		)
 	);
 	const itemById = $derived.by(() => {
-		const map = new SvelteMap<string, MediaItem>();
+		const map = new Map<string, MediaItem>();
 		for (const item of items) map.set(item.id, item);
 		return map;
 	});
@@ -93,6 +94,7 @@
 						onopen(item);
 					}}
 					{oncontextmenu}
+					{onfavorite}
 				/>
 			</div>
 		{/if}

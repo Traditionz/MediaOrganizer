@@ -40,6 +40,18 @@ describe('resolveLibraryHotkey', () => {
 		expect(resolveLibraryHotkey({ key: 'c', ctrlKey: true, metaKey: false }, idle)).toBeNull();
 		expect(
 			resolveLibraryHotkey(
+				{ key: 'c', ctrlKey: true, metaKey: false },
+				{ ...idle, selectedCount: 1, textSelected: true }
+			)
+		).toBeNull();
+		expect(
+			resolveLibraryHotkey(
+				{ key: 'a', ctrlKey: true, metaKey: false },
+				{ ...idle, textSelected: true }
+			)
+		).toBeNull();
+		expect(
+			resolveLibraryHotkey(
 				{ key: 'x', ctrlKey: true, metaKey: false },
 				{ ...idle, selectedCount: 2 }
 			)

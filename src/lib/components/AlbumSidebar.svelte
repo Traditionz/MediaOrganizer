@@ -23,7 +23,13 @@
 	import type { Album, LibraryAlbumFilter, Profile, Tag } from '$lib/types';
 	import { tagFilterId } from '$lib/media/libraryNav';
 	import { endInternalDrag, getInternalDrag, isInternalDragActive } from '$lib/dragSession';
-	import { asString, eventHtml, parseJsonText } from '$lib/parse';
+	import {
+		MEDIA_IDS_MIME,
+		dropEffectForTarget,
+		resolveMediaIdsFromDrop,
+		type DropEffect
+	} from '$lib/mediaDropTargets';
+	import { eventHtml } from '$lib/parse';
 	import ContextMenu, { type ContextMenuItem } from './ContextMenu.svelte';
 
 	interface Props {
@@ -32,6 +38,7 @@
 		totalCount: number;
 		unassignedCount: number;
 		trashCount: number;
+		favoritesCount?: number;
 		profile: Profile;
 		profiles: Profile[];
 		profileBusy?: boolean;
@@ -41,6 +48,8 @@
 		onrename: (id: string, name: string) => Promise<void>;
 		onduplicate: (id: string) => Promise<void>;
 		onaddMedia: (ids: string[], albumId: string) => Promise<void>;
+		onfavoriteMedia?: (ids: string[]) => Promise<void>;
+		ontrashMedia?: (ids: string[]) => Promise<void>;
 		onswitchProfile: (id: string) => Promise<void>;
 		oncreateProfile: (name: string) => Promise<void>;
 		ondeleteProfile: (id: string) => Promise<void>;
@@ -51,14 +60,13 @@
 		ondeleteTag?: (id: string) => Promise<void>;
 	}
 
-	const MEDIA_MIME = 'application/x-media-ids';
-
 	let {
 		albums,
 		activeAlbum,
 		totalCount,
 		unassignedCount,
 		trashCount,
+		favoritesCount = 0,
 		profile,
 		profiles,
 		profileBusy: profileBusyProp = false,
@@ -68,6 +76,8 @@
 		onrename,
 		onduplicate,
 		onaddMedia,
+		onfavoriteMedia,
+		ontrashMedia,
 		onswitchProfile,
 		oncreateProfile,
 		ondeleteProfile,
@@ -312,17 +322,17 @@
 		return hasFiles && !isInternalDragActive();
 	}
 
-	function onDragOverTarget(e: DragEvent, target: string) {
+	function onDragOverTarget(e: DragEvent, target: string, effect?: DropEffect) {
 		if (isOsFileOnly(e.dataTransfer)) return;
 		if (
 			!isInternalDragActive() &&
-			!(e.dataTransfer && [...e.dataTransfer.types].includes(MEDIA_MIME))
+			!(e.dataTransfer && [...e.dataTransfer.types].includes(MEDIA_IDS_MIME))
 		) {
 			return;
 		}
 		e.preventDefault();
 		e.stopPropagation();
-		if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+		if (e.dataTransfer) e.dataTransfer.dropEffect = effect ?? dropEffectForTarget(target);
 		dropTarget = target;
 	}
 
@@ -335,19 +345,11 @@
 		}
 	}
 
-	function parseIdList(raw: string): string[] {
-		try {
-			const parsed = parseJsonText(raw);
-			if (!Array.isArray(parsed)) return [];
-			const ids: string[] = [];
-			for (const item of parsed) {
-				const id = asString(item);
-				if (id) ids.push(id);
-			}
-			return ids;
-		} catch {
-			return [];
-		}
+	function resolveDroppedMediaIds(e: DragEvent): string[] {
+		const session = getInternalDrag();
+		const sessionIds = session?.kind === 'media' ? session.mediaIds : null;
+		const dt = e.dataTransfer;
+		return resolveMediaIdsFromDrop(sessionIds, dt ? (type) => dt.getData(type) : null);
 	}
 
 	async function onDropTarget(e: DragEvent, albumId: string) {
@@ -360,23 +362,28 @@
 		e.stopPropagation();
 		dropTarget = null;
 
-		let ids = session?.kind === 'media' ? session.mediaIds : [];
-		if (!ids.length && dt) {
-			ids = parseIdList(dt.getData(MEDIA_MIME));
-			if (!ids.length) {
-				const plain = dt.getData('text/plain');
-				if (plain.startsWith('media:')) {
-					ids = plain
-						.slice('media:'.length)
-						.split(',')
-						.map((s) => s.trim())
-						.filter(Boolean);
-				}
-			}
-		}
+		const ids = resolveDroppedMediaIds(e);
 		// End session before await so dragend / UI class clears even if request hangs.
 		endInternalDrag();
 		if (ids.length) await onaddMedia(ids, albumId);
+	}
+
+	async function onDropQuickAction(
+		e: DragEvent,
+		action: ((ids: string[]) => Promise<void>) | undefined
+	) {
+		if (isOsFileOnly(e.dataTransfer)) return;
+		const session = getInternalDrag();
+		const dt = e.dataTransfer;
+		if (!session && !dt) return;
+
+		e.preventDefault();
+		e.stopPropagation();
+		dropTarget = null;
+
+		const ids = resolveDroppedMediaIds(e);
+		endInternalDrag();
+		if (ids.length && action) await action(ids);
 	}
 
 	function dropHighlight(target: string) {
@@ -496,6 +503,8 @@
 							size="sm"
 							class="h-auto w-full justify-between gap-2 px-2 py-1.5 font-normal"
 							disabled={isBusy}
+							aria-haspopup="menu"
+							aria-expanded={profileMenuOpen}
 						>
 							<span class="flex min-w-0 items-center gap-2">
 								<User class="text-muted-foreground h-4 w-4 shrink-0" />
@@ -608,32 +617,67 @@
 				<Badge variant="secondary" class="ml-auto">{unassignedCount}</Badge>
 			</Button>
 
-			<Button
-				type="button"
-				variant="ghost"
-				class={[
-					'mt-1 w-full justify-start gap-2 font-medium',
-					activeAlbum === 'trash' && 'bg-accent text-accent-foreground'
-				]}
-				onclick={() => onselect('trash')}
-			>
-				<Trash2 class="h-5 w-5" />
-				Trash
-				<Badge variant="secondary" class="ml-auto">{trashCount}</Badge>
-			</Button>
+			<div class="border-border mt-2 rounded-lg border p-1">
+				<div
+					class={[
+						'album-drop-row rounded-lg',
+						activeAlbum === 'favorites' && 'bg-accent text-accent-foreground',
+						dropHighlight('favorites')
+					]}
+					ondragenter={(e) => onDragOverTarget(e, 'favorites', 'copy')}
+					ondragover={(e) => onDragOverTarget(e, 'favorites', 'copy')}
+					ondragleave={(e) => onDragLeaveTarget(e, 'favorites')}
+					ondrop={(e) => onDropQuickAction(e, onfavoriteMedia)}
+					role="presentation"
+				>
+					<div
+						class="album-drop-hit flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm font-medium"
+						role="button"
+						tabindex="0"
+						onclick={() => onselect('favorites')}
+						onkeydown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								onselect('favorites');
+							}
+						}}
+					>
+						<Heart class="mo-favorite-icon h-5 w-5 shrink-0" />
+						Favorites
+						<Badge variant="secondary" class="ml-auto shrink-0">{favoritesCount}</Badge>
+					</div>
+				</div>
+				<div
+					class={[
+						'album-drop-row mt-0.5 rounded-lg',
+						activeAlbum === 'trash' && 'bg-accent text-accent-foreground',
+						dropHighlight('trash')
+					]}
+					ondragenter={(e) => onDragOverTarget(e, 'trash', 'move')}
+					ondragover={(e) => onDragOverTarget(e, 'trash', 'move')}
+					ondragleave={(e) => onDragLeaveTarget(e, 'trash')}
+					ondrop={(e) => onDropQuickAction(e, ontrashMedia)}
+					role="presentation"
+				>
+					<div
+						class="album-drop-hit flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm font-medium"
+						role="button"
+						tabindex="0"
+						onclick={() => onselect('trash')}
+						onkeydown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								onselect('trash');
+							}
+						}}
+					>
+						<Trash2 class="h-5 w-5 shrink-0" />
+						Trash
+						<Badge variant="secondary" class="ml-auto shrink-0">{trashCount}</Badge>
+					</div>
+				</div>
+			</div>
 
-			<Button
-				type="button"
-				variant="ghost"
-				class={[
-					'mt-1 w-full justify-start gap-2 font-medium',
-					activeAlbum === 'favorites' && 'bg-accent text-accent-foreground'
-				]}
-				onclick={() => onselect('favorites')}
-			>
-				<Heart class="h-5 w-5" />
-				Favorites
-			</Button>
 			<Button
 				type="button"
 				variant="ghost"

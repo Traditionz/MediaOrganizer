@@ -2,6 +2,7 @@ import { appDefaults } from '$lib/config/defaults';
 import { parseMediaItem } from '$lib/library/mutationHandlers';
 import { isThumbnailByteSizeOk, thumbnailSeekCandidates } from '$lib/media/thumbnail';
 import { asPlainObject, ownString } from '$lib/parse';
+import { releaseVideoElement } from '$lib/playback/releaseVideo';
 import type { MediaItem } from '$lib/types';
 
 export { thumbnailSeekTime } from '$lib/media/thumbnail';
@@ -222,37 +223,47 @@ export function probeVideoDimensions(
 	timeoutMs = 4000
 ): Promise<{ width: number; height: number; duration: number | null } | null> {
 	if (!isVideoFile(file)) return Promise.resolve(null);
-	if (file.size > PROBE_SIZE_LIMIT) {
-		return Promise.resolve({ width: 16, height: 9, duration: null });
-	}
+	// Large files are probed on the server. A 16×9 placeholder used to get stored as the real size.
+	if (file.size > PROBE_SIZE_LIMIT) return Promise.resolve(null);
 
 	return new Promise((resolve) => {
 		const url = URL.createObjectURL(file);
 		const video = document.createElement('video');
 		video.preload = 'metadata';
 		let settled = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
 
 		const done = (value: { width: number; height: number; duration: number | null } | null) => {
 			if (settled) return;
 			settled = true;
+			if (timer) clearTimeout(timer);
+			video.onloadedmetadata = null;
+			video.onerror = null;
 			URL.revokeObjectURL(url);
+			releaseVideoElement(video);
 			resolve(value);
 		};
 
-		const timer = setTimeout(() => done({ width: 16, height: 9, duration: null }), timeoutMs);
+		timer = setTimeout(() => done(null), timeoutMs);
 
 		video.onloadedmetadata = () => {
 			clearTimeout(timer);
+			const w = video.videoWidth;
+			const h = video.videoHeight;
 			const d = video.duration;
+			if (!w || !h) {
+				done(null);
+				return;
+			}
 			done({
-				width: video.videoWidth || 16,
-				height: video.videoHeight || 9,
+				width: w,
+				height: h,
 				duration: Number.isFinite(d) && d > 0 ? d : null
 			});
 		};
 		video.onerror = () => {
 			clearTimeout(timer);
-			done({ width: 16, height: 9, duration: null });
+			done(null);
 		};
 		video.src = url;
 	});
@@ -316,7 +327,10 @@ export function captureVideoThumbnail(file: File, maxEdge = 480): Promise<Blob |
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
+			video.onloadeddata = null;
+			video.onerror = null;
 			URL.revokeObjectURL(url);
+			releaseVideoElement(video);
 			resolve(blob);
 		};
 

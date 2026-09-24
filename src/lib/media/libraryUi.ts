@@ -1,4 +1,4 @@
-import type { LibraryAlbumFilter } from '$lib/types';
+import type { LibraryAlbumFilter, MediaItem } from '$lib/types';
 import { isDuplicateFilter, isLibraryViewFilter, parseTagFilterId } from './libraryNav';
 
 export const WATCH_POLL_MS = 30_000;
@@ -6,6 +6,24 @@ export const WATCH_POLL_MS = 30_000;
 export function nextFavoriteFlag(items: ReadonlyArray<{ favorite?: boolean }>): boolean {
 	if (!items.length) return true;
 	return items.some((item) => item.favorite !== true);
+}
+
+/** Context / toolbar label: Unfavorite when every selected item is already favorited. */
+export function favoriteMenuLabel(items: ReadonlyArray<{ favorite?: boolean }>): string {
+	return nextFavoriteFlag(items) ? 'Favorite' : 'Unfavorite';
+}
+
+/** Keep lightbox preview in sync after a favorite mutation. */
+export function syncPreviewFavorite(
+	preview: MediaItem | null,
+	ids: readonly string[],
+	updated: readonly MediaItem[],
+	favorite: boolean
+): MediaItem | null {
+	if (!preview || !ids.includes(preview.id)) return preview;
+	const next = updated.find((item) => item.id === preview.id);
+	if (next) return next;
+	return { ...preview, favorite };
 }
 
 export function emptyLibraryHeadline(searchQuery: string, activeAlbum: LibraryAlbumFilter): string {

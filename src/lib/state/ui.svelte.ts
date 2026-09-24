@@ -356,7 +356,25 @@ export class UiState {
 		this.contextMenu = { ...this.contextMenu, open: false };
 	}
 
+	dispose() {
+		if (this.persistTimer) {
+			clearTimeout(this.persistTimer);
+			this.persistTimer = null;
+		}
+		if (browser) {
+			window.removeEventListener('pagehide', this.onPageHide);
+			window.removeEventListener('beforeunload', this.onPageHide);
+		}
+		this.onPageHide();
+	}
+
 	setClipboard(ids: string[], mode: 'copy' | 'cut') {
 		this.clipboard = { ids: [...ids], mode };
+	}
+
+	syncPreview(items: readonly MediaItem[]) {
+		if (!this.preview) return;
+		const next = items.find((item) => item.id === this.preview?.id);
+		if (next) this.preview = next;
 	}
 }

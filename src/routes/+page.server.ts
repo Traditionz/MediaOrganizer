@@ -5,6 +5,7 @@ import { resolveProfileFromCookies } from '$lib/server/profileContext';
 import { listAlbums } from '$lib/server/albums';
 import {
 	countAllMedia,
+	countFavoriteMedia,
 	countTrashMedia,
 	countUnassignedMedia,
 	listMedia,
@@ -26,6 +27,7 @@ export const load: PageServerLoad = async ({ cookies, isDataRequest }) => {
 			listMedia,
 			countAllMedia,
 			countTrashMedia,
+			countFavoriteMedia,
 			countUnassignedMedia,
 			purgeExpiredTrash,
 			listTags

@@ -2,11 +2,13 @@ import { describe, expect, test } from 'bun:test';
 import {
 	emptyLibraryDetail,
 	emptyLibraryHeadline,
+	favoriteMenuLabel,
 	formatLibraryHealth,
 	mediaExportAlbumHref,
 	mediaExportHref,
 	nextFavoriteFlag,
 	resolveMediaExportHref,
+	syncPreviewFavorite,
 	WATCH_POLL_MS
 } from './libraryUi';
 
@@ -16,6 +18,33 @@ describe('nextFavoriteFlag', () => {
 		expect(nextFavoriteFlag([{ favorite: true }])).toBe(false);
 		expect(nextFavoriteFlag([{ favorite: true }, { favorite: false }])).toBe(true);
 		expect(nextFavoriteFlag([{}])).toBe(true);
+	});
+});
+
+describe('favoriteMenuLabel', () => {
+	test('says Unfavorite only when every item is favorited', () => {
+		expect(favoriteMenuLabel([])).toBe('Favorite');
+		expect(favoriteMenuLabel([{ favorite: true }])).toBe('Unfavorite');
+		expect(favoriteMenuLabel([{ favorite: true }, { favorite: false }])).toBe('Favorite');
+	});
+});
+
+describe('syncPreviewFavorite', () => {
+	test('leaves unrelated preview alone', () => {
+		const preview = { id: 'a', favorite: false };
+		expect(syncPreviewFavorite(preview, ['b'], [{ id: 'b', favorite: true }], true)).toBe(preview);
+		expect(syncPreviewFavorite(null, ['a'], [], true)).toBeNull();
+	});
+
+	test('replaces preview from updated items or patches favorite', () => {
+		const preview = { id: 'a', favorite: false };
+		expect(
+			syncPreviewFavorite(preview, ['a'], [{ id: 'a', favorite: true }], true)
+		).toEqual({ id: 'a', favorite: true });
+		expect(syncPreviewFavorite(preview, ['a'], [], false)).toEqual({
+			id: 'a',
+			favorite: false
+		});
 	});
 });
 

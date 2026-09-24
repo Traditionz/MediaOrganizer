@@ -1,5 +1,6 @@
 [test]
 preload = ["./test/setup.ts"]
+pathIgnorePatterns = ["e2e/**", "**/*.svelte.vitest.ts"]
 coverageReporter = ["text", "lcov"]
 coverageDir = "coverage"
 coveragePathIgnorePatterns = [

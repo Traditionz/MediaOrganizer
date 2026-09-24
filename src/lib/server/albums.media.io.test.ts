@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import { existsSync } from 'node:fs';
 import {
 	createAlbum,
 	deleteAlbum,
@@ -9,10 +11,12 @@ import {
 	renameAlbum
 } from '$lib/server/albums';
 import { destroyProfileStorage, filePathForKey, newId, tmpPathForKey } from '$lib/server/db';
+import { runFfmpeg } from '$lib/server/ffmpegMeta';
 import { resetNameCryptoKeyCache } from '$lib/server/nameCrypto';
 import {
 	addMediaToAlbum,
 	countAllMedia,
+	countFavoriteMedia,
 	countTrashMedia,
 	countUnassignedMedia,
 	deleteMedia,
@@ -36,6 +40,20 @@ import {
 
 function streamOf(text: string): Readable {
 	return Readable.from([Buffer.from(text)]);
+}
+
+let tinyVideo: Buffer | null = null;
+
+async function videoBody(): Promise<Readable> {
+	if (!tinyVideo) {
+		const dir = join(tmpdir(), `mo-io-video-${process.pid}`);
+		mkdirSync(dir, { recursive: true });
+		const src = join(dir, 'in.mp4');
+		await runFfmpeg(['-y', '-f', 'lavfi', '-i', 'color=c=red:s=16x16:d=1', '-t', '1', src]);
+		tinyVideo = readFileSync(src);
+		rmSync(dir, { recursive: true, force: true });
+	}
+	return Readable.from([tinyVideo]);
 }
 
 describe('albums + media I/O', () => {
@@ -123,7 +141,7 @@ describe('albums + media I/O', () => {
 			width: null,
 			height: null,
 			duration: 12.5,
-			body: streamOf('fake-mp4-bytes')
+			body: await videoBody()
 		});
 
 		expect(countUnassignedMedia(profileId)).toBe(1);
@@ -183,7 +201,7 @@ describe('albums + media I/O', () => {
 			albumId: null,
 			width: null,
 			height: null,
-			body: streamOf('vid')
+			body: await videoBody()
 		});
 
 		expect(listMedia(profileId, { mediaType: 'image' }).total).toBe(1);
@@ -269,7 +287,12 @@ describe('albums + media I/O', () => {
 
 		const fav = setMediaFavorite(profileId, [a.id], true);
 		expect(fav[0]?.favorite).toBe(true);
+		expect(countFavoriteMedia(profileId)).toBe(1);
 		expect(listMedia(profileId, { albumId: 'favorites' }).items.map((m) => m.id)).toContain(a.id);
+		expect(setMediaFavorite(profileId, [a.id], false)[0]?.favorite).toBe(false);
+		expect(countFavoriteMedia(profileId)).toBe(0);
+		setMediaFavorite(profileId, [a.id], true);
+		expect(countFavoriteMedia(profileId)).toBe(1);
 		expect(listMedia(profileId, { albumId: 'untagged' }).total).toBe(2);
 		expect(listMedia(profileId, { albumId: 'recent' }).total).toBeGreaterThan(0);
 		expect(listMedia(profileId, { albumId: 'map' }).total).toBe(0);

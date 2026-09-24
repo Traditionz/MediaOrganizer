@@ -1,4 +1,4 @@
-import { and, count, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, count, eq, inArray, isNull } from 'drizzle-orm';
 import type { MediaTag, Tag, TagKind } from '$lib/types';
 import { getProfileDb, isUniqueConstraintError, newId } from './db';
 import { decryptName, decryptStoredName, encryptName, nameLookupKey } from './nameCrypto';
@@ -14,19 +14,21 @@ function parseKind(value: string | null | undefined): TagKind {
 
 export function listTags(profileId: string): Tag[] {
 	const db = getProfileDb(profileId);
-	const mediaCount = db
-		.select({ c: count() })
+	const countRows = db
+		.select({ tagId: mediaTags.tagId, c: count() })
 		.from(mediaTags)
 		.innerJoin(media, eq(media.id, mediaTags.mediaId))
-		.where(and(eq(mediaTags.tagId, tags.id), isNull(media.deletedAt)));
+		.where(isNull(media.deletedAt))
+		.groupBy(mediaTags.tagId)
+		.all();
+	const counts = new Map(countRows.map((row) => [row.tagId, row.c]));
 
 	const rows = db
 		.select({
 			id: tags.id,
 			name: tags.name,
 			kind: tags.kind,
-			createdAt: tags.createdAt,
-			mediaCount: sql<number>`(${mediaCount})`.mapWith(Number)
+			createdAt: tags.createdAt
 		})
 		.from(tags)
 		.all();
@@ -37,7 +39,7 @@ export function listTags(profileId: string): Tag[] {
 			name: decryptName(row.name),
 			kind: parseKind(row.kind),
 			created_at: normalizeCreated(row.createdAt),
-			media_count: row.mediaCount
+			media_count: counts.get(row.id) ?? 0
 		}))
 		.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }

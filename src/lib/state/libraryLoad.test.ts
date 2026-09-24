@@ -39,6 +39,7 @@ function snapshot(overrides: Partial<LibraryPageSnapshot> = {}): LibraryPageSnap
 		mediaHasMore: false,
 		trash: [],
 		trashCount: 0,
+		favoritesCount: 0,
 		trashLoaded: false,
 		totalCount: 1,
 		unassignedCount: 0,
@@ -67,6 +68,7 @@ describe('libraryLoadFromPageData', () => {
 		expect(load.mediaHasMore).toBe(false);
 		expect(load.trash).toEqual([]);
 		expect(load.trashCount).toBe(0);
+		expect(load.favoritesCount).toBe(0);
 		expect(load.trashLoaded).toBe(false);
 		expect(load.totalCount).toBe(1);
 		expect(load.unassignedCount).toBe(0);

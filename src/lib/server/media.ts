@@ -5,7 +5,10 @@ import {
 	unlinkSync,
 	copyFileSync,
 	statSync,
-	renameSync
+	renameSync,
+	openSync,
+	readSync,
+	closeSync
 } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { Readable, Transform } from 'node:stream';
@@ -44,6 +47,12 @@ import {
 	parseContentLength
 } from './mediaUtil';
 import { decryptName, decryptStoredName, encryptName, nameLookupKey } from './nameCrypto';
+import {
+	dimensionsToStore,
+	isMeasuredPixelSize,
+	isVideoProbeFallback
+} from '$lib/media/videoDimensions';
+import { scanVideoContainer, videoContainerProblem } from '$lib/media/videoContainer';
 
 export {
 	copyFileName,
@@ -392,13 +401,14 @@ export function getMediaForServe(
 	if (!row) return null;
 	const path = filePathForKey(profileId, row.storageKey);
 	if (!existsSync(path)) return null;
-	const meta = attachAlbums(profileId, [row])[0];
+	// Byte ranges fire on every seek. Skip album and tag joins; the player only needs the file.
+	const meta = mapRow(profileId, row, [], [], []);
 	return {
 		meta,
 		path,
 		size: row.size,
 		mimeType: row.mimeType,
-		originalName: decryptStoredName(row.originalName)
+		originalName: meta.original_name
 	};
 }
 
@@ -493,6 +503,8 @@ export async function insertMediaFromStream(
 	const tmp = tmpPathForKey(profileId, `${id}.upload.tmp`);
 	const duration = normalizeDuration(input.duration);
 	let size = 0;
+	let width = input.width ?? null;
+	let height = input.height ?? null;
 
 	const nodeReadable =
 		input.body instanceof Readable
@@ -528,8 +540,6 @@ export async function insertMediaFromStream(
 		let cameraModel: string | null = null;
 		let gpsLat: number | null = null;
 		let gpsLng: number | null = null;
-		let width = input.width;
-		let height = input.height;
 		let probedDuration = duration;
 		try {
 			const probe = await probeMediaFile(dest, input.mediaType, new Date().toISOString());
@@ -539,11 +549,24 @@ export async function insertMediaFromStream(
 			cameraModel = probe.cameraModel;
 			gpsLat = probe.gpsLat;
 			gpsLng = probe.gpsLng;
-			if (width == null) width = probe.width;
-			if (height == null) height = probe.height;
+			if (input.mediaType === 'video') {
+				const stored = dimensionsToStore(width, height, probe.width, probe.height);
+				width = stored.width;
+				height = stored.height;
+			} else {
+				if (width == null) width = probe.width;
+				if (height == null) height = probe.height;
+			}
 			if (probedDuration == null) probedDuration = probe.duration;
-		} catch {
+		} catch (err) {
+			if (input.mediaType === 'video') {
+				throw err instanceof InvalidVideoError ? err : new InvalidVideoError('invalid container');
+			}
 			capturedAt = new Date().toISOString();
+		}
+
+		if (input.mediaType === 'video') {
+			assertPlayableVideo(dest, width, height);
 		}
 
 		if (input.skipDuplicateHash && contentHash) {
@@ -616,8 +639,8 @@ export async function insertMediaFromStream(
 			album_ids: input.albumId ? [input.albumId] : [],
 			album_names: [],
 			size,
-			width: input.width,
-			height: input.height,
+			width,
+			height,
 			duration,
 			view_count: 0,
 			created_at: new Date().toISOString(),
@@ -722,6 +745,42 @@ export async function backfillMissingDurations(
 	return { updated, failed, remaining };
 }
 
+export class InvalidVideoError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'InvalidVideoError';
+	}
+}
+
+const CONTAINER_REASON = {
+	'no-moov': 'no moov atom',
+	invalid: 'invalid container',
+	truncated: 'media data truncated',
+	matroska: 'Matroska container'
+} as const;
+
+function scanStoredVideo(path: string, fileSize: number) {
+	const fd = openSync(path, 'r');
+	try {
+		return scanVideoContainer(fileSize, (position, length) => {
+			const buf = Buffer.alloc(length);
+			const got = readSync(fd, buf, 0, length, position);
+			return new Uint8Array(buf.buffer, buf.byteOffset, got);
+		});
+	} finally {
+		closeSync(fd);
+	}
+}
+
+/** Reject a video that will not play or has no real pixel size. */
+function assertPlayableVideo(path: string, width: number | null, height: number | null): void {
+	const problem = videoContainerProblem(scanStoredVideo(path, statSync(path).size));
+	if (problem) throw new InvalidVideoError(CONTAINER_REASON[problem]);
+	if (!isMeasuredPixelSize(width, height) || isVideoProbeFallback(width, height)) {
+		throw new InvalidVideoError('Video has no picture size');
+	}
+}
+
 let durationBackfillRunning = false;
 const durationBackfillQueue = new Set<string>();
 
@@ -783,13 +842,21 @@ export async function compressMedia(
 			? await compressVideoToAv1(path, { preset })
 			: await compressImageToAvif(path);
 
+	const picture =
+		row.mediaType === 'video'
+			? dimensionsToStore(null, null, result.width, result.height)
+			: { width: result.width ?? row.width, height: result.height ?? row.height };
+	if (row.mediaType === 'video') assertPlayableVideo(path, picture.width, picture.height);
+
 	if (result.skipped && result.newSize === row.size) {
-		if (
+		const renameMime =
 			(row.mediaType === 'video' && row.mimeType !== 'video/mp4') ||
 			(row.mediaType === 'image' &&
 				result.reason === 'Already AVIF' &&
-				row.mimeType !== 'image/avif')
-		) {
+				row.mimeType !== 'image/avif');
+		const fixDims =
+			row.mediaType === 'video' && (picture.width !== row.width || picture.height !== row.height);
+		if (renameMime) {
 			const nextName = renameWithExt(decryptName(row.originalName), result.ext);
 			db.update(media)
 				.set({
@@ -797,6 +864,12 @@ export async function compressMedia(
 					originalName: encryptName(nextName),
 					nameKey: nameLookupKey(nextName)
 				})
+				.where(eq(media.id, id))
+				.run();
+		}
+		if (fixDims) {
+			db.update(media)
+				.set({ width: picture.width, height: picture.height })
 				.where(eq(media.id, id))
 				.run();
 		}
@@ -810,8 +883,8 @@ export async function compressMedia(
 			mimeType: result.mimeType,
 			originalName: encryptName(nextName),
 			nameKey: nameLookupKey(nextName),
-			width: result.width ?? row.width,
-			height: result.height ?? row.height
+			width: picture.width,
+			height: picture.height
 		})
 		.where(eq(media.id, id))
 		.run();
@@ -890,6 +963,18 @@ export function duplicateMedia(
 		if (!existsSync(src)) continue;
 
 		copyFileSync(src, dest);
+		if (row.mediaType === 'video') {
+			try {
+				assertPlayableVideo(dest, row.width, row.height);
+			} catch (err) {
+				try {
+					if (existsSync(dest)) unlinkSync(dest);
+				} catch {
+					/* ignore */
+				}
+				throw err;
+			}
+		}
 
 		let thumbKey: string | null = null;
 		if (row.thumbnailKey) {
@@ -1242,6 +1327,17 @@ export function countAllMedia(profileId: string): number {
 export function countTrashMedia(profileId: string): number {
 	const db = getProfileDb(profileId);
 	return db.select({ c: count() }).from(media).where(isNotNull(media.deletedAt)).get()?.c ?? 0;
+}
+
+export function countFavoriteMedia(profileId: string): number {
+	const db = getProfileDb(profileId);
+	return (
+		db
+			.select({ c: count() })
+			.from(media)
+			.where(and(isNull(media.deletedAt), eq(media.favorite, 1)))
+			.get()?.c ?? 0
+	);
 }
 
 export function countUnassignedMedia(profileId: string): number {

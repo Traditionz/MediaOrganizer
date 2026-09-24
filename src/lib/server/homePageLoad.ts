@@ -13,6 +13,7 @@ export interface HomePageData {
 	mediaHasMore: boolean;
 	trash: MediaItem[];
 	trashCount: number;
+	favoritesCount: number;
 	trashLoaded: boolean;
 	totalCount: number;
 	unassignedCount: number;
@@ -27,6 +28,7 @@ export interface HomePageLoadDeps {
 	listMedia: (profileId: string, query?: MediaQuery) => MediaListPage;
 	countAllMedia: (profileId: string) => number;
 	countTrashMedia: (profileId: string) => number;
+	countFavoriteMedia: (profileId: string) => number;
 	countUnassignedMedia: (profileId: string) => number;
 	purgeExpiredTrash: (profileId: string) => void;
 	listTags?: (profileId: string) => Tag[];
@@ -56,6 +58,7 @@ export function loadHomePageData(
 			mediaHasMore: false,
 			trash: [],
 			trashCount: 0,
+			favoritesCount: 0,
 			trashLoaded: false,
 			totalCount: 0,
 			unassignedCount: 0,
@@ -83,6 +86,7 @@ export function loadHomePageData(
 		mediaHasMore: page.hasMore,
 		trash: [],
 		trashCount: deps.countTrashMedia(activeProfile.id),
+		favoritesCount: deps.countFavoriteMedia(activeProfile.id),
 		trashLoaded: false,
 		totalCount: deps.countAllMedia(activeProfile.id),
 		unassignedCount: deps.countUnassignedMedia(activeProfile.id),
@@ -101,6 +105,7 @@ export function emptyHomePageData(profiles: Profile[] = []): HomePageData {
 		mediaHasMore: false,
 		trash: [],
 		trashCount: 0,
+		favoritesCount: 0,
 		trashLoaded: false,
 		totalCount: 0,
 		unassignedCount: 0,

@@ -4,10 +4,14 @@ import {
 	collageCardLayouts,
 	collageFallbackSize,
 	collageItemSize,
+	collageLayoutsInYWindow,
 	gridCardLayouts,
+	gridCardBox,
 	gridCardLayoutsInYWindow,
 	gridCellSize,
+	gridIndexRange,
 	gridTotalHeight,
+	timelineSectionMetrics,
 	idsIntersectingBox,
 	layoutsInYWindow,
 	libraryCardLayouts,
@@ -240,6 +244,39 @@ describe('attachMediaVirtualHost', () => {
 			if (desc) Object.defineProperty(globalThis, 'ResizeObserver', desc);
 			else globalThis.ResizeObserver = OriginalRO;
 		}
+	});
+});
+
+describe('timeline virtual window', () => {
+	test('section metrics stack header, grid, and gap', () => {
+		const metrics = timelineSectionMetrics([3, 1], 2, 100, 10, 40, 24);
+		expect(metrics.sections).toHaveLength(2);
+		expect(metrics.sections[0]?.gridTop).toBe(40);
+		expect(metrics.sections[0]?.gridHeight).toBe(210);
+		expect(metrics.sections[1]?.top).toBe(40 + 210 + 24);
+		expect(metrics.totalHeight).toBe(metrics.sections[1]!.top + metrics.sections[1]!.height);
+	});
+
+	test('gridIndexRange windows rows and gridCardBox places the index', () => {
+		expect(gridIndexRange(0, 2, 100, 10, 0, 100, 0)).toEqual({ start: 0, end: 0 });
+		const range = gridIndexRange(10, 2, 100, 10, 110, 220, 0);
+		expect(range.start).toBe(2);
+		expect(range.end).toBe(6);
+		expect(gridCardBox(3, 2, 100, 10)).toMatchObject({ x: 110, y: 110, w: 100, h: 100 });
+		expect(gridIndexRange(8, 2, 100, 10, 50, 40, 0)).toEqual({ start: 0, end: 0 });
+	});
+});
+
+describe('collage pack cache', () => {
+	test('reuses layouts when only non-geometry data would change the item list identity', () => {
+		const items = [
+			{ id: 'a', width: 200, height: 100, media_type: 'image' as const },
+			{ id: 'b', width: 100, height: 100, media_type: 'video' as const }
+		];
+		const first = collageLayoutsInYWindow(items, 2, 400, 12, 0, 1000, 0);
+		const second = collageLayoutsInYWindow(items, 2, 400, 12, 0, 1000, 0);
+		expect(second.layouts[0]).toBe(first.layouts[0]);
+		expect(second.totalHeight).toBe(first.totalHeight);
 	});
 });
 

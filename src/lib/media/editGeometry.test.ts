@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { clampCrop, clampTrim, isRotateDegrees, rotateSize } from './editGeometry';
+import { clampCrop, isRotateDegrees, rotateSize } from './editGeometry';
 
 describe('edit geometry', () => {
 	test('rotateSize', () => {
@@ -27,14 +27,5 @@ describe('edit geometry', () => {
 		expect(clampCrop(0, 0, 10, 10, 0, 10)).toBeNull();
 		expect(clampCrop(200, 0, 10, 10, 100, 80)).toBeNull();
 		expect(clampCrop(0, 0, 0, 10, 100, 80)).toBeNull();
-	});
-
-	test('clampTrim', () => {
-		expect(clampTrim(1, 5, 10)).toEqual({ start: 1, end: 5 });
-		expect(clampTrim(8, 2, 10)).toEqual({ start: 2, end: 8 });
-		expect(clampTrim(0, 10, 10)).toBeNull();
-		expect(clampTrim(0, 0.01, 10)).toBeNull();
-		expect(clampTrim(1, 2, 0)).toBeNull();
-		expect(clampTrim(Number.NaN, 2, 10)).toBeNull();
 	});
 });

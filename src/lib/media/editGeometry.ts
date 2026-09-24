@@ -52,17 +52,3 @@ export function clampCrop(
 	if (w < 1 || h < 1) return null;
 	return { left: x, top: y, width: w, height: h };
 }
-
-export type TrimRange = { start: number; end: number };
-
-export function clampTrim(start: number, end: number, duration: number): TrimRange | null {
-	if (!(duration > 0) || !Number.isFinite(duration)) return null;
-	if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
-	const a = Math.min(start, end);
-	const b = Math.max(start, end);
-	const from = Math.max(0, a);
-	const to = Math.min(duration, b);
-	if (!(to - from > 0.05)) return null;
-	if (from <= 0.02 && to >= duration - 0.02) return null;
-	return { start: from, end: to };
-}

@@ -291,6 +291,7 @@
 			type="date"
 			class="w-auto"
 			value={dateFrom}
+			aria-label="From date"
 			onchange={(e) => ondateFrom(e.currentTarget.value)}
 		/>
 	</label>
@@ -300,6 +301,7 @@
 			type="date"
 			class="w-auto"
 			value={dateTo}
+			aria-label="To date"
 			onchange={(e) => ondateTo(e.currentTarget.value)}
 		/>
 	</label>

@@ -5,6 +5,14 @@
 		resumePlaybackPosition,
 		setPlaybackPosition
 	} from '$lib/playbackPosition';
+	import {
+		canSafelyResumeSeek,
+		classifyPlayError,
+		shouldRetryPlayAfterAbort,
+		shouldRetryPlayMuted
+	} from '$lib/playback/logic';
+	import { syncMediaElementPlaybackProps, VOLUME_WRITE_EPSILON } from '$lib/playback/attachSync';
+	import { clockFromMediaElement, shouldPublishMediaClock } from '$lib/playback/mediaClock';
 	import { accumulateWatchDelta } from '$lib/media/views';
 	import {
 		clampSeekTime,
@@ -22,6 +30,8 @@
 	import Volume2 from '@lucide/svelte/icons/volume-2';
 	import VolumeX from '@lucide/svelte/icons/volume-x';
 	import { eventHtml, eventTargetHtml } from '$lib/parse';
+	import { releaseVideoElement } from '$lib/playback/releaseVideo';
+	import { untrack } from 'svelte';
 
 	interface Props {
 		src: string;
@@ -57,14 +67,19 @@
 	let speedMenuOpen = $state(false);
 	let hideTimer: ReturnType<typeof setTimeout> | null = null;
 	let rafId = 0;
+	let playRetryRaf = 0;
 	let pendingSeek: number | null = null;
 	let previewEl: HTMLVideoElement | undefined = $state();
 	let timelineHover = $state(false);
 	let hoverRatio = $state(0);
 	let hoverTime = $state(0);
+	let previewArmed = $state(false);
 	let previewBusy = false;
 	let queuedPreview = -1;
 	let resumeApplied = false;
+	let wantPlay = true;
+	let abortPlayRetryScheduled = false;
+	let ignoreMediaEcho = false;
 	let lastSaveAt = 0;
 	let watchedSeconds = 0;
 	let lastMediaTime = NaN;
@@ -144,36 +159,71 @@
 	function syncTime() {
 		if (!videoEl || scrubbing) return;
 		if (pendingSeek != null) {
-			current = pendingSeek;
+			if (current !== pendingSeek) current = pendingSeek;
 			return;
 		}
-		current = videoEl.currentTime;
+		const next = videoEl.currentTime;
+		if (!shouldPublishMediaClock(current, next)) return;
+		current = next;
 	}
 
-	function savePosition(force = false) {
-		if (!mediaId || !videoEl) return;
+	function savePosition(force = false, id = mediaId) {
+		if (!id || !videoEl) return;
 		const t = pendingSeek ?? videoEl.currentTime;
 		const d = duration || videoEl.duration || 0;
 		if (!Number.isFinite(t)) return;
 		const now = Date.now();
 		if (!force && now - lastSaveAt < SAVE_INTERVAL_MS) return;
 		lastSaveAt = now;
-		setPlaybackPosition(mediaId, t, d);
+		setPlaybackPosition(id, t, d);
 	}
 
 	function applyResume() {
 		if (resumeApplied || !mediaId || !videoEl) return;
 		const d = videoEl.duration || duration || 0;
 		if (!Number.isFinite(d) || d <= 0) return;
-		resumeApplied = true;
+		if (!canSafelyResumeSeek(videoEl.readyState)) return;
 		const resume = resumePlaybackPosition(mediaId, d);
+		resumeApplied = true;
 		if (resume == null || resume <= 0) return;
 		pendingSeek = resume;
 		current = resume;
+		wantPlay = true;
 		try {
 			videoEl.currentTime = resume;
 		} catch {
 			/* seek may fail until more data is buffered */
+		}
+	}
+
+	async function ensurePlay() {
+		const video = videoEl;
+		if (!video || !wantPlay || !video.paused) return;
+		try {
+			await video.play();
+		} catch (err) {
+			// Element was detached or swapped while play() was pending.
+			if (videoEl !== video) return;
+			const name = err instanceof DOMException || err instanceof Error ? err.name : '';
+			const kind = classifyPlayError(name);
+			if (shouldRetryPlayMuted(kind, video.muted)) {
+				video.muted = true;
+				muted = true;
+				try {
+					await video.play();
+				} catch {
+					/* ignore second failure */
+				}
+				return;
+			}
+			if (shouldRetryPlayAfterAbort(kind, wantPlay) && !abortPlayRetryScheduled) {
+				abortPlayRetryScheduled = true;
+				playRetryRaf = requestAnimationFrame(() => {
+					playRetryRaf = 0;
+					abortPlayRetryScheduled = false;
+					void ensurePlay();
+				});
+			}
 		}
 	}
 
@@ -205,25 +255,45 @@
 	function attachVideo(node: HTMLVideoElement) {
 		videoEl = node;
 		resumeApplied = false;
+		wantPlay = true;
+		abortPlayRetryScheduled = false;
 		lastSaveAt = 0;
 		watchedSeconds = 0;
 		lastMediaTime = NaN;
-		node.playbackRate = playbackRate;
-		node.volume = volume;
-		node.muted = muted;
+		// Capture id now. A later pagehide can read the prop after the lightbox item is gone.
+		// untrack: the prop getter reads the parent's item object; tracking it re-runs this
+		// attachment on every item replacement and the teardown strips the live video's src.
+		const boundId = untrack(() => mediaId);
 
-		const onPageHide = () => savePosition(true);
+		const onPageHide = () => savePosition(true, boundId);
 		const onVisibility = () => {
-			if (document.visibilityState === 'hidden') savePosition(true);
+			if (document.visibilityState === 'hidden') savePosition(true, boundId);
 		};
 		window.addEventListener('pagehide', onPageHide);
 		document.addEventListener('visibilitychange', onVisibility);
+		// Metadata and play can fire before this attachment runs. Read the element now.
+		// untrack: reading `current` here and writing it back re-runs this attachment
+		// on every clock tick and trips effect_update_depth_exceeded, freezing the UI at 0:00.
+		ignoreMediaEcho = true;
+		untrack(() => {
+			syncMediaElementPlaybackProps(node, { playbackRate, volume, muted });
+			applyMediaClock(node);
+			void ensurePlay();
+		});
+		ignoreMediaEcho = false;
 
 		return () => {
-			savePosition(true);
+			savePosition(true, boundId);
 			window.removeEventListener('pagehide', onPageHide);
 			document.removeEventListener('visibilitychange', onVisibility);
 			stopTick();
+			clearHideTimer();
+			if (playRetryRaf) {
+				cancelAnimationFrame(playRetryRaf);
+				playRetryRaf = 0;
+			}
+			abortPlayRetryScheduled = false;
+			releaseVideoElement(node);
 			if (videoEl === node) videoEl = undefined;
 		};
 	}
@@ -262,6 +332,7 @@
 		previewBusy = false;
 		queuedPreview = -1;
 		return () => {
+			releaseVideoElement(node);
 			if (previewEl === node) previewEl = undefined;
 		};
 	}
@@ -290,6 +361,7 @@
 		if (duration <= 0) return;
 		const hit = eventHtml(e);
 		if (!hit) return;
+		if (!previewArmed) previewArmed = true;
 		const ratio = ratioFromClientX(e.clientX, hit, '.custom-progress');
 		hoverRatio = ratio;
 		hoverTime = ratio * duration;
@@ -303,24 +375,67 @@
 		scheduleHide();
 	}
 
-	function onMeta() {
-		if (!videoEl) return;
-		duration = videoEl.duration || 0;
-		applyResume();
-		if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+	function applyMediaClock(node: HTMLVideoElement) {
+		const clock = clockFromMediaElement(node, { scrubbing, pendingSeek, current, duration });
+		duration = clock.duration;
+		if (!scrubbing && pendingSeek == null) current = clock.current;
+		playing = clock.playing;
+		if (playing) startTick();
+		else stopTick();
+		if (node.videoWidth > 0 && node.videoHeight > 0) {
 			onmetadata?.({
-				w: videoEl.videoWidth,
-				h: videoEl.videoHeight,
-				duration: Number.isFinite(duration) ? duration : 0
+				w: node.videoWidth,
+				h: node.videoHeight,
+				duration: Number.isFinite(clock.duration) ? clock.duration : 0
 			});
 		}
+	}
+
+	function mediaNode(e?: Event): HTMLVideoElement | undefined {
+		return e?.currentTarget instanceof HTMLVideoElement ? e.currentTarget : videoEl;
+	}
+
+	function onMeta(e: Event) {
+		const node = mediaNode(e);
+		if (!node) return;
+		videoEl = node;
+		applyMediaClock(node);
+		applyResume();
+	}
+
+	function onLoadedData(e: Event) {
+		const node = mediaNode(e);
+		if (node) applyMediaClock(node);
+		applyResume();
+	}
+
+	function onCanPlay(e: Event) {
+		const node = mediaNode(e);
+		if (node) applyMediaClock(node);
+		applyResume();
+		if (wantPlay && videoEl?.paused) void ensurePlay();
+	}
+
+	function onWaiting() {
+		showControls = true;
+	}
+
+	function onStalled() {
+		showControls = true;
+	}
+
+	function onVideoError() {
+		wantPlay = false;
+		showControls = true;
 	}
 
 	function togglePlay() {
 		if (!videoEl) return;
 		if (videoEl.paused) {
-			void videoEl.play();
+			wantPlay = true;
+			void ensurePlay();
 		} else {
+			wantPlay = false;
 			videoEl.pause();
 		}
 		revealControls();
@@ -557,7 +672,7 @@
 <div
 	{@attach attachPlayer}
 	class={[
-		'custom-player group/player relative h-full w-full overflow-hidden bg-black outline-none',
+		'custom-player group/player relative h-full w-full overflow-visible bg-black outline-none',
 		chromeOpen && 'controls-visible'
 	]}
 	role="group"
@@ -580,39 +695,56 @@
 	<video
 		{@attach attachVideo}
 		{src}
-		class="custom-video h-full w-full object-contain"
+		class="custom-video block h-full w-full max-w-none rounded-lg object-contain"
 		autoplay
 		playsinline
 		preload="auto"
 		onloadedmetadata={onMeta}
 		ondurationchange={onMeta}
+		onloadeddata={onLoadedData}
+		oncanplay={onCanPlay}
 		onprogress={readBuffer}
-		onplay={() => {
-			playing = true;
-			startTick();
+		onwaiting={onWaiting}
+		onstalled={onStalled}
+		onerror={onVideoError}
+		onplay={(e) => {
+			const node = mediaNode(e);
+			if (node) applyMediaClock(node);
+			else {
+				playing = true;
+				startTick();
+			}
 			scheduleHide();
 		}}
-		onpause={() => {
-			playing = false;
-			stopTick();
+		onpause={(e) => {
+			const node = mediaNode(e);
+			if (node) applyMediaClock(node);
+			else {
+				playing = false;
+				stopTick();
+			}
 			syncTime();
 			savePosition(true);
 			showControls = true;
 			clearHideTimer();
 		}}
-		onseeked={() => {
+		onseeked={(e) => {
 			pendingSeek = null;
 			lastMediaTime = NaN;
-			syncTime();
+			const node = mediaNode(e);
+			if (node) applyMediaClock(node);
+			else syncTime();
 			readBuffer();
 			savePosition(true);
+			if (wantPlay) void ensurePlay();
 		}}
 		onvolumechange={() => {
-			if (!videoEl) return;
-			muted = videoEl.muted;
-			volume = videoEl.volume;
+			if (!videoEl || ignoreMediaEcho) return;
+			if (videoEl.muted !== muted) muted = videoEl.muted;
+			if (Math.abs(videoEl.volume - volume) > VOLUME_WRITE_EPSILON) volume = videoEl.volume;
 		}}
 		onended={() => {
+			wantPlay = false;
 			playing = false;
 			stopTick();
 			syncTime();
@@ -620,7 +752,8 @@
 			showControls = true;
 		}}
 		onratechange={() => {
-			if (videoEl) playbackRate = videoEl.playbackRate;
+			if (!videoEl || ignoreMediaEcho) return;
+			playbackRate = videoEl.playbackRate;
 		}}
 		onclick={() => {
 			if (speedMenuOpen) {
@@ -633,7 +766,7 @@
 		<track kind="captions" />
 	</video>
 
-	<div class="custom-chrome absolute inset-x-0 bottom-0 z-20">
+	<div class="custom-chrome absolute inset-x-0 bottom-0 z-[25]">
 		<div class="relative px-3">
 			<div
 				class={['custom-hover-preview', timelineHover && 'is-visible']}
@@ -646,7 +779,7 @@
 				<div class="custom-hover-frame">
 					<video
 						{@attach attachPreview}
-						{src}
+						src={previewArmed ? src : undefined}
 						class="custom-hover-video"
 						muted
 						playsinline

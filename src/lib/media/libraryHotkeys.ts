@@ -21,6 +21,8 @@ export type LibraryHotkeyContext = {
 	blocked: boolean;
 	selectedCount: number;
 	hasClipboard: boolean;
+	/** Highlighted page text should copy to the clipboard instead of the library clipboard. */
+	textSelected?: boolean;
 };
 
 export function resolveLibraryHotkey(
@@ -30,6 +32,7 @@ export function resolveLibraryHotkey(
 	if (ctx.inputFocused || ctx.blocked) return null;
 	const mod = event.ctrlKey || event.metaKey;
 	const key = event.key.toLowerCase();
+	if (ctx.textSelected && mod && (key === 'c' || key === 'x' || key === 'a')) return null;
 
 	if (mod && key === 'z') return { kind: 'undo' };
 	if (mod && key === 'a') return { kind: 'select-all' };
