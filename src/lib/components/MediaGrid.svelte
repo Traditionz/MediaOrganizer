@@ -128,39 +128,36 @@
 		{@attach observeHost}
 		class="relative w-full"
 		data-media-layout="timeline"
-		style:height="{timeline.totalHeight}px"
+		style:height={`${timeline.totalHeight}px`}
 	>
 		{#each visibleSections as metric (metric.index)}
-			{@const section = sections[metric.index]}
-			{#if section}
-				{@const range = localCardRange(metric.gridTop, metric.gridHeight, section.items.length)}
-				<section class="absolute inset-x-0" style:top="{metric.top}px" style:height="{metric.height}px">
-					<h2
-						class="bg-background/90 text-foreground sticky top-0 z-10 flex h-10 items-center text-sm font-semibold tracking-tight"
-					>
-						{section.label}
-					</h2>
-					<div class="relative w-full" style:height="{metric.gridHeight}px">
-						{#each section.items.slice(range.start, range.end) as item, offset (item.id)}
-							{@const box = gridCardBox(
-								range.start + offset,
-								columns,
-								cellSize,
-								MEDIA_LAYOUT_GAP
-							)}
-							<div
-								class="absolute overflow-hidden"
-								style:left="{box.x}px"
-								style:top="{box.y}px"
-								style:width="{box.w}px"
-								style:height="{box.h}px"
-							>
-								{@render card(item)}
-							</div>
-						{/each}
-					</div>
-				</section>
-			{/if}
+			{@const section = sections[metric.index]!}
+			{@const range = localCardRange(metric.gridTop, metric.gridHeight, section.items.length)}
+			<section
+				class="absolute inset-x-0"
+				style:top={`${metric.top}px`}
+				style:height={`${metric.height}px`}
+			>
+				<h2
+					class="bg-background/90 text-foreground sticky top-0 z-10 flex h-10 items-center text-sm font-semibold tracking-tight"
+				>
+					{section.label}
+				</h2>
+				<div class="relative w-full" style:height={`${metric.gridHeight}px`}>
+					{#each section.items.slice(range.start, range.end) as item, offset (item.id)}
+						{@const box = gridCardBox(range.start + offset, columns, cellSize, MEDIA_LAYOUT_GAP)}
+						<div
+							class="absolute overflow-hidden"
+							style:left={`${box.x}px`}
+							style:top={`${box.y}px`}
+							style:width={`${box.w}px`}
+							style:height={`${box.h}px`}
+						>
+							{@render card(item)}
+						</div>
+					{/each}
+				</div>
+			</section>
 		{/each}
 	</div>
 {:else}
@@ -168,21 +165,19 @@
 		{@attach observeHost}
 		class="relative w-full"
 		data-media-layout="grid"
-		style:height="{totalHeight}px"
+		style:height={`${totalHeight}px`}
 	>
 		{#each visible as layout (layout.id)}
-			{@const item = itemById.get(layout.id)}
-			{#if item}
-				<div
-					class="absolute overflow-hidden"
-					style:left="{layout.x}px"
-					style:top="{layout.y}px"
-					style:width="{layout.w}px"
-					style:height="{layout.h}px"
-				>
-					{@render card(item)}
-				</div>
-			{/if}
+			{@const item = itemById.get(layout.id)!}
+			<div
+				class="absolute overflow-hidden"
+				style:left={`${layout.x}px`}
+				style:top={`${layout.y}px`}
+				style:width={`${layout.w}px`}
+				style:height={`${layout.h}px`}
+			>
+				{@render card(item)}
+			</div>
 		{/each}
 	</div>
 {/if}

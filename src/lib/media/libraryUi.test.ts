@@ -38,9 +38,10 @@ describe('syncPreviewFavorite', () => {
 
 	test('replaces preview from updated items or patches favorite', () => {
 		const preview = { id: 'a', favorite: false };
-		expect(
-			syncPreviewFavorite(preview, ['a'], [{ id: 'a', favorite: true }], true)
-		).toEqual({ id: 'a', favorite: true });
+		expect(syncPreviewFavorite(preview, ['a'], [{ id: 'a', favorite: true }], true)).toEqual({
+			id: 'a',
+			favorite: true
+		});
 		expect(syncPreviewFavorite(preview, ['a'], [], false)).toEqual({
 			id: 'a',
 			favorite: false

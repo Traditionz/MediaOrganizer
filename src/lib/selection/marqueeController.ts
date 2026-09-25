@@ -21,10 +21,7 @@ export class MarqueeController {
 
 	constructor(
 		private readonly selection: SelectionState,
-		private readonly hitsFromLayout: (
-			surface: HTMLElement,
-			box: SelectionRect
-		) => string[] | null
+		private readonly hitsFromLayout: (surface: HTMLElement, box: SelectionRect) => string[] | null
 	) {}
 
 	pointerDown(e: PointerEvent, surface: HTMLElement) {
@@ -56,10 +53,7 @@ export class MarqueeController {
 		if (hits.length > 0 || (this.additive && this.baseIds.length > 0)) {
 			this.selection.selectMode = true;
 		}
-		this.selection.selectionAnchor = marqueeSelectionAnchor(
-			hits,
-			this.selection.selectionAnchor
-		);
+		this.selection.selectionAnchor = marqueeSelectionAnchor(hits, this.selection.selectionAnchor);
 	}
 
 	pointerMove(e: PointerEvent, surface: HTMLElement) {

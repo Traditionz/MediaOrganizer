@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'vitest';
+import { render } from 'vitest-browser-svelte';
+import StateContextHost from '../../test-utils/StateContextHost.svelte';
 import { createAppState } from './app.svelte';
 import { testAlbum, testLoad, testMedia, testProfile } from '../../test-utils/fixtures';
 import { installLibraryFetch } from '../../test-utils/mockFetch';
@@ -41,6 +43,11 @@ describe('AppState', () => {
 		} finally {
 			restore();
 		}
+	});
+
+	test('context helpers round-trip an empty app state', async () => {
+		const screen = await render(StateContextHost);
+		await expect.element(screen.getByTestId('media-count')).toHaveTextContent('0');
 	});
 
 	test('dispose tears down ui listeners', () => {

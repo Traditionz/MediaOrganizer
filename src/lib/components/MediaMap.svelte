@@ -30,22 +30,20 @@
 		style="background-image: linear-gradient(#8882 1px, transparent 1px), linear-gradient(90deg, #8882 1px, transparent 1px); background-size: 8% 8%;"
 	></div>
 	{#each points as point (point.id)}
-		{@const item = byId.get(point.id)}
-		{#if item}
-			<button
-				type="button"
-				class={[
-					'absolute size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white shadow',
-					selectedIds.has(item.id) ? 'bg-primary' : 'bg-sky-500'
-				]}
-				style:left="{point.x * 100}%"
-				style:top="{point.y * 100}%"
-				title="{item.original_name} ({point.lat.toFixed(3)}, {point.lng.toFixed(3)})"
-				aria-label="{item.original_name} at {point.lat.toFixed(3)}, {point.lng.toFixed(3)}"
-				onclick={(e) => onselect(item.id, e)}
-				ondblclick={() => onopen(item)}
-			></button>
-		{/if}
+		{@const item = byId.get(point.id)!}
+		<button
+			type="button"
+			class={[
+				'absolute size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white shadow',
+				selectedIds.has(item.id) ? 'bg-primary' : 'bg-sky-500'
+			]}
+			style:left="{point.x * 100}%"
+			style:top="{point.y * 100}%"
+			title={`${item.original_name} (${point.lat.toFixed(3)}, ${point.lng.toFixed(3)})`}
+			aria-label={`${item.original_name} at ${point.lat.toFixed(3)}, ${point.lng.toFixed(3)}`}
+			onclick={(e) => onselect(item.id, e)}
+			ondblclick={() => onopen(item)}
+		></button>
 	{/each}
 	{#if !points.length}
 		<p class="text-muted-foreground absolute inset-0 flex items-center justify-center text-sm">

@@ -115,7 +115,7 @@
 								class="text-foreground w-9 shrink-0 text-right text-xs font-semibold tabular-nums"
 								aria-live="polite"
 							>
-								{job.progress}%
+								{`${job.progress}%`}
 							</span>
 						</Card.Content>
 

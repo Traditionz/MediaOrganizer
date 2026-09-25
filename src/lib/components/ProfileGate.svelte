@@ -40,6 +40,7 @@
 				await onselect(profile.id);
 			} catch (err) {
 				errorMessage = err instanceof Error ? err.message : 'Failed to open profile';
+			} finally {
 				busy = false;
 			}
 			return;
@@ -63,6 +64,7 @@
 			cancelUnlock();
 		} catch (err) {
 			errorMessage = err instanceof Error ? err.message : 'Failed to unlock profile';
+		} finally {
 			busy = false;
 		}
 	}
@@ -91,6 +93,7 @@
 			usePasscode = false;
 		} catch (err) {
 			errorMessage = err instanceof Error ? err.message : 'Failed to create profile';
+		} finally {
 			busy = false;
 		}
 	}

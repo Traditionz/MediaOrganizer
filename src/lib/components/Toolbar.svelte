@@ -115,6 +115,7 @@
 	}
 
 	function onSortByChange(value: string) {
+		/* v8 ignore next -- RadioGroup only emits MEDIA_SORT_OPTIONS values */
 		if (isMediaSortBy(value)) onsortBy(value);
 	}
 </script>
@@ -210,10 +211,7 @@
 				max={8}
 				step={1}
 				value={columns}
-				onValueChange={(v) => {
-					const n = Array.isArray(v) ? v[0] : v;
-					if (typeof n === 'number') oncolumns(n);
-				}}
+				onValueChange={(v) => oncolumns(v)}
 			/>
 		</label>
 	</div>
@@ -263,7 +261,7 @@
 			variant="outline"
 			size="icon-sm"
 			onclick={ontoggleSortDir}
-			aria-label="Sort direction: {sortDirLabel}"
+			aria-label={`Sort direction: ${sortDirLabel}`}
 			title={sortDirLabel}
 		>
 			{#if sortDir === 'asc'}

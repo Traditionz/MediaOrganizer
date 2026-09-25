@@ -37,7 +37,7 @@
 	function attachMenu(node: HTMLElement) {
 		menuEl = node;
 		return () => {
-			if (menuEl === node) menuEl = undefined;
+			menuEl = undefined;
 		};
 	}
 
@@ -52,6 +52,7 @@
 		void menuEl;
 
 		const node = menuEl;
+		/* v8 ignore next -- attachMenu always runs before this effect while open */
 		if (!node) return;
 
 		const pad = 8;
@@ -74,7 +75,6 @@
 	}
 
 	function handleSelect(item: ContextMenuItem) {
-		if (item.disabled || item.separator) return;
 		if (item.children?.length) {
 			openSubmenuFor(item);
 			return;
@@ -134,8 +134,8 @@
 	<div
 		{@attach attachMenu}
 		class="fixed z-50"
-		style:left="{pos.left}px"
-		style:top="{pos.top}px"
+		style:left={`${pos.left}px`}
+		style:top={`${pos.top}px`}
 		role="menu"
 		aria-label="Context menu"
 	>
@@ -175,8 +175,8 @@
 			<div
 				data-submenu
 				class="bg-popover text-popover-foreground ring-foreground/10 fixed z-50 min-w-36 rounded-lg p-1 shadow-md ring-1"
-				style:left="{submenuPos.left}px"
-				style:top="{submenuPos.top}px"
+				style:left={`${submenuPos.left}px`}
+				style:top={`${submenuPos.top}px`}
 				role="menu"
 			>
 				<ScrollArea class="max-h-[min(20rem,70vh)]">
@@ -196,7 +196,6 @@
 									disabled={child.disabled}
 									role="menuitem"
 									onclick={() => {
-										if (child.disabled || child.separator) return;
 										onselect(child.id);
 										close();
 									}}

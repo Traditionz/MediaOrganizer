@@ -33,7 +33,11 @@ function reader(bytes: Uint8Array) {
 
 describe('scanVideoContainer', () => {
 	test('accepts a file with moov', () => {
-		const bytes = concat([box('ftyp', new Uint8Array(8)), box('moov'), box('mdat', new Uint8Array(4))]);
+		const bytes = concat([
+			box('ftyp', new Uint8Array(8)),
+			box('moov'),
+			box('mdat', new Uint8Array(4))
+		]);
 		const scan = scanVideoContainer(bytes.length, reader(bytes));
 		expect(scan.hasMoov).toBe(true);
 		expect(scan.types).toEqual(['ftyp', 'moov', 'mdat']);
@@ -80,9 +84,7 @@ describe('scanVideoContainer', () => {
 		expect(scan.ebml).toBe(true);
 		expect(videoContainerProblem(scan)).toBe('matroska');
 
-		const webm = new Uint8Array([
-			0x1a, 0x45, 0xdf, 0xa3, 0x42, 0x82, 0x84, 0x77, 0x65, 0x62, 0x6d
-		]);
+		const webm = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0x42, 0x82, 0x84, 0x77, 0x65, 0x62, 0x6d]);
 		expect(videoContainerProblem(scanVideoContainer(webm.length, reader(webm)))).toBeNull();
 
 		const matroska = new Uint8Array([

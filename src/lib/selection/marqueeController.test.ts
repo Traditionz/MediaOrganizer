@@ -8,10 +8,7 @@ function el(className: string, attrs: Record<string, string> = {}) {
 			if (sel === '.media-card' && (className.includes('media-card') || attrs.card)) {
 				return this;
 			}
-			if (
-				sel === '[data-slot="scroll-area-scrollbar"]' &&
-				attrs.slot === 'scroll-area-scrollbar'
-			) {
+			if (sel === '[data-slot="scroll-area-scrollbar"]' && attrs.slot === 'scroll-area-scrollbar') {
 				return this;
 			}
 			return null;

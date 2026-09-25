@@ -12,12 +12,7 @@ import {
 	type JsonValue
 } from '$lib/parse';
 import { albumCountDelta, mergeMembershipIntoList } from '$lib/media/viewMembership';
-import {
-	KNOWN_CACHE_CAP,
-	forgetIds,
-	pruneKnown,
-	pruneThumbReady
-} from '$lib/media/knownCache';
+import { KNOWN_CACHE_CAP, forgetIds, pruneKnown, pruneThumbReady } from '$lib/media/knownCache';
 import type { PreferencesState } from './preferences.svelte';
 import type { LibraryLoad } from './libraryLoad';
 

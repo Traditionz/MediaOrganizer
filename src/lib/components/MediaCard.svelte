@@ -41,6 +41,9 @@
 		variant = 'grid'
 	}: Props = $props();
 
+	// Context lookups only work during init; the thumbnail job runs later.
+	const { library } = getAppState();
+
 	const originalSrc = $derived(`/api/media/${item.id}`);
 	let thumbEpoch = $state(0);
 	let failedSrc = $state<string | null>(null);
@@ -51,8 +54,7 @@
 		if (!names?.length) return null;
 		return names.length > 1 ? `${names[0]} +${names.length - 1}` : names[0];
 	});
-	const albumTitle = $derived(item.album_names?.join(', ') ?? '');
-	const showAlbumChip = $derived(Boolean(item.album_names?.length));
+	const albumTitle = $derived(item.album_names?.join(', '));
 	const showCheckbox = $derived(selected || selectMode);
 	const durationLabel = $derived(
 		item.media_type === 'video' &&
@@ -64,7 +66,6 @@
 	);
 
 	let dragging = $state(false);
-	let cardEl: HTMLDivElement | undefined = $state();
 	let localThumb = $state(false);
 	let generatingThumbnail = $state(false);
 	let thumbStarted = false;
@@ -76,7 +77,7 @@
 
 	const showPoster = $derived(Boolean(item.has_thumbnail) || localThumb);
 
-	function handleDragStart(e: DragEvent) {
+	function handleDragStart(e: DragEvent & { currentTarget: HTMLDivElement }) {
 		if (!e.dataTransfer) return;
 		// Snapshot selection up front — SvelteSet + click handlers can mutate mid-gesture.
 		const selected = selectedIds ? Array.from(selectedIds) : [];
@@ -86,7 +87,7 @@
 		e.dataTransfer.setData('text/plain', `media:${ids.join(',')}`);
 		e.dataTransfer.effectAllowed = 'copyMove';
 		dragging = true;
-		if (cardEl) setCompactMediaDragImage(e.dataTransfer, cardEl, ids.length);
+		setCompactMediaDragImage(e.dataTransfer, e.currentTarget, ids.length);
 	}
 
 	function handleDragEnd() {
@@ -101,7 +102,6 @@
 
 	function startLazyThumbnail(force = false) {
 		if (!force && (thumbStarted || item.has_thumbnail || localThumb)) return;
-		if (item.media_type !== 'video' && item.media_type !== 'image') return;
 		thumbStarted = true;
 		generatingThumbnail = true;
 
@@ -113,11 +113,7 @@
 				if (!ok) return;
 				localThumb = true;
 				thumbEpoch += 1;
-				try {
-					getAppState().library.markHasThumbnail(mediaId);
-				} catch {
-					/* outside app context */
-				}
+				library.markHasThumbnail(mediaId);
 			} catch {
 				/* leave placeholder */
 			} finally {
@@ -126,9 +122,9 @@
 		});
 	}
 
-	function onPosterError(e: Event) {
-		const el = e.currentTarget;
-		if (!(el instanceof HTMLImageElement)) return;
+	function onPosterError(e: Event & { currentTarget: EventTarget & Element }) {
+		// SAFETY: only bound as the onerror handler of the card <img>.
+		const el = e.currentTarget as HTMLImageElement;
 		const src = el.getAttribute('src') ?? '';
 		if (!isCurrentThumbSrc(src, thumbSrc) && !isCurrentThumbSrc(el.src, thumbSrc)) return;
 		if (posterErrors >= MAX_POSTER_ERRORS) return;
@@ -139,9 +135,9 @@
 		startLazyThumbnail(true);
 	}
 
-	function onImageError(e: Event) {
-		const el = e.currentTarget;
-		if (!(el instanceof HTMLImageElement)) return;
+	function onImageError(e: Event & { currentTarget: EventTarget & Element }) {
+		// SAFETY: only bound as the onerror handler of the card <img>.
+		const el = e.currentTarget as HTMLImageElement;
 		const src = el.getAttribute('src') ?? '';
 		if (!isCurrentThumbSrc(src, thumbSrc) && !isCurrentThumbSrc(el.src, thumbSrc)) return;
 		if (imageThumbErrors < MAX_IMAGE_THUMB_ERRORS) {
@@ -153,7 +149,6 @@
 	}
 
 	function attachCard(node: HTMLDivElement) {
-		cardEl = node;
 		const needsThumb =
 			(item.media_type === 'video' || item.media_type === 'image') &&
 			!item.has_thumbnail &&
@@ -163,7 +158,6 @@
 			return () => {
 				cancelThumb?.();
 				cancelThumb = null;
-				if (cardEl === node) cardEl = undefined;
 			};
 		}
 
@@ -176,7 +170,6 @@
 			return () => {
 				cancelThumb?.();
 				cancelThumb = null;
-				if (cardEl === node) cardEl = undefined;
 			};
 		}
 
@@ -195,7 +188,6 @@
 			io.disconnect();
 			cancelThumb?.();
 			cancelThumb = null;
-			if (cardEl === node) cardEl = undefined;
 		};
 	}
 </script>
@@ -311,7 +303,7 @@
 			<span class="min-w-0 truncate">{item.original_name}</span>
 		</p>
 		<div class="mt-1 flex items-center justify-between gap-2 text-[10px] text-white/70">
-			{#if showAlbumChip && albumLabel}
+			{#if albumLabel}
 				<Badge variant="secondary" class="max-w-[70%] truncate" title={albumTitle}>
 					<span class="truncate">{albumLabel}</span>
 				</Badge>
@@ -331,7 +323,7 @@
 		</span>
 	{/if}
 
-	{#if !showCheckbox && showAlbumChip && albumLabel}
+	{#if !showCheckbox && albumLabel}
 		<Badge
 			variant="secondary"
 			class="absolute top-2 left-2 max-w-[75%] truncate shadow-sm"

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'vitest';
 import { createAppState } from './app.svelte';
 import { mediaJson, testLoad, testMedia } from '../../test-utils/fixtures';
-import { installLibraryFetch } from '../../test-utils/mockFetch';
+import { installFetch, installLibraryFetch, jsonResponse } from '../../test-utils/mockFetch';
 
 describe('FavoritesActions', () => {
 	let restore: (() => void) | null = null;
@@ -33,6 +33,15 @@ describe('FavoritesActions', () => {
 		const app = createAppState(testLoad());
 		await app.favorites.setFavorite([], true);
 		expect(app.undo.size).toBe(0);
+	});
+
+	test('setFavorite stops on failed request', async () => {
+		restore = installFetch(async () => jsonResponse({ message: 'no' }, 500));
+		const item = testMedia({ favorite: false });
+		const app = createAppState(testLoad({ media: [item] }));
+		await app.favorites.setFavorite([item.id], true);
+		expect(app.undo.size).toBe(0);
+		expect(app.library.findKnown(item.id)?.favorite).toBe(false);
 	});
 
 	test('toggle uses nextFavoriteFlag from loaded rows', async () => {

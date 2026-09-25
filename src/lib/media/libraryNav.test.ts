@@ -95,7 +95,11 @@ describe('library nav', () => {
 			)
 		).toBe(false);
 		expect(
-			mediaMatchesLibraryView({ created_at: 't', album_ids: [], gps_lat: 1, gps_lng: 2 }, 'map', now)
+			mediaMatchesLibraryView(
+				{ created_at: 't', album_ids: [], gps_lat: 1, gps_lng: 2 },
+				'map',
+				now
+			)
 		).toBe(true);
 		expect(mediaMatchesLibraryView({ created_at: 't', album_ids: [] }, 'map', now)).toBe(false);
 		expect(

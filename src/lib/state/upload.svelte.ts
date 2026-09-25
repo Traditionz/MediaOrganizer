@@ -112,20 +112,16 @@ export class UploadController {
 
 		if (!filesToUpload.length) {
 			await this.refreshCounts();
-			if (duplicateFiles.length) {
-				const linked = albumId
-					? existingIdsFromNameLookup(
-							found,
-							duplicateFiles.map((file) => file.name)
-						).length
-					: 0;
-				this.ui.convertResultMessage =
-					linked > 0
-						? `Skipped ${duplicateFiles.length} duplicate(s); added ${linked} existing item(s) to album.`
-						: `Skipped ${duplicateFiles.length} duplicate name(s).`;
-			} else {
-				this.ui.errorMessage = 'Nothing to upload.';
-			}
+			const linked = albumId
+				? existingIdsFromNameLookup(
+						found,
+						duplicateFiles.map((file) => file.name)
+					).length
+				: 0;
+			this.ui.convertResultMessage =
+				linked > 0
+					? `Skipped ${duplicateFiles.length} duplicate(s); added ${linked} existing item(s) to album.`
+					: `Skipped ${duplicateFiles.length} duplicate name(s).`;
 			return;
 		}
 
@@ -154,7 +150,6 @@ export class UploadController {
 				filesToUpload,
 				UPLOAD_CONCURRENCY,
 				async (file, i) => {
-					if (signal?.aborted) return;
 					const fileId = transferFiles[i]!.id;
 					this.ui.setFileProgress(jobId, fileId, { status: 'uploading' });
 					try {
@@ -175,11 +170,9 @@ export class UploadController {
 
 						this.library.prependMedia([uploaded]);
 
-						if (uploaded.id) {
-							void this.backfillThumb(file, uploaded).catch(() => {
-								/* thumbnail backfill is optional */
-							});
-						}
+						void this.backfillThumb(file, uploaded).catch(() => {
+							/* thumbnail backfill is optional */
+						});
 						this.ui.setFileProgress(jobId, fileId, {
 							progress: 100,
 							loaded: file.size,

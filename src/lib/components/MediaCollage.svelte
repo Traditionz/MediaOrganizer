@@ -70,33 +70,31 @@
 	{@attach observeHost}
 	class="relative w-full"
 	data-media-layout="collage"
-	style:height="{packed.totalHeight}px"
+	style:height={`${packed.totalHeight}px`}
 >
 	{#each packed.layouts as layout (layout.id)}
-		{@const item = itemById.get(layout.id)}
-		{#if item}
-			<div
-				class="absolute overflow-hidden"
-				style:left="{layout.x}px"
-				style:top="{layout.y}px"
-				style:width="{layout.w}px"
-				style:height="{layout.h}px"
-			>
-				<MediaCard
-					{item}
-					variant="collage"
-					{selectMode}
-					{selectedIds}
-					selected={selectedIds.has(item.id)}
-					onclick={(e) => onselect(item.id, e)}
-					ondblclick={(e) => {
-						e.stopPropagation();
-						onopen(item);
-					}}
-					{oncontextmenu}
-					{onfavorite}
-				/>
-			</div>
-		{/if}
+		{@const item = itemById.get(layout.id)!}
+		<div
+			class="absolute overflow-hidden"
+			style:left={`${layout.x}px`}
+			style:top={`${layout.y}px`}
+			style:width={`${layout.w}px`}
+			style:height={`${layout.h}px`}
+		>
+			<MediaCard
+				{item}
+				variant="collage"
+				{selectMode}
+				{selectedIds}
+				selected={selectedIds.has(item.id)}
+				onclick={(e) => onselect(item.id, e)}
+				ondblclick={(e) => {
+					e.stopPropagation();
+					onopen(item);
+				}}
+				{oncontextmenu}
+				{onfavorite}
+			/>
+		</div>
 	{/each}
 </div>

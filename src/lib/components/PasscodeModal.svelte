@@ -12,7 +12,7 @@
 		passcodeEditTitle,
 		validatePasscodeEdit
 	} from '$lib/profile/passcodeEdit';
-	import { parseConfirmMediaCount, validateDeleteProfileConfirm } from '$lib/profile/deleteConfirm';
+	import { validateDeleteProfileConfirm } from '$lib/profile/deleteConfirm';
 	import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
 
 	interface Props {
@@ -105,15 +105,14 @@
 		localError = '';
 
 		if (mode === 'delete') {
-			const typedCount = parseConfirmMediaCount(String(confirmMediaCount));
 			const editError = validateDeleteProfileConfirm({
 				typedName: confirmName,
 				typedCountRaw: String(confirmMediaCount),
 				profileName,
 				mediaCount
 			});
-			if (editError || typedCount == null) {
-				localError = editError ?? 'Enter the media count as a whole number';
+			if (editError) {
+				localError = editError;
 				return;
 			}
 			await onsubmit({
@@ -121,7 +120,7 @@
 				confirmPasscode: '',
 				usePasscode: false,
 				confirmName: confirmName.trim(),
-				confirmMediaCount: typedCount
+				confirmMediaCount: mediaCount
 			});
 			return;
 		}
@@ -148,8 +147,7 @@
 			return;
 		}
 
-		const wantsPasscode =
-			mode === 'create' ? usePasscode : mode === 'unlock' ? requiresPasscode : false;
+		const wantsPasscode = mode === 'create' ? usePasscode : requiresPasscode;
 
 		if (mode === 'create' && !name.trim()) {
 			localError = 'Profile name is required';
@@ -173,20 +171,10 @@
 			usePasscode: wantsPasscode
 		});
 	}
-
-	function dismiss() {
-		if (busy || !open) return;
-		oncancel();
-	}
 </script>
 
 {#if open}
-	<Dialog.Root
-		open={true}
-		onOpenChange={(next) => {
-			if (!next) dismiss();
-		}}
-	>
+	<Dialog.Root open={true} onOpenChange={() => oncancel()}>
 		<Dialog.Content
 			class="flex max-h-[min(36rem,92vh)] flex-col gap-0 overflow-hidden p-0 sm:max-w-md"
 			showCloseButton={false}
@@ -348,8 +336,7 @@
 					>
 						{#if busy}
 							<Spinner class="size-3" />
-						{/if}
-						{mode === 'unlock'
+						{/if}{mode === 'unlock'
 							? 'Unlock'
 							: mode === 'create'
 								? 'Create'

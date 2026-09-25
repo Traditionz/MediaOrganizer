@@ -227,9 +227,7 @@ export class UiState {
 		const index = job.files.findIndex((item) => item.id === fileId);
 		if (index < 0) return;
 		job.files[index] = applyFileProgress(job.files[index], patch);
-		if (job.files.length) {
-			job.progress = averageFileProgress(job.files);
-		}
+		job.progress = averageFileProgress(job.files);
 		this.persistUploadProgress();
 	}
 

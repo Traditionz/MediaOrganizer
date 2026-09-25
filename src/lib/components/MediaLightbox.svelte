@@ -282,7 +282,7 @@
 							{/if}
 							<dt class="text-white/55">File</dt>
 							<dd class="min-w-0">
-								{current.mime_type} · {current.width ?? '?'}×{current.height ?? '?'}
+								{`${current.mime_type} · ${current.width ?? '?'}×${current.height ?? '?'}`}
 							</dd>
 						</div>
 					</dl>
@@ -300,11 +300,9 @@
 			>
 				<h2 class="truncate text-sm font-semibold">{current.original_name}</h2>
 				<p class="mt-0.5 truncate text-[11px] text-white/75">
-					{albumSummary} · {formatDate(mediaDateIso(current))} · {formatBytes(current.size)} · {formatViewCount(
-						current.view_count
-					)}
+					{`${albumSummary} · ${formatDate(mediaDateIso(current))} · ${formatBytes(current.size)} · ${formatViewCount(current.view_count)}`}
 					{#if positionLabel}
-						<span aria-live="polite"> · {positionLabel}</span>
+						<span aria-live="polite">{`· ${positionLabel}`}</span>
 					{/if}
 				</p>
 			</div>

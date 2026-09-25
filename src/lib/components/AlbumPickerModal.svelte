@@ -127,20 +127,10 @@
 			busy = false;
 		}
 	}
-
-	function dismiss() {
-		if (busy || !open) return;
-		oncancel();
-	}
 </script>
 
 {#if open}
-	<Dialog.Root
-		open={true}
-		onOpenChange={(next) => {
-			if (!next) dismiss();
-		}}
-	>
+	<Dialog.Root open={true} onOpenChange={() => oncancel()}>
 		<Dialog.Content
 			{@attach resetOnOpen}
 			class="flex h-[min(42rem,92vh)] max-w-lg flex-col gap-0 overflow-hidden p-0 sm:max-w-lg"

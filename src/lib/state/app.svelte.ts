@@ -30,12 +30,8 @@ export class AppState {
 	readonly osFileDrag: OsFileDrag;
 
 	constructor() {
-		this.albums = new AlbumActions(
-			this.library,
-			this.ui,
-			this.selection,
-			this.undo,
-			() => this.refreshLibraryLists()
+		this.albums = new AlbumActions(this.library, this.ui, this.selection, this.undo, () =>
+			this.refreshLibraryLists()
 		);
 		this.favorites = new FavoritesActions(this.library, this.ui, this.undo);
 		this.upload = new UploadController(this.library, this.ui, this.prefs, () =>

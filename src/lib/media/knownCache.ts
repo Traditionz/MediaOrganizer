@@ -28,7 +28,11 @@ export function pruneKnown<T>(
 	}
 }
 
-export function forgetIds<T>(known: Map<string, T>, thumbReady: Set<string>, ids: Iterable<string>) {
+export function forgetIds<T>(
+	known: Map<string, T>,
+	thumbReady: Set<string>,
+	ids: Iterable<string>
+) {
 	for (const id of ids) {
 		known.delete(id);
 		thumbReady.delete(id);

@@ -1,13 +1,35 @@
 import { playwright } from '@vitest/browser-playwright';
 import { fileURLToPath } from 'node:url';
+import type { Plugin } from 'vite';
 import { defineConfig, mergeConfig } from 'vitest/config';
 import viteConfig from './vite.config.ts';
 
 const envPublic = fileURLToPath(new URL('./src/test-utils/envPublic.ts', import.meta.url));
 
+/**
+ * Windows: kit builds `$lib` from cwd. A lowercase drive letter makes `$lib` imports resolve to a
+ * different module id than relative imports, so coverage drops every file reached only via `$lib`.
+ */
+function uppercaseAliasDrive(): Plugin {
+	return {
+		name: 'uppercase-alias-drive',
+		enforce: 'post',
+		config(config) {
+			const alias = config.resolve?.alias;
+			if (!Array.isArray(alias)) return;
+			for (const entry of alias) {
+				if (typeof entry.replacement === 'string') {
+					entry.replacement = entry.replacement.replace(/^[a-z]:/, (drive) => drive.toUpperCase());
+				}
+			}
+		}
+	};
+}
+
 export default mergeConfig(
 	viteConfig,
 	defineConfig({
+		plugins: [uppercaseAliasDrive()],
 		resolve: {
 			conditions: ['browser'],
 			alias: {
@@ -26,12 +48,11 @@ export default mergeConfig(
 				provider: 'v8',
 				include: ['src/lib/components/**/*.svelte', 'src/lib/**/*.svelte.ts'],
 				exclude: ['src/lib/components/ui/**'],
-				// Ratchet: raise as tests land; workspace target is 100.
 				thresholds: {
-					lines: 46,
-					functions: 46,
-					branches: 29,
-					statements: 46
+					lines: 100,
+					functions: 100,
+					branches: 100,
+					statements: 100
 				}
 			}
 		}

@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { syncMediaElementPlaybackProps } from './attachSync';
 
-function fakeMedia(
-	init: { playbackRate: number; volume: number; muted: boolean }
-): HTMLVideoElement {
+function fakeMedia(init: {
+	playbackRate: number;
+	volume: number;
+	muted: boolean;
+}): HTMLVideoElement {
 	return { ...init } as HTMLVideoElement;
 }
 

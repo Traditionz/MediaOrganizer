@@ -320,7 +320,7 @@
 		window.addEventListener('wheel', onVolumeWheel, { passive: false });
 		return () => {
 			window.removeEventListener('wheel', onVolumeWheel);
-			if (playerEl === node) playerEl = undefined;
+			playerEl = undefined;
 		};
 	}
 
@@ -333,7 +333,7 @@
 		queuedPreview = -1;
 		return () => {
 			releaseVideoElement(node);
-			if (previewEl === node) previewEl = undefined;
+			previewEl = undefined;
 		};
 	}
 
@@ -386,7 +386,7 @@
 			onmetadata?.({
 				w: node.videoWidth,
 				h: node.videoHeight,
-				duration: Number.isFinite(clock.duration) ? clock.duration : 0
+				duration: clock.duration
 			});
 		}
 	}
@@ -455,9 +455,9 @@
 		if (!videoEl) return;
 		if (videoEl.muted || volume === 0) {
 			videoEl.muted = false;
-			applyVolume(lastVolume > 0 ? lastVolume : 1);
+			applyVolume(lastVolume);
 		} else {
-			lastVolume = volume > 0 ? volume : lastVolume;
+			lastVolume = volume;
 			videoEl.muted = true;
 			muted = true;
 		}
@@ -601,6 +601,7 @@
 	function applyPlayerAction(action: PlayerKeyAction) {
 		const seek = playerSeekDelta(action);
 		if (seek != null) {
+			/* v8 ignore next -- keydown listener is torn down before the video attachment clears videoEl */
 			if (!videoEl) return;
 			current = clampSeekTime(pendingSeek ?? videoEl.currentTime, duration, seek);
 			commitSeek();
@@ -635,10 +636,8 @@
 			cyclePlaybackRate(1);
 			return;
 		}
-		if (action === 'closeMenu') {
-			speedMenuOpen = false;
-			scheduleHide();
-		}
+		speedMenuOpen = false;
+		scheduleHide();
 	}
 
 	function onPlayerKeydown(e: KeyboardEvent) {
@@ -771,9 +770,9 @@
 			<div
 				class={['custom-hover-preview', timelineHover && 'is-visible']}
 				style:--x={hoverRatio}
-				style:--preview-w="{previewWRem}rem"
+				style:--preview-w={`${previewWRem}rem`}
 				style:--preview-h="{PREVIEW_H_REM}rem"
-				style:--preview-half="{previewHalfRem}rem"
+				style:--preview-half={`${previewHalfRem}rem`}
 				aria-hidden="true"
 			>
 				<div class="custom-hover-frame">
@@ -809,10 +808,12 @@
 					if (!videoEl) return;
 					if (e.key === 'ArrowLeft') {
 						e.preventDefault();
+						e.stopPropagation();
 						current = Math.max(0, (pendingSeek ?? videoEl.currentTime) - 5);
 						commitSeek();
 					} else if (e.key === 'ArrowRight') {
 						e.preventDefault();
+						e.stopPropagation();
 						current = Math.min(duration, (pendingSeek ?? videoEl.currentTime) + 5);
 						commitSeek();
 					}

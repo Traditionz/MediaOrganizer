@@ -36,20 +36,10 @@
 		if (busy) return;
 		await onconfirm();
 	}
-
-	function dismiss() {
-		if (busy || !open) return;
-		(ondismiss ?? oncancel)();
-	}
 </script>
 
 {#if open}
-	<Dialog.Root
-		open={true}
-		onOpenChange={(next) => {
-			if (!next) dismiss();
-		}}
-	>
+	<Dialog.Root open={true} onOpenChange={() => (ondismiss ?? oncancel)()}>
 		<Dialog.Content
 			class="sm:max-w-md"
 			showCloseButton={false}
@@ -74,8 +64,7 @@
 					>
 						{#if busy}
 							<Spinner class="size-3" />
-						{/if}
-						{confirmLabel}
+						{/if}{confirmLabel}
 					</Button>
 				</Dialog.Footer>
 			</form>

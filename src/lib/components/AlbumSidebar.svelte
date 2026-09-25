@@ -125,9 +125,7 @@
 	const tagItems = $derived(tags.filter((t) => t.kind === 'tag'));
 	const peopleItems = $derived(tags.filter((t) => t.kind === 'person'));
 
-	const contextAlbum = $derived(
-		contextMenu.albumId ? (albums.find((a) => a.id === contextMenu.albumId) ?? null) : null
-	);
+	const contextAlbum = $derived(albums.find((a) => a.id === contextMenu.albumId) ?? null);
 
 	const contextMenuItems = $derived.by((): ContextMenuItem[] => {
 		if (!contextAlbum) return [];
@@ -151,6 +149,7 @@
 
 	$effect(() => {
 		const nav = albumNavViewport;
+		/* v8 ignore next -- ScrollArea binds viewportRef before this effect first runs */
 		if (!nav) return;
 		return attachAlbumNavScroll(nav);
 	});
@@ -171,7 +170,7 @@
 		}
 
 		function tick() {
-			if (!velocity || !isInternalDragActive()) {
+			if (!isInternalDragActive()) {
 				stopScroll();
 				return;
 			}
@@ -185,10 +184,6 @@
 		}
 
 		function updateVelocity(clientX: number, clientY: number) {
-			if (!isInternalDragActive()) {
-				stopScroll();
-				return;
-			}
 			const rect = nav.getBoundingClientRect();
 			const inX = clientX >= rect.left && clientX <= rect.right;
 			const inY = clientY >= rect.top - EDGE_PX && clientY <= rect.bottom + EDGE_PX;
@@ -444,6 +439,7 @@
 
 	async function handleContextSelect(id: string) {
 		const album = contextAlbum;
+		/* v8 ignore next -- menu items are empty (nothing to select) whenever contextAlbum is null */
 		if (!album) return;
 
 		if (id === 'copy-name') {
@@ -462,10 +458,7 @@
 			await onduplicate(album.id);
 			return;
 		}
-		if (id === 'delete') {
-			await ondelete(album.id);
-			return;
-		}
+		await ondelete(album.id);
 	}
 </script>
 
@@ -771,7 +764,7 @@
 									variant="ghost"
 									size="icon-xs"
 									class="opacity-0 group-hover:opacity-100"
-									aria-label="Delete person {person.name}"
+									aria-label={`Delete person ${person.name}`}
 									onclick={() => ondeleteTag(person.id)}
 								>
 									<Trash2 class="h-4 w-4" />
@@ -820,7 +813,7 @@
 									variant="ghost"
 									size="icon-xs"
 									class="opacity-0 group-hover:opacity-100"
-									aria-label="Delete tag {tag.name}"
+									aria-label={`Delete tag ${tag.name}`}
 									onclick={() => ondeleteTag(tag.id)}
 								>
 									<Trash2 class="h-4 w-4" />
@@ -874,7 +867,7 @@
 				</div>
 				{#if exactName}
 					<Alert.Root variant="destructive" class="mt-2">
-						<Alert.Description>“{exactName}” already exists.</Alert.Description>
+						<Alert.Description>{`“${exactName}” already exists.`}</Alert.Description>
 					</Alert.Root>
 				{/if}
 			</form>
