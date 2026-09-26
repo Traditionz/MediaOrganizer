@@ -25,6 +25,17 @@ function deferred() {
 }
 
 describe('ProfileGate', () => {
+	test('default theme toggle is safe with no handler', async () => {
+		await render(ProfileGate, {
+			profiles: [testProfile],
+			onselect: async () => undefined,
+			oncreate: async () => undefined,
+			onpasscode: () => undefined
+		});
+		await page.getByRole('button', { name: 'Switch to light mode' }).click();
+		await expect.element(page.getByRole('button', { name: 'Pat' })).toBeVisible();
+	});
+
 	test('lists profiles and selects unlocked one', async () => {
 		const picks: string[] = [];
 		await render(ProfileGate, {
@@ -202,5 +213,40 @@ describe('ProfileGate', () => {
 			['Kid', '1234'],
 			['Kid', '1234']
 		]);
+	});
+
+	test('theme toggle is on the gate and stays through unlock', async () => {
+		const themes: string[] = [];
+		await render(ProfileGate, {
+			profiles: [lockedProfile],
+			theme: 'dark',
+			onselect: async () => undefined,
+			oncreate: async () => undefined,
+			onpasscode: () => undefined,
+			ontheme: (theme) => {
+				themes.push(theme);
+			}
+		});
+		await page.getByRole('button', { name: 'Switch to light mode' }).click();
+		expect(themes).toEqual(['light']);
+		await page.getByRole('button', { name: 'Locked' }).click();
+		await expect.element(page.getByPlaceholder('Passcode')).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Switch to light mode' })).toBeVisible();
+	});
+
+	test('light theme toggle asks for dark', async () => {
+		const themes: string[] = [];
+		await render(ProfileGate, {
+			profiles: [testProfile],
+			theme: 'light',
+			onselect: async () => undefined,
+			oncreate: async () => undefined,
+			onpasscode: () => undefined,
+			ontheme: (theme) => {
+				themes.push(theme);
+			}
+		});
+		await page.getByRole('button', { name: 'Switch to dark mode' }).click();
+		expect(themes).toEqual(['dark']);
 	});
 });

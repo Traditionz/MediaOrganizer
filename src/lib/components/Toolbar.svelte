@@ -2,9 +2,8 @@
 	import ArrowDownWideNarrow from '@lucide/svelte/icons/arrow-down-wide-narrow';
 	import ArrowUpNarrowWide from '@lucide/svelte/icons/arrow-up-narrow-wide';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
-	import Moon from '@lucide/svelte/icons/moon';
 	import Search from '@lucide/svelte/icons/search';
-	import Sun from '@lucide/svelte/icons/sun';
+	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
@@ -50,7 +49,6 @@
 		ontoggleSelect: () => void;
 		onclearSelection: () => void;
 		onopenAlbumPicker: () => void;
-		oncompress: () => void;
 		ondelete: () => void;
 		onrestore?: () => void;
 		onemptyTrash?: () => void;
@@ -92,7 +90,6 @@
 		ontoggleSelect,
 		onclearSelection,
 		onopenAlbumPicker,
-		oncompress,
 		ondelete,
 		onrestore,
 		onemptyTrash,
@@ -120,222 +117,205 @@
 	}
 </script>
 
-<div class="mo-app-chrome border-border flex flex-wrap items-center gap-2 border-b px-4 py-3">
-	{#if showSelectionActions}
-		<Badge variant="outline">{selectedCount} selected</Badge>
-		{#if trashMode}
-			<Button size="sm" disabled={!selectedCount} onclick={() => onrestore?.()}>Restore</Button>
-			<Button size="sm" variant="destructive" disabled={!selectedCount} onclick={ondelete}>
-				Delete forever
-			</Button>
+<div class="mo-app-chrome border-border flex flex-col border-b">
+	<div class="flex flex-wrap items-center gap-2 px-4 py-2">
+		{#if showSelectionActions}
+			<Badge variant="outline">{selectedCount} selected</Badge>
+			<Button size="sm" variant="outline" onclick={onclearSelection}>Clear</Button>
+			<Button size="sm" variant="ghost" onclick={ontoggleSelect}>Done</Button>
+			{#if trashMode}
+				<Button size="sm" disabled={!selectedCount} onclick={() => onrestore?.()}>Restore</Button>
+				<Button size="sm" variant="destructive" disabled={!selectedCount} onclick={ondelete}>
+					Delete forever
+				</Button>
+			{:else}
+				<Button size="sm" disabled={!selectedCount} onclick={onopenAlbumPicker}>Add to album…</Button>
+				<Button size="sm" variant="destructive" disabled={!selectedCount} onclick={ondelete}>
+					Move to trash
+				</Button>
+				{#if onfavorite}
+					<Button
+						size="sm"
+						variant="secondary"
+						disabled={!selectedCount}
+						onclick={() => onfavorite()}
+					>
+						Favorite
+					</Button>
+				{/if}
+				{#if onexport}
+					<Button size="sm" variant="outline" disabled={!selectedCount} onclick={() => onexport()}>
+						Export zip
+					</Button>
+				{/if}
+			{/if}
 		{:else}
-			<Button size="sm" disabled={!selectedCount} onclick={onopenAlbumPicker}>Add to album…</Button>
-			<Button
-				size="sm"
-				variant="secondary"
-				disabled={!selectedCount || uploading}
-				onclick={() => oncompress()}
-			>
-				Compress
-			</Button>
-			<Button size="sm" variant="destructive" disabled={!selectedCount} onclick={ondelete}>
-				Move to trash
-			</Button>
-			{#if onfavorite}
+			<Button size="sm" variant="outline" onclick={ontoggleSelect}>Select</Button>
+			{#if trashMode}
 				<Button
 					size="sm"
-					variant="secondary"
-					disabled={!selectedCount}
-					onclick={() => onfavorite()}
+					variant="destructive"
+					disabled={trashCount === 0}
+					onclick={() => onemptyTrash?.()}
 				>
-					Favorite
+					Empty trash
 				</Button>
-			{/if}
-			{#if onexport}
-				<Button size="sm" variant="outline" disabled={!selectedCount} onclick={() => onexport()}>
-					Export zip
-				</Button>
-			{/if}
-		{/if}
-		<Button size="sm" variant="outline" onclick={onclearSelection}>Clear</Button>
-		<Button size="sm" variant="ghost" onclick={ontoggleSelect}>Done</Button>
-	{:else}
-		<Button size="sm" variant="outline" onclick={ontoggleSelect}>Select</Button>
-		{#if trashMode}
-			<Button
-				size="sm"
-				variant="destructive"
-				disabled={trashCount === 0}
-				onclick={() => onemptyTrash?.()}
-			>
-				Empty trash
-			</Button>
-		{:else}
-			<Button size="sm" onclick={onuploadClick}>
-				{#if uploading}
-					<Spinner class="size-3" />
-				{/if}
-				Upload
-			</Button>
-			{#if onfolderClick}
-				<Button size="sm" variant="outline" onclick={() => onfolderClick()}>Folder</Button>
-			{/if}
-			{#if onexport}
-				<Button size="sm" variant="outline" onclick={() => onexport()}>Export zip</Button>
-			{/if}
-			{#if onhealth}
-				<Button size="sm" variant="outline" onclick={() => onhealth()}>Library health</Button>
-			{/if}
-		{/if}
-	{/if}
-
-	<div class="flex flex-wrap items-center gap-2">
-		<ToggleGroup.Root
-			type="single"
-			variant="outline"
-			size="sm"
-			value={viewMode}
-			onValueChange={(v) => {
-				if (v === 'grid' || v === 'collage') onviewMode(v);
-			}}
-		>
-			<ToggleGroup.Item value="grid">Grid</ToggleGroup.Item>
-			<ToggleGroup.Item value="collage">Collage</ToggleGroup.Item>
-		</ToggleGroup.Root>
-		<label class="text-muted-foreground flex items-center gap-2 text-sm">
-			<span class="whitespace-nowrap">Cols {columns}</span>
-			<Slider
-				type="single"
-				class="w-24"
-				min={2}
-				max={8}
-				step={1}
-				value={columns}
-				onValueChange={(v) => oncolumns(v)}
-			/>
-		</label>
-	</div>
-
-	<div class="relative max-w-xs min-w-[10rem] flex-1">
-		<Search
-			class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
-			aria-hidden="true"
-		/>
-		<Input
-			type="search"
-			class="pl-8"
-			placeholder="Search media…"
-			value={searchQuery}
-			oninput={(e) => onsearchQuery(e.currentTarget.value)}
-			aria-label="Search media"
-		/>
-	</div>
-
-	<div class="flex items-center gap-1" role="group" aria-label="Sort media">
-		<span class="text-muted-foreground hidden text-sm sm:inline">Sort</span>
-		<DropdownMenu.Root>
-			<DropdownMenu.Trigger>
-				{#snippet child({ props })}
-					<Button
-						{...props}
-						type="button"
-						variant="outline"
-						size="sm"
-						class="min-w-28 justify-between gap-1.5 font-normal"
-						aria-label="Sort by"
-					>
-						<span class="truncate">{sortByLabel}</span>
-						<ChevronDown class="size-3.5 opacity-60" />
-					</Button>
-				{/snippet}
-			</DropdownMenu.Trigger>
-			<DropdownMenu.Content align="end" class="min-w-36">
-				<DropdownMenu.RadioGroup value={sortBy} onValueChange={onSortByChange}>
-					{#each MEDIA_SORT_OPTIONS as option (option.value)}
-						<DropdownMenu.RadioItem value={option.value}>{option.label}</DropdownMenu.RadioItem>
-					{/each}
-				</DropdownMenu.RadioGroup>
-			</DropdownMenu.Content>
-		</DropdownMenu.Root>
-		<Button
-			variant="outline"
-			size="icon-sm"
-			onclick={ontoggleSortDir}
-			aria-label={`Sort direction: ${sortDirLabel}`}
-			title={sortDirLabel}
-		>
-			{#if sortDir === 'asc'}
-				<ArrowUpNarrowWide class="size-4" />
 			{:else}
-				<ArrowDownWideNarrow class="size-4" />
+				<Button size="sm" onclick={onuploadClick}>
+					{#if uploading}
+						<Spinner class="size-3" />
+					{/if}
+					Upload
+				</Button>
+				{#if onfolderClick}
+					<Button size="sm" variant="outline" onclick={() => onfolderClick()}>Folder</Button>
+				{/if}
+				{#if onexport}
+					<Button size="sm" variant="outline" onclick={() => onexport()}>Export zip</Button>
+				{/if}
+				{#if onhealth}
+					<Button size="sm" variant="outline" onclick={() => onhealth()}>Library health</Button>
+				{/if}
 			{/if}
-		</Button>
-	</div>
-
-	<div class="flex items-center gap-3 px-1">
-		<label class="flex cursor-pointer items-center gap-1.5 text-sm">
-			<Checkbox checked={showImages} onCheckedChange={(v) => onshowImages(asBool(v))} />
-			Pictures
-		</label>
-		<label class="flex cursor-pointer items-center gap-1.5 text-sm">
-			<Checkbox checked={showVideos} onCheckedChange={(v) => onshowVideos(asBool(v))} />
-			Videos
-		</label>
-	</div>
-
-	<label class="text-muted-foreground flex items-center gap-1.5 text-sm">
-		<span class="hidden sm:inline">From</span>
-		<Input
-			type="date"
-			class="w-auto"
-			value={dateFrom}
-			aria-label="From date"
-			onchange={(e) => ondateFrom(e.currentTarget.value)}
-		/>
-	</label>
-	<label class="text-muted-foreground flex items-center gap-1.5 text-sm">
-		<span class="hidden sm:inline">To</span>
-		<Input
-			type="date"
-			class="w-auto"
-			value={dateTo}
-			aria-label="To date"
-			onchange={(e) => ondateTo(e.currentTarget.value)}
-		/>
-	</label>
-
-	<div
-		class="border-border bg-muted/50 flex flex-wrap items-center gap-3 rounded-lg border px-3 py-1.5"
-		role="group"
-		aria-label="Upload settings"
-	>
-		<span class="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
-			Upload settings
-		</span>
-		<label
-			class="flex cursor-pointer items-center gap-1.5 text-sm"
-			title="When on, ask whether to skip or upload files whose names already exist. When off, skip duplicates silently (Amazon Photos–style)."
-		>
-			<Checkbox
-				checked={warnDuplicateUploads}
-				onCheckedChange={(v) => onwarnDuplicateUploads(asBool(v))}
-			/>
-			<span class="whitespace-nowrap">Warn duplicates</span>
-		</label>
-	</div>
-
-	<Button
-		variant="ghost"
-		size="icon-sm"
-		class="ml-auto"
-		onclick={() => ontheme(theme === 'dark' ? 'light' : 'dark')}
-		aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-		title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
-	>
-		{#if theme === 'dark'}
-			<Sun class="h-5 w-5" />
-		{:else}
-			<Moon class="h-5 w-5" />
 		{/if}
-	</Button>
+
+		<ThemeToggle {theme} {ontheme} class="ml-auto" />
+	</div>
+
+	<div class="border-border flex flex-wrap items-center gap-2 border-t px-4 py-2">
+		<div class="flex flex-wrap items-center gap-2">
+			<ToggleGroup.Root
+				type="single"
+				variant="outline"
+				size="sm"
+				value={viewMode}
+				onValueChange={(v) => {
+					if (v === 'grid' || v === 'collage') onviewMode(v);
+				}}
+			>
+				<ToggleGroup.Item value="grid">Grid</ToggleGroup.Item>
+				<ToggleGroup.Item value="collage">Collage</ToggleGroup.Item>
+			</ToggleGroup.Root>
+			<label class="text-muted-foreground flex items-center gap-2 text-sm">
+				<span class="whitespace-nowrap">Cols {columns}</span>
+				<Slider
+					type="single"
+					class="w-24"
+					min={2}
+					max={8}
+					step={1}
+					value={columns}
+					onValueChange={(v) => oncolumns(v)}
+				/>
+			</label>
+		</div>
+
+		<div class="relative max-w-xs min-w-[10rem] flex-1">
+			<Search
+				class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+				aria-hidden="true"
+			/>
+			<Input
+				type="search"
+				class="pl-8"
+				placeholder="Search media…"
+				value={searchQuery}
+				oninput={(e) => onsearchQuery(e.currentTarget.value)}
+				aria-label="Search media"
+			/>
+		</div>
+
+		<div class="flex items-center gap-1" role="group" aria-label="Sort media">
+			<span class="text-muted-foreground hidden text-sm sm:inline">Sort</span>
+			<DropdownMenu.Root>
+				<DropdownMenu.Trigger>
+					{#snippet child({ props })}
+						<Button
+							{...props}
+							type="button"
+							variant="outline"
+							size="sm"
+							class="min-w-28 justify-between gap-1.5 font-normal"
+							aria-label="Sort by"
+						>
+							<span class="truncate">{sortByLabel}</span>
+							<ChevronDown class="size-3.5 opacity-60" />
+						</Button>
+					{/snippet}
+				</DropdownMenu.Trigger>
+				<DropdownMenu.Content align="end" class="min-w-36">
+					<DropdownMenu.RadioGroup value={sortBy} onValueChange={onSortByChange}>
+						{#each MEDIA_SORT_OPTIONS as option (option.value)}
+							<DropdownMenu.RadioItem value={option.value}>{option.label}</DropdownMenu.RadioItem>
+						{/each}
+					</DropdownMenu.RadioGroup>
+				</DropdownMenu.Content>
+			</DropdownMenu.Root>
+			<Button
+				variant="outline"
+				size="icon-sm"
+				onclick={ontoggleSortDir}
+				aria-label={`Sort direction: ${sortDirLabel}`}
+				title={sortDirLabel}
+			>
+				{#if sortDir === 'asc'}
+					<ArrowUpNarrowWide class="size-4" />
+				{:else}
+					<ArrowDownWideNarrow class="size-4" />
+				{/if}
+			</Button>
+		</div>
+
+		<div class="flex items-center gap-3 px-1">
+			<label class="flex cursor-pointer items-center gap-1.5 text-sm">
+				<Checkbox checked={showImages} onCheckedChange={(v) => onshowImages(asBool(v))} />
+				Pictures
+			</label>
+			<label class="flex cursor-pointer items-center gap-1.5 text-sm">
+				<Checkbox checked={showVideos} onCheckedChange={(v) => onshowVideos(asBool(v))} />
+				Videos
+			</label>
+		</div>
+
+		<label class="text-muted-foreground flex items-center gap-1.5 text-sm">
+			<span class="hidden sm:inline">From</span>
+			<Input
+				type="date"
+				class="w-auto"
+				value={dateFrom}
+				aria-label="From date"
+				onchange={(e) => ondateFrom(e.currentTarget.value)}
+			/>
+		</label>
+		<label class="text-muted-foreground flex items-center gap-1.5 text-sm">
+			<span class="hidden sm:inline">To</span>
+			<Input
+				type="date"
+				class="w-auto"
+				value={dateTo}
+				aria-label="To date"
+				onchange={(e) => ondateTo(e.currentTarget.value)}
+			/>
+		</label>
+
+		<div
+			class="border-border bg-muted/50 flex flex-wrap items-center gap-3 rounded-lg border px-3 py-1.5"
+			role="group"
+			aria-label="Upload settings"
+		>
+			<span class="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
+				Upload settings
+			</span>
+			<label
+				class="flex cursor-pointer items-center gap-1.5 text-sm"
+				title="When on, ask whether to skip or upload files whose names already exist. When off, skip duplicates silently (Amazon Photos–style)."
+			>
+				<Checkbox
+					checked={warnDuplicateUploads}
+					onCheckedChange={(v) => onwarnDuplicateUploads(asBool(v))}
+				/>
+				<span class="whitespace-nowrap">Warn duplicates</span>
+			</label>
+		</div>
+	</div>
 </div>

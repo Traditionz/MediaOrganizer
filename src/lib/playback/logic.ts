@@ -34,6 +34,11 @@ export function shouldRetryPlayAfterAbort(kind: PlayErrorKind, wantPlay: boolean
 	return kind === 'aborted' && wantPlay;
 }
 
+/** MediaError.MEDIA_ERR_NETWORK / MEDIA_ERR_DECODE — worth one reload; unsupported source is not. */
+export function shouldRetryMediaError(code: number | undefined, alreadyRetried: boolean): boolean {
+	return !alreadyRetried && (code === 2 || code === 3);
+}
+
 export function canSafelyResumeSeek(readyState: number): boolean {
 	return readyState >= RESUME_SEEK_READY_STATE;
 }

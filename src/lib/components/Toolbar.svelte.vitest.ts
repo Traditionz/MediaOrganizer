@@ -35,7 +35,6 @@ function toolbarProps(overrides: Partial<ToolbarProps> = {}): ToolbarProps {
 		ontoggleSelect: () => undefined,
 		onclearSelection: () => undefined,
 		onopenAlbumPicker: () => undefined,
-		oncompress: () => undefined,
 		ondelete: () => undefined,
 		onuploadClick: () => undefined,
 		ontheme: () => undefined,
@@ -105,7 +104,6 @@ describe('Toolbar', () => {
 				selectMode: true,
 				selectedCount: 2,
 				onopenAlbumPicker: () => calls.push('album'),
-				oncompress: () => calls.push('compress'),
 				ondelete: () => calls.push('delete'),
 				onfavorite: () => calls.push('favorite'),
 				onexport: () => calls.push('export'),
@@ -114,30 +112,31 @@ describe('Toolbar', () => {
 			})
 		});
 		await expect.element(page.getByText('2 selected')).toBeVisible();
+		await expect.element(button('Clear')).toBeVisible();
+		await expect.element(button('Done')).toBeVisible();
 		await button('Add to album…').click();
-		await button('Compress').click();
 		await button('Move to trash').click();
 		await button('Favorite').click();
 		await button('Export zip').click();
 		await button('Clear').click();
 		await button('Done').click();
-		expect(calls).toEqual(['album', 'compress', 'delete', 'favorite', 'export', 'clear', 'done']);
+		expect(calls).toEqual(['album', 'delete', 'favorite', 'export', 'clear', 'done']);
 	});
 
-	test('selection actions disabled with nothing selected or while uploading', async () => {
+	test('selection actions disabled with nothing selected', async () => {
 		const screen = await render(Toolbar, {
 			...toolbarProps({ selectMode: true, selectedCount: 0 })
 		});
 		await expect.element(page.getByText('0 selected')).toBeVisible();
 		await expect.element(button('Add to album…')).toBeDisabled();
-		await expect.element(button('Compress')).toBeDisabled();
 		await expect.element(button('Move to trash')).toBeDisabled();
 		await expect.element(button('Favorite')).not.toBeInTheDocument();
 		await expect.element(button('Export zip')).not.toBeInTheDocument();
+		await expect.element(button('Compress')).not.toBeInTheDocument();
 		await screen.rerender({ selectMode: false, selectedCount: 3, uploading: true });
 		await expect.element(page.getByText('3 selected')).toBeVisible();
 		await expect.element(button('Add to album…')).toBeEnabled();
-		await expect.element(button('Compress')).toBeDisabled();
+		await expect.element(button('Move to trash')).toBeEnabled();
 	});
 
 	test('trash selection restores and deletes forever', async () => {
@@ -151,6 +150,9 @@ describe('Toolbar', () => {
 				ondelete: () => calls.push('delete')
 			})
 		});
+		await expect.element(page.getByText('1 selected')).toBeVisible();
+		await expect.element(button('Clear')).toBeVisible();
+		await expect.element(button('Done')).toBeVisible();
 		await button('Restore').click();
 		await button('Delete forever').click();
 		expect(calls).toEqual(['restore', 'delete']);

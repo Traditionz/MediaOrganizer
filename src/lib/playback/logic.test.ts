@@ -8,6 +8,7 @@ import {
 	normalizeSavedTime,
 	resumeTimeFromSaved,
 	shouldClearPlaybackPosition,
+	shouldRetryMediaError,
 	shouldRetryPlayAfterAbort,
 	shouldRetryPlayMuted
 } from '$lib/playback/logic';
@@ -47,6 +48,14 @@ describe('playback logic', () => {
 		expect(shouldRetryPlayAfterAbort('aborted', true)).toBe(true);
 		expect(shouldRetryPlayAfterAbort('aborted', false)).toBe(false);
 		expect(shouldRetryPlayAfterAbort('not-allowed', true)).toBe(false);
+	});
+
+	test('shouldRetryMediaError reloads once on network or decode errors', () => {
+		expect(shouldRetryMediaError(2, false)).toBe(true);
+		expect(shouldRetryMediaError(3, false)).toBe(true);
+		expect(shouldRetryMediaError(3, true)).toBe(false);
+		expect(shouldRetryMediaError(4, false)).toBe(false);
+		expect(shouldRetryMediaError(undefined, false)).toBe(false);
 	});
 
 	test('canSafelyResumeSeek needs current data', () => {

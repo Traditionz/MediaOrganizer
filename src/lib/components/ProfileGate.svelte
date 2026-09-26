@@ -9,16 +9,26 @@
 	import { Spinner } from '$lib/components/ui/spinner/index.js';
 	import LiquidGlass from '$lib/components/LiquidGlass.svelte';
 	import ShaderBackdrop from '$lib/components/ShaderBackdrop.svelte';
-	import type { Profile } from '$lib/types';
+	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
+	import type { Profile, ThemeMode } from '$lib/types';
 
 	interface Props {
 		profiles: Profile[];
+		theme?: ThemeMode;
 		onselect: (id: string, passcode?: string) => Promise<void>;
 		oncreate: (name: string, passcode?: string | null) => Promise<void>;
 		onpasscode: (profile: Profile) => void;
+		ontheme?: (theme: ThemeMode) => void;
 	}
 
-	let { profiles, onselect, oncreate, onpasscode }: Props = $props();
+	let {
+		profiles,
+		theme = 'dark',
+		onselect,
+		oncreate,
+		onpasscode,
+		ontheme = () => undefined
+	}: Props = $props();
 
 	let newName = $state('');
 	let usePasscode = $state(false);
@@ -100,7 +110,12 @@
 </script>
 
 <div class="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-10">
-	<ShaderBackdrop />
+	{#key theme}
+		<ShaderBackdrop />
+	{/key}
+	<div class="absolute top-4 right-4 z-20">
+		<ThemeToggle {theme} {ontheme} />
+	</div>
 	<div class="relative z-10 w-full max-w-md">
 		<div class="mb-10 text-center">
 			<h1 class="text-4xl font-bold tracking-tight sm:text-5xl">Media Organizer</h1>

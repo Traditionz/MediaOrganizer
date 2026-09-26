@@ -46,6 +46,8 @@ export type ConfirmModalState = {
 	destructive: boolean;
 	albumId: string | null;
 	mediaIds: string[];
+	/** When set, ConfirmModal requires typing this count before confirm */
+	confirmCount: number | null;
 };
 
 export type PromptModalState = {
@@ -109,7 +111,8 @@ export class UiState {
 		cancelLabel: 'Cancel',
 		destructive: false,
 		albumId: null,
-		mediaIds: []
+		mediaIds: [],
+		confirmCount: null
 	});
 	confirmModalBusy = $state(false);
 
@@ -293,6 +296,7 @@ export class UiState {
 		destructive?: boolean;
 		albumId?: string | null;
 		mediaIds?: string[];
+		confirmCount?: number | null;
 	}) {
 		this.confirmModalBusy = false;
 		this.confirmModal = {
@@ -304,7 +308,8 @@ export class UiState {
 			cancelLabel: opts.cancelLabel ?? 'Cancel',
 			destructive: opts.destructive ?? false,
 			albumId: opts.albumId ?? null,
-			mediaIds: opts.mediaIds ?? []
+			mediaIds: opts.mediaIds ?? [],
+			confirmCount: opts.confirmCount ?? null
 		};
 	}
 

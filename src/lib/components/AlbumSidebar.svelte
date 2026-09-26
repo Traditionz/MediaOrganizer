@@ -13,7 +13,7 @@
 	import MapPin from '@lucide/svelte/icons/map-pin';
 	import Copy from '@lucide/svelte/icons/copy';
 	import TagIcon from '@lucide/svelte/icons/tag';
-	import { albumListQueryNorm, albumNameMatchesQuery, exactAlbumNameMatch } from '$lib/albumNaming';
+	import { exactAlbumNameMatch, namedItemsForAddQuery, visibleNamedItems } from '$lib/albumNaming';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -98,7 +98,6 @@
 	let renamingId = $state<string | null>(null);
 	let renameName = $state('');
 	let albumQuery = $state('');
-	let listFilterSource = $state<'add' | 'search'>('search');
 	let tagName = $state('');
 	let personName = $state('');
 	let contextMenu = $state<{
@@ -112,18 +111,25 @@
 	const isBusy = $derived(profileBusy || profileBusyProp);
 
 	const sortedAlbums = $derived([...albums].sort((a, b) => a.name.localeCompare(b.name)));
-	const listQueryNorm = $derived(albumListQueryNorm(newName, albumQuery, listFilterSource));
-	const visibleAlbums = $derived(
-		sortedAlbums.filter((album) => albumNameMatchesQuery(album.name, listQueryNorm))
-	);
+	const visibleAlbums = $derived(visibleNamedItems(sortedAlbums, newName, albumQuery));
 	const exactName = $derived(
 		exactAlbumNameMatch(
 			albums.map((a) => a.name),
 			newName
 		)
 	);
-	const tagItems = $derived(tags.filter((t) => t.kind === 'tag'));
-	const peopleItems = $derived(tags.filter((t) => t.kind === 'person'));
+	const tagItems = $derived(
+		namedItemsForAddQuery(
+			tags.filter((t) => t.kind === 'tag'),
+			tagName
+		)
+	);
+	const peopleItems = $derived(
+		namedItemsForAddQuery(
+			tags.filter((t) => t.kind === 'person'),
+			personName
+		)
+	);
 
 	const contextAlbum = $derived(albums.find((a) => a.id === contextMenu.albumId) ?? null);
 
@@ -249,7 +255,6 @@
 
 	function cancelCreate() {
 		newName = '';
-		listFilterSource = 'search';
 	}
 
 	function startRename(album: Album) {
@@ -285,11 +290,11 @@
 		const name = newName.trim();
 		if (!name || busy || exactName) return;
 		busy = true;
+		newName = '';
 		try {
 			await oncreate(name);
-			cancelCreate();
 		} catch {
-			/* keep input open so the user can retry */
+			newName = name;
 		} finally {
 			busy = false;
 		}
@@ -844,9 +849,6 @@
 						aria-label="New album name"
 						bind:value={newName}
 						disabled={busy}
-						oninput={() => {
-							listFilterSource = 'add';
-						}}
 						onkeydown={(e) => {
 							if (e.key === 'Escape') {
 								e.preventDefault();
@@ -883,9 +885,6 @@
 					placeholder="Search albums…"
 					bind:value={albumQuery}
 					aria-label="Search albums"
-					oninput={() => {
-						listFilterSource = 'search';
-					}}
 				/>
 			</div>
 
@@ -970,11 +969,7 @@
 					</li>
 				{:else}
 					<li class="text-muted-foreground px-2 py-6 text-center text-sm">
-						{albums.length === 0
-							? 'No albums yet.'
-							: listFilterSource === 'add' && newName.trim()
-								? 'No albums match this name.'
-								: 'No albums match your search.'}
+						{albums.length === 0 ? 'No albums yet.' : 'No albums match your search.'}
 					</li>
 				{/each}
 			</ul>

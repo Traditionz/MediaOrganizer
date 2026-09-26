@@ -289,9 +289,6 @@ describe('CustomPlayer', () => {
 			.dispatchEvent(
 				new PointerEvent('pointermove', { bubbles: true, clientX: 120, clientY: 4, pointerId: 7 })
 			);
-		const preview = screen.container.querySelector('video.custom-hover-video');
-		preview?.dispatchEvent(new Event('seeked'));
-		preview?.dispatchEvent(new Event('loadeddata'));
 		seek
 			.element()
 			.dispatchEvent(

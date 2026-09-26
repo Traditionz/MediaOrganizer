@@ -195,16 +195,16 @@ describe('PasscodeModal', () => {
 		await result;
 		await expect.element(page.getByRole('heading', { name: 'Delete profile' })).toBeVisible();
 		await expect
-			.element(page.getByText('Permanently delete “Pat” and all of its media.', { exact: false }))
+			.element(page.getByText('Permanently delete “Pat” and all of its media', { exact: false }))
 			.toBeVisible();
 		await expect.element(page.getByRole('button', { name: 'Delete' })).toBeVisible();
 		submitForm();
 		await expect.poll(alertText).toBe('Enter the profile name to confirm');
 		await page.getByPlaceholder('Pat').fill(' Pat ');
-		await page.getByPlaceholder('Total media items').fill('x');
+		await page.getByPlaceholder('3').fill('x');
 		submitForm();
 		await expect.poll(alertText).toBe('Enter the media count as a whole number');
-		await page.getByPlaceholder('Total media items').fill('3');
+		await page.getByPlaceholder('3').fill('3');
 		submitForm();
 		await expect
 			.poll(() => payloads)

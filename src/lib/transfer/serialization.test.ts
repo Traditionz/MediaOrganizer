@@ -19,9 +19,10 @@ describe('transfer serialization', () => {
 		expect(parseFileKind(null)).toBe('other');
 	});
 
-	test('parseTransferKind accepts upload and compress only', () => {
+	test('parseTransferKind accepts upload, compress and optimize only', () => {
 		expect(parseTransferKind('upload')).toBe('upload');
 		expect(parseTransferKind('compress')).toBe('compress');
+		expect(parseTransferKind('optimize')).toBe('optimize');
 		expect(parseTransferKind('x')).toBeNull();
 	});
 
@@ -109,5 +110,12 @@ describe('transfer serialization', () => {
 		const jobs = restoreTransferJobsFromStorage(payload);
 		expect(jobs).toHaveLength(1);
 		expect(jobs[0]?.id).toBe('compress-done');
+	});
+
+	test('restoreTransferJobsFromStorage drops an unfinished optimize job', () => {
+		const payload = JSON.stringify([
+			{ id: 'opt', kind: 'optimize', label: '1 video', progress: 30, fileCount: 1, files: [] }
+		]);
+		expect(restoreTransferJobsFromStorage(payload)).toEqual([]);
 	});
 });

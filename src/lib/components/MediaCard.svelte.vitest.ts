@@ -94,6 +94,9 @@ describe('MediaCard', () => {
 		button?.click();
 		expect(fav).toEqual({ id: 'm1', favorite: false });
 		expect(document.querySelector('.mo-favorite-icon')).toBeTruthy();
+		expect(card()?.classList.contains('mo-media-favorite')).toBe(true);
+		expect(document.querySelector('.mo-favorite-badge')).toBeTruthy();
+		await expect.element(page.getByLabelText('Favorited')).toBeVisible();
 	});
 
 	test('favorite without handler shows a static heart', async () => {
@@ -103,6 +106,29 @@ describe('MediaCard', () => {
 		});
 		expect(document.querySelector('.mo-favorite-icon')).toBeTruthy();
 		expect(document.querySelector('button[aria-label]')).toBeNull();
+		expect(card()?.classList.contains('mo-media-favorite')).toBe(true);
+		expect(document.querySelector('.mo-favorite-badge')).toBeTruthy();
+		await expect.element(page.getByLabelText('Favorited')).toBeVisible();
+	});
+
+	test('selected favorite keeps badge and drops gold ring', async () => {
+		await renderWithApp(MediaCard, {
+			load: testLoad(),
+			props: { item: testMedia({ favorite: true, has_thumbnail: true }), selected: true }
+		});
+		expect(card()?.classList.contains('mo-media-favorite')).toBe(false);
+		expect(document.querySelector('.mo-favorite-badge')).toBeTruthy();
+		await expect.element(page.getByLabelText('Favorited')).toBeVisible();
+	});
+
+	test('unfavorited card has no favorite badge', async () => {
+		await renderWithApp(MediaCard, {
+			load: testLoad(),
+			props: { item: testMedia({ favorite: false, has_thumbnail: true }) }
+		});
+		expect(card()?.classList.contains('mo-media-favorite')).toBe(false);
+		expect(document.querySelector('.mo-favorite-badge')).toBeNull();
+		expect(document.querySelector('[aria-label="Favorited"]')).toBeNull();
 	});
 
 	test('context menu callback', async () => {
@@ -181,18 +207,18 @@ describe('MediaCard', () => {
 			props: {
 				item: testMedia({ has_thumbnail: true }),
 				selectMode: true,
-				onclick: (e) => clicks.push(e.type)
+				onclick: (e) => clicks.push(`${e.type}:${e.ctrlKey}`)
 			}
 		});
 		const box = page.getByRole('checkbox');
 		box.element().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
 		await box.click();
-		expect(clicks).toEqual(['click']);
+		expect(clicks).toEqual(['click:true']);
 		await screen.rerender({
 			componentProps: { item: testMedia({ has_thumbnail: true }), selectMode: true }
 		});
 		await box.click();
-		expect(clicks).toEqual(['click']);
+		expect(clicks).toEqual(['click:true']);
 	});
 
 	test('drag without dataTransfer is ignored', async () => {

@@ -53,6 +53,8 @@ import {
 	isVideoProbeFallback
 } from '$lib/media/videoDimensions';
 import { scanVideoContainer, videoContainerProblem } from '$lib/media/videoContainer';
+import { parseStoredStoryboard } from '$lib/media/storyboard';
+import { clearDerivedVideo, readPlaybackPath } from './videoDerived';
 
 export {
 	copyFileName,
@@ -180,6 +182,7 @@ function mapRow(
 		gps_lng: row.gpsLng ?? null,
 		favorite: row.favorite === 1,
 		source_path: row.sourcePath ?? null,
+		has_playback: Boolean(row.playbackKey),
 		tags: itemTags
 	};
 }
@@ -389,7 +392,8 @@ export function lookupMediaByNames(profileId: string, names: string[]) {
 
 export function getMediaForServe(
 	profileId: string,
-	id: string
+	id: string,
+	options: { playback?: boolean } = {}
 ): {
 	meta: MediaItem;
 	path: string;
@@ -399,10 +403,20 @@ export function getMediaForServe(
 } | null {
 	const row = getMediaRow(profileId, id);
 	if (!row) return null;
-	const path = filePathForKey(profileId, row.storageKey);
-	if (!existsSync(path)) return null;
 	// Byte ranges fire on every seek. Skip album and tag joins; the player only needs the file.
 	const meta = mapRow(profileId, row, [], [], []);
+	const playbackPath = options.playback && row.playbackKey ? readPlaybackPath(profileId, id) : null;
+	if (playbackPath) {
+		return {
+			meta,
+			path: playbackPath,
+			size: statSync(playbackPath).size,
+			mimeType: 'video/mp4',
+			originalName: meta.original_name
+		};
+	}
+	const path = filePathForKey(profileId, row.storageKey);
+	if (!existsSync(path)) return null;
 	return {
 		meta,
 		path,
@@ -876,6 +890,7 @@ export async function compressMedia(
 		return getMediaMeta(profileId, id)!;
 	}
 
+	clearDerivedVideo(profileId, id);
 	const nextName = renameWithExt(decryptName(row.originalName), result.ext);
 	db.update(media)
 		.set({
@@ -1040,14 +1055,17 @@ export function deleteMedia(profileId: string, ids: string[]): void {
 			const row = tx
 				.select({
 					storageKey: media.storageKey,
-					thumbnailKey: media.thumbnailKey
+					thumbnailKey: media.thumbnailKey,
+					storyboard: media.storyboard,
+					playbackKey: media.playbackKey
 				})
 				.from(media)
 				.where(eq(media.id, id))
 				.get();
 			tx.delete(media).where(eq(media.id, id)).run();
 			if (row) {
-				for (const key of [row.storageKey, row.thumbnailKey]) {
+				const storyboardKey = parseStoredStoryboard(row.storyboard)?.key;
+				for (const key of [row.storageKey, row.thumbnailKey, storyboardKey, row.playbackKey]) {
 					if (!key) continue;
 					const path = filePathForKey(profileId, key);
 					try {

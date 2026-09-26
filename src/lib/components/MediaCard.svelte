@@ -199,6 +199,7 @@
 		variant === 'grid' && 'rounded-xl shadow-sm hover:shadow-md',
 		variant === 'collage' && 'rounded-lg shadow-sm hover:shadow-md',
 		selected && 'ring-primary ring-offset-background ring-2 ring-offset-2',
+		item.favorite === true && !selected && 'mo-media-favorite',
 		dragging && 'opacity-40',
 		showCheckbox ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
 	]}
@@ -251,14 +252,24 @@
 		{/if}
 	</div>
 
-	<span
-		class="mo-media-chip pointer-events-none absolute top-2 right-2 z-10 flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] leading-none font-medium tabular-nums"
-		title={formatViewCount(item.view_count)}
-		aria-label={formatViewCount(item.view_count)}
-	>
-		<Eye class="size-3" />
-		{formatViewCount(item.view_count)}
-	</span>
+	<div class="absolute top-2 right-2 z-10 flex items-center gap-1">
+		{#if item.favorite === true}
+			<span
+				class="mo-favorite-badge pointer-events-none flex items-center justify-center rounded-full p-1.5"
+				aria-label="Favorited"
+			>
+				<Heart class="mo-favorite-icon size-4" aria-hidden="true" />
+			</span>
+		{/if}
+		<span
+			class="mo-media-chip pointer-events-none flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] leading-none font-medium tabular-nums"
+			title={formatViewCount(item.view_count)}
+			aria-label={formatViewCount(item.view_count)}
+		>
+			<Eye class="size-3" />
+			{formatViewCount(item.view_count)}
+		</span>
+	</div>
 
 	{#if showCheckbox}
 		<div class="absolute top-2 left-2 z-10">
@@ -269,7 +280,8 @@
 				onpointerdown={(e) => e.stopPropagation()}
 				onclick={(e) => e.stopPropagation()}
 				onCheckedChange={() => {
-					onclick?.(new MouseEvent('click'));
+					// Ctrl = toggle; a plain click on a selected card keeps it selected.
+					onclick?.(new MouseEvent('click', { ctrlKey: true }));
 				}}
 			/>
 		</div>

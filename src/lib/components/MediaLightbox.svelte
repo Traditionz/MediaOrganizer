@@ -27,6 +27,7 @@
 		LIGHTBOX_CLOSE_CHIP
 	} from '$lib/media/lightboxHud';
 	import { lightboxFitSize } from '$lib/media/lightboxFit';
+	import { playbackSrc } from '$lib/media/playbackEncode';
 	import { eventTargetHtml } from '$lib/parse';
 	import { formatBytes, formatDate } from '$lib/utils';
 	import { mediaDateIso } from '$lib/media/captureDate';
@@ -367,7 +368,7 @@
 							data-lightbox-frame
 						>
 							<CustomPlayer
-								src={`/api/media/${item.id}`}
+								src={playbackSrc(item)}
 								mediaId={item.id}
 								onmetadata={(meta) => {
 									if (intrinsic?.w === meta.w && intrinsic?.h === meta.h) return;

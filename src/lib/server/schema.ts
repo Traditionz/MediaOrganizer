@@ -65,7 +65,11 @@ export const media = sqliteTable(
 		gpsLng: real('gps_lng'),
 		favorite: integer('favorite').notNull().default(0),
 		/** Relative import path for watched-folder skip-path */
-		sourcePath: text('source_path')
+		sourcePath: text('source_path'),
+		/** Timeline sprite: `{ key, interval, count, cols, rows, tileW, tileH }` */
+		storyboard: text('storyboard'),
+		/** H.264 short-GOP copy the player prefers over the original */
+		playbackKey: text('playback_key')
 	},
 	(t) => [
 		index('idx_media_type').on(t.mediaType),

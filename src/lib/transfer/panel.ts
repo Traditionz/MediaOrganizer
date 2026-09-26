@@ -33,6 +33,7 @@ export function activeFile(job: TransferJob): TransferFile | undefined {
 
 export function jobTitle(job: TransferJob): string {
 	if (job.kind === 'compress') return 'Compressing';
+	if (job.kind === 'optimize') return 'Optimizing for playback';
 	const videos = job.files.filter((file) => file.kind === 'video').length;
 	const inFlight = job.files.some(
 		(file) => file.status === 'queued' || file.status === 'uploading' || file.status === 'saving'

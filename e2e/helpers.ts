@@ -135,6 +135,12 @@ export async function revealLightboxHud(page: Page): Promise<void> {
 export async function confirmDialog(page: Page, confirmLabel: string): Promise<void> {
 	const dialog = page.getByRole('dialog');
 	await expect(dialog).toBeVisible();
+	const countInput = dialog.locator('#confirm-count');
+	if ((await countInput.count()) > 0) {
+		const labelText = await dialog.locator('label[for="confirm-count"]').textContent();
+		const n = labelText?.match(/Type (\d+)/)?.[1];
+		if (n) await countInput.fill(n);
+	}
 	await dialog.getByRole('button', { name: confirmLabel }).click();
 	await expect(dialog).toBeHidden({ timeout: 15_000 });
 }

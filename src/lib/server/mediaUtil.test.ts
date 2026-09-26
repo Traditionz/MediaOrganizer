@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
 	copyFileName,
 	formatMediaBytes,
+	mediaCacheControl,
 	normalizeCreated,
 	normalizeDuration,
 	normalizeViewCount,
@@ -9,6 +10,12 @@ import {
 } from '$lib/server/mediaUtil';
 
 describe('mediaUtil', () => {
+	test('mediaCacheControl never caches videos or downloads', () => {
+		expect(mediaCacheControl('video/mp4', false)).toBe('no-store');
+		expect(mediaCacheControl('image/jpeg', true)).toBe('no-store');
+		expect(mediaCacheControl('image/jpeg', false)).toBe('private, max-age=3600');
+	});
+
 	test('normalizeCreated converts SQLite datetime to ISO', () => {
 		expect(normalizeCreated('2026-01-02 03:04:05')).toBe('2026-01-02T03:04:05Z');
 		expect(normalizeCreated('2026-01-02T03:04:05Z')).toBe('2026-01-02T03:04:05Z');

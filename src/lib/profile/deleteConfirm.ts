@@ -45,6 +45,20 @@ export function profileDeleteNeedsConfirm(mediaCount: number): boolean {
 	return count > 0;
 }
 
+/**
+ * Server delete counts every media row (active + trash).
+ * Client must match that total or empty libraries-in-trash skip the dialog and get
+ * "Confirmation required" instead of the type-to-confirm UI.
+ */
+export function profileDeleteMediaCount(activeCount: number, trashCount: number): number {
+	const active = normalizeMediaCount(activeCount);
+	const trash = normalizeMediaCount(trashCount);
+	if (!Number.isInteger(active) || active < 0 || !Number.isInteger(trash) || trash < 0) {
+		return Number.NaN;
+	}
+	return active + trash;
+}
+
 export function profileDeleteConfirmationError(
 	actualCount: number,
 	expectedName: string,

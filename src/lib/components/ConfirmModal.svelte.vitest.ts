@@ -107,4 +107,49 @@ describe('ConfirmModal', () => {
 		expect(confirmed).toBe(0);
 		expect(cancelled).toBe(0);
 	});
+
+	test('confirmCount wrong or empty stays open and shows error', async () => {
+		let confirmed = 0;
+		await render(ConfirmModal, {
+			open: true,
+			message: 'Delete items?',
+			confirmCount: 3,
+			destructive: true,
+			oncancel: () => undefined,
+			onconfirm: () => {
+				confirmed++;
+			}
+		});
+		const countInput = page.getByLabelText('Type 3 to confirm');
+		await expect.element(countInput).toBeVisible();
+		submitForm();
+		await expect.poll(() => document.querySelector('[role="alert"]')?.textContent ?? '').toContain(
+			'Type 3 to confirm'
+		);
+		expect(confirmed).toBe(0);
+		await countInput.fill('2');
+		await page.getByRole('button', { name: 'Confirm' }).click();
+		await expect.poll(() => document.querySelector('[role="alert"]')?.textContent ?? '').toContain(
+			'Type 3 to confirm'
+		);
+		expect(confirmed).toBe(0);
+		await expect.element(page.getByText('Delete items?')).toBeVisible();
+	});
+
+	test('confirmCount matching integer confirms', async () => {
+		let confirmed = 0;
+		await render(ConfirmModal, {
+			open: true,
+			message: 'Delete items?',
+			confirmCount: 3,
+			oncancel: () => undefined,
+			onconfirm: () => {
+				confirmed++;
+			}
+		});
+		await page.getByLabelText('Type 3 to confirm').fill('3');
+		await page.getByRole('button', { name: 'Confirm' }).click();
+		await expect.poll(() => confirmed).toBe(1);
+		expect(document.querySelector('[role="alert"]')).toBeNull();
+	});
 });

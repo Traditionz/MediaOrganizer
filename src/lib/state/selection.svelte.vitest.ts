@@ -36,6 +36,66 @@ describe('SelectionState', () => {
 		expect(selection.selectionRect).toBeNull();
 	});
 
+	test('select mode toggles many items; shift ranges; plain click replaces', () => {
+		const { selection } = createAppState(testLoad());
+		const ids = ['a', 'b', 'c', 'd'];
+		selection.toggleSelectMode();
+		selection.clickItem('a', ids, false, false);
+		selection.clickItem('c', ids, false, false);
+		expect([...selection.selectedIds]).toEqual(['a', 'c']);
+		selection.clickItem('a', ids, false, false);
+		expect([...selection.selectedIds]).toEqual(['c']);
+		selection.selectionAnchor = 'c';
+		selection.clickItem('a', ids, true, false);
+		expect(new Set(selection.selectedIds)).toEqual(new Set(['c', 'a', 'b']));
+
+		selection.clear();
+		selection.selectOnly('a');
+		selection.clickItem('c', ids, false, true);
+		expect(new Set(selection.selectedIds)).toEqual(new Set(['a', 'c']));
+		selection.clickItem('c', ids, false, true);
+		expect([...selection.selectedIds]).toEqual(['a']);
+
+		selection.selectOnly('a');
+		selection.selectedIds.add('b');
+		selection.clickItem('b', ids, false, false);
+		expect(new Set(selection.selectedIds)).toEqual(new Set(['a', 'b']));
+		expect(selection.selectionAnchor).toBe('b');
+
+		selection.clickItem('d', ids, false, false);
+		expect([...selection.selectedIds]).toEqual(['d']);
+
+		selection.selectOnly('a');
+		selection.selectedIds.add('z');
+		selection.clickItem('c', ids, true, false);
+		expect(new Set(selection.selectedIds)).toEqual(new Set(['a', 'b', 'c']));
+
+		selection.selectOnly('c');
+		selection.selectedIds.add('z');
+		selection.clickItem('a', ids, true, true);
+		expect(selection.selectedIds.has('z')).toBe(true);
+		expect(new Set(selection.selectedIds)).toEqual(new Set(['z', 'c', 'b', 'a']));
+
+		selection.selectOnly('a');
+		selection.clickItem('missing', ['x'], true, false);
+		expect(selection.selectedIds.has('missing')).toBe(true);
+		expect(selection.selectionAnchor).toBe('missing');
+	});
+
+	test('checkbox (ctrl) deselects outside select mode and the count drops', () => {
+		const { selection } = createAppState(testLoad());
+		const ids = ['a', 'b'];
+		selection.selectOnly('a');
+		selection.clickItem('a', ids, false, false);
+		expect(selection.selectedIds.size).toBe(1);
+		selection.clickItem('a', ids, false, true);
+		expect(selection.selectedIds.size).toBe(0);
+		selection.clickItem('a', ids, false, true);
+		selection.clickItem('b', ids, false, true);
+		selection.clickItem('b', ids, false, true);
+		expect([...selection.selectedIds]).toEqual(['a']);
+	});
+
 	test('detach clears matching content element', () => {
 		const { selection } = createAppState(testLoad());
 		const node = document.createElement('div');

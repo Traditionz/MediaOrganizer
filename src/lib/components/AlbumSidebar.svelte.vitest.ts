@@ -147,6 +147,13 @@ describe('AlbumSidebar', () => {
 		await page.getByRole('searchbox', { name: 'Search albums' }).fill('zzz');
 		await expect.element(page.getByText('No albums match your search.')).toBeVisible();
 		await page.getByRole('searchbox', { name: 'Search albums' }).fill('');
+		await page.getByRole('textbox', { name: 'New album name' }).fill('Beach');
+		await expect.element(page.getByRole('button', { name: /Beach/ })).toBeVisible();
+		expect(document.body.textContent).not.toMatch(/\bTrip\b/);
+		await page.getByRole('textbox', { name: 'New album name' }).fill('zzz');
+		await expect.element(page.getByRole('button', { name: /Trip/ })).toBeVisible();
+		await expect.element(page.getByRole('button', { name: /Beach/ })).toBeVisible();
+		await page.getByRole('textbox', { name: 'New album name' }).fill('');
 		const trip = [...document.querySelectorAll('.album-drop-row.group')].find((el) =>
 			el.textContent?.includes('Trip')
 		);
@@ -271,12 +278,36 @@ describe('AlbumSidebar', () => {
 		await expect.element(page.getByText('No albums yet.')).toBeVisible();
 	});
 
+	test('create clears the name before the album lands so the dupe warning stays off', async () => {
+		const pending: { finish?: () => void } = {};
+		const created: string[] = [];
+		await render(AlbumSidebar, {
+			...sidebarProps({
+				oncreate: async (name) => {
+					created.push(name);
+					await new Promise<void>((resolve) => {
+						pending.finish = resolve;
+					});
+				}
+			})
+		});
+		const input = page.getByRole('textbox', { name: 'New album name' });
+		await input.fill('Beach');
+		await page.getByRole('button', { name: 'Add album' }).click();
+		await expect.element(input).toHaveValue('');
+		expect(document.body.textContent).not.toContain('already exists');
+		expect(pending.finish).toBeTruthy();
+		pending.finish?.();
+		await expect.poll(() => created).toEqual(['Beach']);
+	});
+
 	test('rename same name, errors, escape, blur, and add-filter empty', async () => {
 		const renamed: Array<{ id: string; name: string }> = [];
 		const created: string[] = [];
 		const people: string[] = [];
 		await render(AlbumSidebar, {
 			...sidebarProps({
+				tags: [testTag, { ...testTag, id: 't2', name: 'night', kind: 'tag' }],
 				onrename: async (id, name) => {
 					if (name === 'boom') throw new Error('nope');
 					renamed.push({ id, name });
@@ -315,15 +346,22 @@ describe('AlbumSidebar', () => {
 
 		await page.getByRole('textbox', { name: 'New album name' }).fill('fail');
 		await page.getByRole('button', { name: 'Add album' }).click();
+		await expect.element(page.getByRole('textbox', { name: 'New album name' })).toHaveValue('fail');
 		expect(created).toEqual([]);
 		await page.getByRole('textbox', { name: 'New album name' }).fill('zzz');
-		await expect.element(page.getByText('No albums match this name.')).toBeVisible();
+		await expect.element(page.getByRole('button', { name: /Trip/ })).toBeVisible();
+		expect(document.body.textContent).not.toContain('No albums match this name.');
 		page
 			.getByRole('textbox', { name: 'New album name' })
 			.element()
 			.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		await expect.element(page.getByRole('textbox', { name: 'New album name' })).toHaveValue('');
 
 		const person = page.getByRole('textbox', { name: 'New person' });
+		await person.fill('Ada');
+		await expect.element(page.getByRole('button', { name: /Ada/ })).toBeVisible();
+		await person.fill('zzz');
+		await expect.element(page.getByRole('button', { name: /Ada/ })).toBeVisible();
 		await person.fill('fail');
 		person.element().closest('form')?.requestSubmit();
 		await expect.element(person).toHaveValue('fail');
@@ -331,6 +369,10 @@ describe('AlbumSidebar', () => {
 		person.element().closest('form')?.requestSubmit();
 		expect(people).toEqual([]);
 		const tagBox = page.getByRole('textbox', { name: 'New tag' });
+		await tagBox.fill('night');
+		await expect.element(page.getByRole('button', { name: /night/ })).toBeVisible();
+		await tagBox.fill('zzz');
+		await expect.element(page.getByRole('button', { name: /night/ })).toBeVisible();
 		await tagBox.fill('fail');
 		tagBox.element().closest('form')?.requestSubmit();
 		await expect.element(tagBox).toHaveValue('fail');

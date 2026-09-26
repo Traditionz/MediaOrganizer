@@ -110,7 +110,9 @@ function createProfileSchema(sqlite: Database.Database) {
 			gps_lat REAL,
 			gps_lng REAL,
 			favorite INTEGER NOT NULL DEFAULT 0,
-			source_path TEXT
+			source_path TEXT,
+			storyboard TEXT,
+			playback_key TEXT
 		);
 
 		CREATE TABLE IF NOT EXISTS album_media (
@@ -189,6 +191,12 @@ function createProfileSchema(sqlite: Database.Database) {
 	}
 	if (mediaCols.size > 0 && !mediaCols.has('source_path')) {
 		sqlite.exec('ALTER TABLE media ADD COLUMN source_path TEXT');
+	}
+	if (mediaCols.size > 0 && !mediaCols.has('storyboard')) {
+		sqlite.exec('ALTER TABLE media ADD COLUMN storyboard TEXT');
+	}
+	if (mediaCols.size > 0 && !mediaCols.has('playback_key')) {
+		sqlite.exec('ALTER TABLE media ADD COLUMN playback_key TEXT');
 	}
 
 	sqlite.exec(

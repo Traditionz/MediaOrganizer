@@ -79,5 +79,25 @@ describe('buildContextMenuItems', () => {
 		});
 		expect(items.some((item) => item.id === 'remove-tag')).toBe(true);
 		expect(items.find((item) => item.id === 'rename')?.disabled).toBe(true);
+		expect(items.some((item) => item.id === 'optimize-playback')).toBe(false);
+	});
+
+	test('optimize for playback shows only when videos are selected', () => {
+		const menu = (favoriteItems: Array<{ media_type?: string }>) =>
+			buildContextMenuItems({
+				kind: 'media',
+				mediaIds: favoriteItems.map((_, i) => String(i)),
+				activeAlbum: 'all',
+				trashCount: 0,
+				hasClipboard: false,
+				favoriteItems
+			}).find((item) => item.id === 'optimize-playback');
+		expect(menu([{ media_type: 'video' }, { media_type: 'image' }])?.label).toBe(
+			'Optimize for playback'
+		);
+		expect(menu([{ media_type: 'video' }, { media_type: 'video' }])?.label).toBe(
+			'Optimize 2 videos for playback'
+		);
+		expect(menu([{ media_type: 'image' }])).toBeUndefined();
 	});
 });

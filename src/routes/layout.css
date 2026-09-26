@@ -161,6 +161,19 @@
 			0 0 0 1px color-mix(in oklch, white 35%, transparent),
 			0 1px 0 color-mix(in oklch, white 18%, transparent) inset;
 	}
+	.mo-media-favorite {
+		border: 3px solid #d4a017;
+	}
+	.mo-favorite-badge {
+		background: color-mix(in oklch, black 72%, transparent);
+		color: white;
+		border: 1.5px solid #d4a017;
+		box-shadow:
+			0 0 10px color-mix(in oklch, #d4a017 60%, transparent),
+			0 1px 0 color-mix(in oklch, white 12%, transparent) inset;
+		-webkit-backdrop-filter: blur(10px) saturate(1.2);
+		backdrop-filter: blur(10px) saturate(1.2);
+	}
 	/* Gold fill + black stroke — Favorites nav + favorited hearts */
 	.mo-favorite-icon {
 		color: #111111;

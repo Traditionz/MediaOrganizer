@@ -17,8 +17,19 @@ export type ContextMenuBuildInput = {
 	activeAlbum: LibraryAlbumFilter;
 	trashCount: number;
 	hasClipboard: boolean;
-	favoriteItems: ReadonlyArray<{ favorite?: boolean }>;
+	favoriteItems: ReadonlyArray<{ favorite?: boolean; media_type?: string }>;
 };
+
+function optimizeMenuItem(items: ContextMenuBuildInput['favoriteItems']): ContextMenuItem[] {
+	const videos = items.filter((item) => item.media_type === 'video').length;
+	if (!videos) return [];
+	return [
+		{
+			id: 'optimize-playback',
+			label: videos > 1 ? `Optimize ${videos} videos for playback` : 'Optimize for playback'
+		}
+	];
+}
 
 export function buildContextMenuItems(input: ContextMenuBuildInput): ContextMenuItem[] {
 	if (input.kind === 'empty') {
@@ -85,10 +96,7 @@ export function buildContextMenuItems(input: ContextMenuBuildInput): ContextMenu
 		{ id: 'assign-person', label: 'Add person…' },
 		{ id: 'download', label: count > 1 ? `Download ${count}` : 'Download' },
 		{ id: 'export-zip', label: 'Export zip' },
-		{
-			id: 'compress',
-			label: count > 1 ? `Compress ${count} (AV1/AVIF)` : 'Compress (AV1/AVIF)'
-		},
+		...optimizeMenuItem(input.favoriteItems),
 		{ id: 'sep-1', label: '', separator: true },
 		{ id: 'delete', label: 'Move to trash', danger: true }
 	);

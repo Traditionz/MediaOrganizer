@@ -3,6 +3,7 @@ import {
 	normalizeMediaCount,
 	parseConfirmMediaCount,
 	profileDeleteConfirmationError,
+	profileDeleteMediaCount,
 	profileDeleteNeedsConfirm,
 	validateDeleteProfileConfirm
 } from '$lib/profile/deleteConfirm';
@@ -95,6 +96,16 @@ describe('profileDeleteNeedsConfirm', () => {
 		expect(profileDeleteNeedsConfirm(Number.NaN)).toBe(true);
 		expect(profileDeleteNeedsConfirm(-1)).toBe(true);
 		expect(profileDeleteNeedsConfirm(1.5)).toBe(true);
+	});
+});
+
+describe('profileDeleteMediaCount', () => {
+	test('sums active and trash; invalid inputs yield NaN', () => {
+		expect(profileDeleteMediaCount(5, 3)).toBe(8);
+		expect(profileDeleteMediaCount(0, 0)).toBe(0);
+		expect(profileDeleteMediaCount(2, 0)).toBe(2);
+		expect(Number.isNaN(profileDeleteMediaCount(-1, 0))).toBe(true);
+		expect(Number.isNaN(profileDeleteMediaCount(1, Number.NaN))).toBe(true);
 	});
 });
 

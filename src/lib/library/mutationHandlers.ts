@@ -64,6 +64,7 @@ export function parseMediaItem(payload: JsonValue | undefined): MediaItem | null
 		gps_lng,
 		favorite,
 		source_path: source_path === null ? null : asString(source_path),
+		...(own(bag, 'has_playback') === true ? { has_playback: true } : {}),
 		tags: parseMediaTags(own(bag, 'tags'))
 	};
 }

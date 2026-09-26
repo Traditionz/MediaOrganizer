@@ -88,7 +88,7 @@
 		mode === 'create'
 			? 'Optionally protect this profile with a passcode.'
 			: mode === 'delete'
-				? `Permanently delete “${profileName}” and all of its media. Type the profile name and media count to confirm.`
+				? `Permanently delete “${profileName}” and all of its media (${mediaCount} item${mediaCount === 1 ? '' : 's'}, including trash). Type the profile name and media count to confirm.`
 				: mode === 'passcode'
 					? requiresPasscode
 						? `Update the passcode for “${profileName}”.`
@@ -229,12 +229,14 @@
 								/>
 							</div>
 							<div class="mt-3 grid gap-2">
-								<Label class="text-muted-foreground text-xs">Type media count</Label>
+								<Label class="text-muted-foreground text-xs"
+									>Type media count ({mediaCount})</Label
+								>
 								<Input
 									type="text"
 									inputmode="numeric"
 									pattern="[0-9]*"
-									placeholder="Total media items"
+									placeholder={String(mediaCount)}
 									bind:value={confirmMediaCount}
 									disabled={busy}
 									required

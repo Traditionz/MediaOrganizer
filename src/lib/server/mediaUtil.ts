@@ -27,6 +27,15 @@ export function copyFileName(name: string): string {
 	return `${name.slice(0, dot)} copy${name.slice(dot)}`;
 }
 
+/**
+ * Video bytes skip the browser cache: files are local, can be rewritten under the same URL,
+ * and Chrome's partial-range cache entries lock out a second reader of the same video.
+ */
+export function mediaCacheControl(mimeType: string, asDownload: boolean): string {
+	if (asDownload || mimeType.startsWith('video/')) return 'no-store';
+	return 'private, max-age=3600';
+}
+
 export function formatMediaBytes(n: number): string {
 	if (n < 1024) return `${n} B`;
 	if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;

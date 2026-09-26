@@ -68,6 +68,8 @@ export interface MediaItem {
 	gps_lng?: number | null;
 	favorite?: boolean;
 	source_path?: string | null;
+	/** True when a short-GOP H.264 playback copy sits beside the original */
+	has_playback?: boolean;
 	tags?: MediaTag[];
 }
 

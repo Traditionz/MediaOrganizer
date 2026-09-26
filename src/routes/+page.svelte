@@ -21,7 +21,7 @@
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import { isInternalDragActive } from '$lib/dragSession';
 	import { type DragZoneHost } from '$lib/dragUpload';
-	import { asFiniteNumber, asPlainObject, eventTargetHtml, own } from '$lib/parse';
+	import { asFiniteNumber, asPlainObject, eventTargetHtml, own, ownString } from '$lib/parse';
 	import { isCopyableTextSelection, readTextSelection } from '$lib/media/copyableText';
 	import {
 		parseImportedMedia,
@@ -42,7 +42,10 @@
 	} from '$lib/media/libraryUi';
 	import { parseIdsFromOk } from '$lib/state/library.svelte';
 	import { passcodePatchBody } from '$lib/profile/passcodeEdit';
-	import { profileDeleteNeedsConfirm } from '$lib/profile/deleteConfirm';
+	import {
+		profileDeleteMediaCount,
+		profileDeleteNeedsConfirm
+	} from '$lib/profile/deleteConfirm';
 	import {
 		MEDIA_LAYOUT_GAP,
 		idsIntersectingBox,
@@ -50,6 +53,8 @@
 	} from '$lib/media/virtualLayout';
 	import { MarqueeController, shouldStartMarquee } from '$lib/selection/marqueeController';
 	import { buildContextMenuItems } from '$lib/media/contextMenuItems';
+	import { playbackJobErrors } from '$lib/media/playbackEncode';
+	import { runPlaybackOptimize } from '$lib/media/playbackJobsClient';
 	import { fade } from 'svelte/transition';
 	import {
 		createAppState,
@@ -288,9 +293,14 @@
 		};
 	}
 
-	function openDeleteProfileModal(id: string) {
+	function openDeleteProfileModal(id: string, mediaCount?: number) {
 		const target = library.profiles.find((p) => p.id === id) ?? library.activeProfile;
 		if (!target || target.id !== id) return;
+		const count =
+			mediaCount ??
+			(id === library.activeProfile?.id
+				? profileDeleteMediaCount(library.totalCount, library.trashCount)
+				: 0);
 		ui.profileModalError = '';
 		ui.profileModal = {
 			open: true,
@@ -298,7 +308,7 @@
 			profileId: id,
 			profileName: target.name,
 			requiresPasscode: false,
-			mediaCount: id === library.activeProfile?.id ? library.totalCount : 0,
+			mediaCount: count,
 			prefillName: ''
 		};
 	}
@@ -405,9 +415,12 @@
 	}
 
 	async function deleteProfile(id: string) {
-		const count = id === library.activeProfile?.id ? library.totalCount : 0;
+		const count =
+			id === library.activeProfile?.id
+				? profileDeleteMediaCount(library.totalCount, library.trashCount)
+				: 0;
 		if (profileDeleteNeedsConfirm(count)) {
-			openDeleteProfileModal(id);
+			openDeleteProfileModal(id, count);
 			return;
 		}
 		try {
@@ -418,7 +431,18 @@
 			});
 			if (!res.ok) {
 				const errBody = await res.json().catch(() => ({}));
-				throw new Error(errBody.message || 'Failed to delete profile');
+				const bag = asPlainObject(errBody) ?? {};
+				const message = ownString(bag, 'message') ?? 'Failed to delete profile';
+				// Server still has media (e.g. trash) — open type-to-confirm instead of a dead banner.
+				if (message === 'Confirmation required') {
+					const serverCount = asFiniteNumber(own(bag, 'mediaCount'));
+					openDeleteProfileModal(
+						id,
+						serverCount ?? profileDeleteMediaCount(library.totalCount, library.trashCount)
+					);
+					return;
+				}
+				throw new Error(message);
 			}
 			await invalidateAll();
 		} catch (err) {
@@ -859,27 +883,27 @@
 		}
 	}
 
-	async function compressMediaIds(ids: string[]) {
-		if (!ids.length) return;
+	async function optimizePlaybackIds(ids: string[]) {
+		const videoIds = loadedMedia(ids)
+			.filter((item) => item.media_type === 'video')
+			.map((item) => item.id);
+		if (!videoIds.length) return;
 		const jobId = ui.beginTransfer({
-			kind: 'compress',
-			label: ids.length === 1 ? '1 file' : `${ids.length} files`,
-			fileCount: ids.length
+			kind: 'optimize',
+			label: videoIds.length === 1 ? '1 video' : `${videoIds.length} videos`,
+			fileCount: videoIds.length
 		});
 		try {
-			const res = await fetch('/api/media', {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ action: 'compress', ids })
+			const { jobs, items } = await runPlaybackOptimize(videoIds, {
+				fetch: (input, init) => fetch(input, init),
+				sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+				onProgress: (pct) => ui.setTransferProgress(jobId, pct)
 			});
-			if (!res.ok) {
-				const body = await res.json().catch(() => ({}));
-				throw new Error(body.message || 'Compress failed');
-			}
-			ui.setTransferProgress(jobId, 100);
-			library.upsertMedia(parseMediaItems(await res.json()));
+			library.upsertMedia(parseMediaItems(items));
+			const errors = playbackJobErrors(jobs);
+			if (errors.length) ui.errorMessage = errors.join('; ');
 		} catch (err) {
-			ui.errorMessage = err instanceof Error ? err.message : 'Compress failed';
+			ui.errorMessage = err instanceof Error ? err.message : 'Optimize failed';
 		} finally {
 			ui.endTransfer(jobId);
 		}
@@ -953,8 +977,8 @@
 			downloadMedia(ids);
 			return;
 		}
-		if (id === 'compress') {
-			await compressMediaIds(ids);
+		if (id === 'optimize-playback') {
+			await optimizePlaybackIds(ids);
 			return;
 		}
 		if (id === 'delete') {
@@ -986,16 +1010,7 @@
 			return;
 		}
 		if (id === 'empty-trash') {
-			if (library.trashCount === 0) return;
-			await library.ensureTrashLoaded();
-			ui.openConfirmModal({
-				kind: 'empty-trash',
-				title: 'Empty trash',
-				message: `Permanently delete all ${library.trashCount} item(s) in trash?`,
-				confirmLabel: 'Empty trash',
-				destructive: true,
-				mediaIds: library.trash.map((m) => m.id)
-			});
+			await emptyTrash();
 			return;
 		}
 		if (id === 'upload') {
@@ -1120,28 +1135,12 @@
 	}
 
 	function handleSelect(id: string, event: MouseEvent) {
-		if (event.shiftKey && selection.selectionAnchor) {
-			const ids = library.filteredMedia.map((m) => m.id);
-			const lastIdx = ids.indexOf(selection.selectionAnchor);
-			const curIdx = ids.indexOf(id);
-			if (lastIdx >= 0 && curIdx >= 0) {
-				if (!(event.ctrlKey || event.metaKey)) selection.selectedIds.clear();
-				const [a, b] = lastIdx < curIdx ? [lastIdx, curIdx] : [curIdx, lastIdx];
-				for (let i = a; i <= b; i++) selection.selectedIds.add(ids[i]);
-			} else {
-				selection.selectedIds.add(id);
-				selection.selectionAnchor = id;
-			}
-		} else if (event.ctrlKey || event.metaKey) {
-			if (selection.selectedIds.has(id)) selection.selectedIds.delete(id);
-			else selection.selectedIds.add(id);
-			selection.selectionAnchor = id;
-		} else if (selection.selectedIds.has(id) && selection.selectedIds.size > 1) {
-			// Keep multi-select so drag-to-album moves the whole set (Explorer-style).
-			selection.selectionAnchor = id;
-		} else {
-			selection.selectOnly(id);
-		}
+		selection.clickItem(
+			id,
+			library.filteredMedia.map((item) => item.id),
+			event.shiftKey,
+			event.ctrlKey || event.metaKey
+		);
 	}
 
 	async function handleAlbumPickerConfirm(albumIds: string[]) {
@@ -1215,13 +1214,15 @@
 	async function emptyTrash() {
 		if (library.trashCount === 0) return;
 		await library.ensureTrashLoaded();
+		const count = library.trashCount;
 		ui.openConfirmModal({
 			kind: 'empty-trash',
 			title: 'Empty trash',
-			message: `Permanently delete all ${library.trashCount} item(s) in trash?`,
+			message: `Permanently delete all ${count} item(s) in trash? Type ${count} to confirm.`,
 			confirmLabel: 'Empty trash',
 			destructive: true,
-			mediaIds: library.trash.map((m) => m.id)
+			mediaIds: library.trash.map((m) => m.id),
+			confirmCount: count
 		});
 	}
 
@@ -1417,9 +1418,11 @@
 {#if firstPaintShowsProfileGate(data.activeProfile)}
 	<ProfileGate
 		profiles={data.profiles}
+		theme={prefs.theme}
 		onselect={selectProfile}
 		oncreate={createProfile}
 		onpasscode={openPasscodeEditor}
+		ontheme={(t) => prefs.setTheme(t)}
 	/>
 {:else if library.activeProfile}
 	<div
@@ -1518,7 +1521,6 @@
 				ontoggleSelect={() => selection.toggleSelectMode()}
 				onclearSelection={() => selection.clear()}
 				onopenAlbumPicker={openAlbumPickerForSelection}
-				oncompress={() => compressMediaIds([...selection.selectedIds])}
 				ondelete={deleteSelected}
 				onrestore={() => restoreSelected()}
 				onemptyTrash={emptyTrash}
@@ -1694,6 +1696,7 @@
 		cancelLabel={ui.confirmModal.cancelLabel}
 		destructive={ui.confirmModal.destructive}
 		busy={ui.confirmModalBusy}
+		confirmCount={ui.confirmModal.confirmCount}
 		oncancel={handleConfirmModalCancel}
 		ondismiss={handleConfirmModalDismiss}
 		onconfirm={handleConfirmModal}

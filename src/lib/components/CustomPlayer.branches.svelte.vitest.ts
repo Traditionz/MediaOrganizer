@@ -52,7 +52,6 @@ async function mount(
 	return {
 		screen,
 		video: q<HTMLVideoElement>('video.custom-video'),
-		preview: q<HTMLVideoElement>('video.custom-hover-video'),
 		player: q<HTMLDivElement>('.custom-player'),
 		seek: q<HTMLDivElement>('[aria-label="Seek"]'),
 		volume: q<HTMLDivElement>('[aria-label="Volume"]'),
@@ -73,7 +72,7 @@ describe('CustomPlayer branches', () => {
 
 	test('hide timer, mouseleave, speed menu, volume echo, and key edges', async () => {
 		vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
-		const { video, preview, player, seek, volume, speed } = await mount({ mediaId: 'h1' });
+		const { video, player, seek, volume, speed } = await mount({ mediaId: 'h1' });
 		Object.defineProperty(video, 'duration', { configurable: true, get: () => 20 });
 		setValue(video, 'paused', false);
 		video.dispatchEvent(new Event('loadedmetadata'));
@@ -121,7 +120,6 @@ describe('CustomPlayer branches', () => {
 		video.dispatchEvent(new Event('volumechange'));
 		await expect.element(page.getByRole('button', { name: 'Unmute' })).toBeVisible();
 
-		preview.dispatchEvent(new Event('loadeddata'));
 		video.currentTime = 4;
 		seek.dispatchEvent(key('a'));
 		seek.dispatchEvent(key('ArrowRight'));
@@ -159,7 +157,7 @@ describe('CustomPlayer branches', () => {
 	test('scrub and volume pointer edges', async () => {
 		mockPointerCapture();
 		vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
-		const { screen, video, preview, seek, volume } = await mount({ mediaId: 's1' });
+		const { screen, video, seek, volume } = await mount({ mediaId: 's1' });
 		const rect = seek.getBoundingClientRect();
 		const midX = rect.left + rect.width / 2;
 		const midY = rect.top + rect.height / 2;
@@ -179,7 +177,6 @@ describe('CustomPlayer branches', () => {
 			.poll(() => screen.container.querySelector('.custom-hover-preview.is-visible'))
 			.toBeTruthy();
 		expect(screen.container.querySelector('.custom-hover-tick.is-active')).toBeTruthy();
-		preview.dispatchEvent(new Event('seeked'));
 
 		seek.dispatchEvent(pointer('pointerdown', midX, midY));
 		await expect.poll(() => screen.container.querySelector('.custom-knob.is-active')).toBeTruthy();
@@ -208,6 +205,57 @@ describe('CustomPlayer branches', () => {
 		volume.dispatchEvent(withTarget(pointer('pointercancel', 10, 4), null));
 		volume.dispatchEvent(pointer('pointerup', 10, 4));
 		expect(video.currentTime).toBeGreaterThanOrEqual(0);
+	});
+
+	test('network error reloads once and resumes; a second error gives up', async () => {
+		vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+		const load = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => undefined);
+		const { video, player } = await mount({ mediaId: 'e1' });
+		let time = 0;
+		Object.defineProperty(video, 'duration', { configurable: true, get: () => 20 });
+		Object.defineProperty(video, 'currentTime', {
+			configurable: true,
+			get: () => time,
+			set: (v: number) => {
+				time = v;
+			}
+		});
+		let ready = 1;
+		Object.defineProperty(video, 'readyState', { configurable: true, get: () => ready });
+		Object.defineProperty(video, 'error', { configurable: true, get: () => ({ code: 2 }) });
+		video.dispatchEvent(new Event('loadedmetadata'));
+		time = 7;
+		video.dispatchEvent(new Event('seeked'));
+
+		video.dispatchEvent(new Event('error'));
+		expect(load).toHaveBeenCalledTimes(1);
+		time = 0;
+		ready = 0;
+		video.dispatchEvent(new Event('durationchange'));
+		expect(time).toBe(0);
+		ready = 1;
+		video.dispatchEvent(new Event('loadedmetadata'));
+		expect(time).toBe(7);
+		video.dispatchEvent(new Event('loadedmetadata'));
+		expect(time).toBe(7);
+
+		setValue(video, 'paused', false);
+		video.dispatchEvent(new Event('play'));
+		video.dispatchEvent(new Event('error'));
+		expect(load).toHaveBeenCalledTimes(1);
+		await expect.poll(() => player.classList.contains('controls-visible')).toBe(true);
+	});
+
+	test('unsupported source or no error object does not reload', async () => {
+		vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+		const load = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => undefined);
+		const { video } = await mount();
+		let error: { code: number } | null = { code: 4 };
+		Object.defineProperty(video, 'error', { configurable: true, get: () => error });
+		video.dispatchEvent(new Event('error'));
+		error = null;
+		video.dispatchEvent(new Event('error'));
+		expect(load).not.toHaveBeenCalled();
 	});
 
 	test('arrow keys on the focused seek slider seek once, not twice', async () => {
@@ -358,7 +406,7 @@ describe('CustomPlayer branches', () => {
 	test('events during and after teardown fall back safely', async () => {
 		mockPointerCapture();
 		vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
-		const { screen, video, preview, seek, volume, speed } = await mount({ mediaId: 'late' });
+		const { screen, video, seek, volume, speed } = await mount({ mediaId: 'late' });
 		Object.defineProperty(video, 'duration', { configurable: true, get: () => 20 });
 		video.dispatchEvent(new Event('loadedmetadata'));
 		const rect = seek.getBoundingClientRect();
@@ -381,11 +429,11 @@ describe('CustomPlayer branches', () => {
 					'loadeddata',
 					'canplay',
 					'volumechange',
-					'ratechange'
+					'ratechange',
+					'error'
 				]) {
 					video.dispatchEvent(withTarget(new Event(name), null));
 				}
-				preview.dispatchEvent(new Event('loadeddata'));
 			}
 			remove(type, listener, options);
 		});

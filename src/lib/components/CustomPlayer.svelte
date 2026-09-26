@@ -8,6 +8,7 @@
 	import {
 		canSafelyResumeSeek,
 		classifyPlayError,
+		shouldRetryMediaError,
 		shouldRetryPlayAfterAbort,
 		shouldRetryPlayMuted
 	} from '$lib/playback/logic';
@@ -23,6 +24,13 @@
 		type PlayerKeyAction
 	} from '$lib/media/playerKeys';
 	import { isLightboxTypingTarget } from '$lib/media/lightboxNav';
+	import {
+		parseStoryboardMeta,
+		STORYBOARD_REQUEST_DELAY_MS,
+		storyboardBackground,
+		storyboardUrl,
+		type StoryboardMeta
+	} from '$lib/media/storyboard';
 	import Maximize from '@lucide/svelte/icons/maximize';
 	import Pause from '@lucide/svelte/icons/pause';
 	import Play from '@lucide/svelte/icons/play';
@@ -69,14 +77,13 @@
 	let rafId = 0;
 	let playRetryRaf = 0;
 	let pendingSeek: number | null = null;
-	let previewEl: HTMLVideoElement | undefined = $state();
 	let timelineHover = $state(false);
 	let hoverRatio = $state(0);
 	let hoverTime = $state(0);
-	let previewArmed = $state(false);
-	let previewBusy = false;
-	let queuedPreview = -1;
+	let storyboard = $state<{ id: string; meta: StoryboardMeta } | null>(null);
 	let resumeApplied = false;
+	let errorRetried = false;
+	let retryAt: number | null = null;
 	let wantPlay = true;
 	let abortPlayRetryScheduled = false;
 	let ignoreMediaEcho = false;
@@ -92,12 +99,21 @@
 		showControls || !playing || scrubbing || volumeDragging || speedMenuOpen || timelineHover
 	);
 	const previewAr = $derived.by(() => {
+		if (storyboard) return storyboard.meta.tileW / storyboard.meta.tileH;
 		const w = videoEl?.videoWidth ?? 0;
 		const h = videoEl?.videoHeight ?? 0;
 		return w > 0 && h > 0 ? w / h : 16 / 9;
 	});
 	const previewWRem = $derived(Math.min(PREVIEW_MAX_W_REM, PREVIEW_H_REM * previewAr));
 	const previewHalfRem = $derived(previewWRem / 2);
+	const sprite = $derived(
+		storyboard
+			? {
+					url: `url(${storyboardUrl(storyboard.id)})`,
+					...storyboardBackground(storyboard.meta, hoverTime)
+				}
+			: null
+	);
 
 	function clearHideTimer() {
 		if (hideTimer) {
@@ -324,49 +340,37 @@
 		};
 	}
 
-	function attachPreview(node: HTMLVideoElement) {
-		previewEl = node;
-		node.muted = true;
-		node.defaultMuted = true;
-		node.volume = 0;
-		previewBusy = false;
-		queuedPreview = -1;
+	/** Hover thumbnails come from one server-built sprite, so hovering never decodes video. */
+	function attachStoryboard(_node: HTMLElement) {
+		// untrack: a new item object for the same id must not refetch the sheet.
+		const id = untrack(() => mediaId);
+		if (!id) return;
+		let alive = true;
+		// Delay so flipping through many videos does not queue a sprite build for each.
+		const timer = setTimeout(async () => {
+			try {
+				const res = await fetch(storyboardUrl(id), { method: 'POST' });
+				if (!res.ok) return;
+				const meta = parseStoryboardMeta(await res.json());
+				if (alive && meta) storyboard = { id, meta };
+			} catch {
+				/* hover keeps the time label only */
+			}
+		}, STORYBOARD_REQUEST_DELAY_MS);
 		return () => {
-			releaseVideoElement(node);
-			previewEl = undefined;
+			alive = false;
+			clearTimeout(timer);
 		};
-	}
-
-	function commitPreviewSeek(t: number) {
-		if (!previewEl || duration <= 0) return;
-		const next = Math.min(Math.max(0, t), Math.max(0, duration - 0.05));
-		if (previewBusy) {
-			queuedPreview = next;
-			return;
-		}
-		if (Math.abs((previewEl.currentTime || 0) - next) < 0.05) return;
-		previewBusy = true;
-		previewEl.currentTime = next;
-	}
-
-	function onPreviewSeeked() {
-		previewBusy = false;
-		if (queuedPreview < 0) return;
-		const t = queuedPreview;
-		queuedPreview = -1;
-		commitPreviewSeek(t);
 	}
 
 	function updateTimelineHover(e: PointerEvent) {
 		if (duration <= 0) return;
 		const hit = eventHtml(e);
 		if (!hit) return;
-		if (!previewArmed) previewArmed = true;
 		const ratio = ratioFromClientX(e.clientX, hit, '.custom-progress');
 		hoverRatio = ratio;
 		hoverTime = ratio * duration;
 		timelineHover = true;
-		commitPreviewSeek(hoverTime);
 	}
 
 	function hideTimelineHover() {
@@ -401,6 +405,12 @@
 		videoEl = node;
 		applyMediaClock(node);
 		applyResume();
+		// load() fires durationchange with no metadata yet; a seek then is dropped and playback restarts at 0.
+		if (retryAt != null && node.readyState >= HTMLMediaElement.HAVE_METADATA) {
+			pendingSeek = retryAt;
+			node.currentTime = retryAt;
+			retryAt = null;
+		}
 	}
 
 	function onLoadedData(e: Event) {
@@ -424,7 +434,14 @@
 		showControls = true;
 	}
 
-	function onVideoError() {
+	function onVideoError(e: Event) {
+		const node = mediaNode(e);
+		if (node && shouldRetryMediaError(node.error?.code, errorRetried)) {
+			errorRetried = true;
+			retryAt = pendingSeek ?? current;
+			node.load();
+			return;
+		}
 		wantPlay = false;
 		showControls = true;
 	}
@@ -768,6 +785,7 @@
 	<div class="custom-chrome absolute inset-x-0 bottom-0 z-[25]">
 		<div class="relative px-3">
 			<div
+				{@attach attachStoryboard}
 				class={['custom-hover-preview', timelineHover && 'is-visible']}
 				style:--x={hoverRatio}
 				style:--preview-w={`${previewWRem}rem`}
@@ -775,20 +793,16 @@
 				style:--preview-half={`${previewHalfRem}rem`}
 				aria-hidden="true"
 			>
-				<div class="custom-hover-frame">
-					<video
-						{@attach attachPreview}
-						src={previewArmed ? src : undefined}
-						class="custom-hover-video"
-						muted
-						playsinline
-						preload="metadata"
-						onseeked={onPreviewSeeked}
-						onloadeddata={() => {
-							if (timelineHover) commitPreviewSeek(hoverTime);
-						}}
-					></video>
-				</div>
+				{#if sprite}
+					<div class="custom-hover-frame">
+						<div
+							class="custom-hover-sprite"
+							style:background-image={sprite.url}
+							style:background-size={sprite.size}
+							style:background-position={sprite.position}
+						></div>
+					</div>
+				{/if}
 				<span class="custom-hover-time">{formatDuration(hoverTime)}</span>
 			</div>
 			<div
@@ -1093,12 +1107,11 @@
 			0 6px 22px rgb(0 0 0 / 0.55);
 	}
 
-	.custom-hover-video {
-		display: block;
+	.custom-hover-sprite {
 		width: 100%;
 		height: 100%;
-		object-fit: cover;
-		background: #000;
+		background-color: #000;
+		background-repeat: no-repeat;
 	}
 
 	.custom-hover-time {

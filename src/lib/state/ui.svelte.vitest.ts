@@ -180,6 +180,14 @@ describe('UiState', () => {
 		ui.openConfirmModal({ kind: 'delete-media', title: 'Trash', message: 'Sure?' });
 		expect(ui.confirmModal.open).toBe(true);
 		expect(ui.confirmModal.confirmLabel).toBe('Confirm');
+		expect(ui.confirmModal.confirmCount).toBeNull();
+		ui.openConfirmModal({
+			kind: 'empty-trash',
+			title: 'Empty trash',
+			message: 'Wipe?',
+			confirmCount: 4
+		});
+		expect(ui.confirmModal.confirmCount).toBe(4);
 		ui.closeConfirmModal();
 		expect(ui.confirmModal.open).toBe(false);
 
