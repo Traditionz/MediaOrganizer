@@ -261,6 +261,143 @@ describe('MediaCard', () => {
 		expect(getInternalDrag()?.mediaIds).toEqual(['m1']);
 	});
 
+	function holdThumbPosts() {
+		const posts: string[] = [];
+		let release: () => void = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		useFetch(async (url, init) => {
+			if (init?.method === 'POST') {
+				posts.push(url);
+				await gate;
+			}
+			return new Response(null, { status: 200 });
+		});
+		return { posts, release: () => release() };
+	}
+
+	function blockImageErrors(): () => void {
+		const stop = (event: Event) => {
+			// Resource 404s are trusted. Tests dispatch their own error/load events.
+			if (!event.isTrusted) return;
+			if (event.target instanceof HTMLImageElement) event.stopImmediatePropagation();
+		};
+		document.addEventListener('error', stop, true);
+		return () => document.removeEventListener('error', stop, true);
+	}
+
+	function paintThumb(el: HTMLImageElement, decode: () => Promise<void>) {
+		Object.defineProperty(el, 'naturalWidth', { configurable: true, value: 8 });
+		Object.defineProperty(el, 'decode', { configurable: true, value: decode });
+		el.dispatchEvent(new Event('load'));
+	}
+
+	test('a painted thumbnail keeps its url when generation finishes', async () => {
+		const pending = holdThumbPosts();
+		const unblock = blockImageErrors();
+		try {
+			await renderWithApp(MediaCard, {
+				load: testLoad(),
+				props: { item: testMedia({ id: 'paint', has_thumbnail: false }) }
+			});
+			await expect.poll(() => pending.posts.length).toBe(1);
+			const el = img();
+			expect(el?.classList.contains('opacity-0')).toBe(true);
+			paintThumb(el!, () => Promise.resolve());
+			await expect.poll(() => el?.classList.contains('opacity-0')).toBe(false);
+			expect(el?.getAttribute('src')).toBe('/api/media/paint/thumbnail?v=0');
+			pending.release();
+			await new Promise((r) => setTimeout(r, 40));
+			expect(el?.getAttribute('src')).toBe('/api/media/paint/thumbnail?v=0');
+			expect(el?.classList.contains('opacity-0')).toBe(false);
+		} finally {
+			pending.release();
+			unblock();
+		}
+	});
+
+	test('generation cache-busts a thumbnail that has not painted', async () => {
+		const pending = holdThumbPosts();
+		const unblock = blockImageErrors();
+		try {
+			await renderWithApp(MediaCard, {
+				load: testLoad(),
+				props: { item: testMedia({ id: 'fresh', has_thumbnail: false }) }
+			});
+			await expect.poll(() => pending.posts.length).toBe(1);
+			expect(img()?.getAttribute('src')).toBe('/api/media/fresh/thumbnail?v=0');
+			expect(img()?.classList.contains('opacity-0')).toBe(true);
+			pending.release();
+			await expect.poll(() => img()?.getAttribute('src')).toBe('/api/media/fresh/thumbnail?v=1');
+			expect(img()?.classList.contains('opacity-0')).toBe(true);
+		} finally {
+			pending.release();
+			unblock();
+		}
+	});
+
+	test('a failed decode leaves the thumbnail hidden', async () => {
+		const unblock = blockImageErrors();
+		try {
+			await renderWithApp(MediaCard, {
+				load: testLoad(),
+				props: { item: testMedia({ has_thumbnail: true }) }
+			});
+			const el = img()!;
+			paintThumb(el, () => Promise.reject(new Error('decode')));
+			await new Promise((r) => setTimeout(r, 20));
+			expect(el.classList.contains('opacity-0')).toBe(true);
+		} finally {
+			unblock();
+		}
+	});
+
+	test('a thumbnail reveals without decode support', async () => {
+		const unblock = blockImageErrors();
+		try {
+			await renderWithApp(MediaCard, {
+				load: testLoad(),
+				props: { item: testMedia({ has_thumbnail: true }) }
+			});
+			const el = img()!;
+			Object.defineProperty(el, 'naturalWidth', { configurable: true, value: 8 });
+			Object.defineProperty(el, 'decode', { configurable: true, value: undefined });
+			el.dispatchEvent(new Event('load'));
+			await expect.poll(() => el.classList.contains('opacity-0')).toBe(false);
+			el.removeAttribute('src');
+			el.dispatchEvent(new Event('load'));
+			expect(el.classList.contains('opacity-0')).toBe(false);
+		} finally {
+			unblock();
+		}
+	});
+
+	test('a stale decode does not reveal the next thumbnail url', async () => {
+		const unblock = blockImageErrors();
+		try {
+			await renderWithApp(MediaCard, {
+				load: testLoad(),
+				props: { item: testMedia({ has_thumbnail: true }) }
+			});
+			const el = img()!;
+			let finish: () => void = () => {};
+			const decoded = new Promise<void>((resolve) => {
+				finish = resolve;
+			});
+			Object.defineProperty(el, 'naturalWidth', { configurable: true, value: 8 });
+			Object.defineProperty(el, 'decode', { configurable: true, value: () => decoded });
+			el.dispatchEvent(new Event('load'));
+			el.dispatchEvent(new Event('error'));
+			finish();
+			await new Promise((r) => setTimeout(r, 20));
+			expect(el.getAttribute('src')).toBe('/api/media/m1/thumbnail?v=1');
+			expect(el.classList.contains('opacity-0')).toBe(true);
+		} finally {
+			unblock();
+		}
+	});
+
 	test('image thumbnail retries, then falls back to the original', async () => {
 		thumbPosts(200);
 		await renderWithApp(MediaCard, {

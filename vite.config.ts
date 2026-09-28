@@ -17,7 +17,19 @@ export default defineConfig({
 	clearScreen: false,
 	server: {
 		watch: {
-			ignored: ['**/src-tauri/**']
+			// data/ writes and timestamp-only rewrites of these configs were restarting
+			// the dev server every few minutes. A restart reloads the page, and that
+			// reload locks passcode profiles back to the picker.
+			// Edit vite.config.ts or tsconfig.app.json → restart `bun run dev` by hand.
+			ignored: [
+				'**/src-tauri/**',
+				'**/data/**',
+				'**/*.db',
+				'**/*.db-*',
+				'**/vite.config.ts',
+				'**/vite.config.js',
+				'**/tsconfig.app.json'
+			]
 		}
 	},
 	ssr: {

@@ -8,7 +8,12 @@
 	import { beginMediaDrag, endInternalDrag, setCompactMediaDragImage } from '$lib/dragSession';
 	import { MEDIA_IDS_MIME } from '$lib/mediaDropTargets';
 	import { formatViewCount } from '$lib/media/views';
-	import { galleryStillSrc, galleryThumbUrl, isCurrentThumbSrc } from '$lib/media/thumbnail';
+	import {
+		galleryStillSrc,
+		galleryThumbUrl,
+		isCurrentThumbSrc,
+		nextThumbEpoch
+	} from '$lib/media/thumbnail';
 	import { getAppState } from '$lib/state';
 	import { enqueueThumbnailJob } from '$lib/thumbnailQueue';
 	import { formatDate, formatDuration, requestServerThumbnail } from '$lib/utils';
@@ -47,6 +52,7 @@
 	const originalSrc = $derived(`/api/media/${item.id}`);
 	let thumbEpoch = $state(0);
 	let failedSrc = $state<string | null>(null);
+	let loadedSrc = $state<string | null>(null);
 	const thumbSrc = $derived(galleryThumbUrl(item.id, thumbEpoch));
 	const stillSrc = $derived(galleryStillSrc(thumbSrc, failedSrc, originalSrc));
 	const albumLabel = $derived.by(() => {
@@ -76,6 +82,7 @@
 	const MAX_IMAGE_THUMB_ERRORS = 3;
 
 	const showPoster = $derived(Boolean(item.has_thumbnail) || localThumb);
+	const stillReady = $derived(loadedSrc != null && loadedSrc === stillSrc);
 
 	function handleDragStart(e: DragEvent & { currentTarget: HTMLDivElement }) {
 		if (!e.dataTransfer) return;
@@ -112,7 +119,7 @@
 				const ok = await requestServerThumbnail(mediaId);
 				if (!ok) return;
 				localThumb = true;
-				thumbEpoch += 1;
+				thumbEpoch = nextThumbEpoch(loadedSrc, thumbSrc, thumbEpoch);
 				library.markHasThumbnail(mediaId);
 			} catch {
 				/* leave placeholder */
@@ -120,6 +127,31 @@
 				generatingThumbnail = false;
 			}
 		});
+	}
+
+	function commitStill(node: HTMLImageElement) {
+		const src = node.getAttribute('src');
+		if (!src || node.naturalWidth <= 0) return;
+		const apply = () => {
+			if (node.getAttribute('src') !== src) return;
+			loadedSrc = src;
+		};
+		if (typeof node.decode === 'function') {
+			void node.decode().then(apply, () => {
+				/* onerror owns a failed decode */
+			});
+			return;
+		}
+		apply();
+	}
+
+	function revealIfDecoded(node: HTMLImageElement) {
+		commitStill(node);
+	}
+
+	function onStillLoad(e: Event & { currentTarget: EventTarget & Element }) {
+		// SAFETY: only bound as the onload handler of the card <img>.
+		commitStill(e.currentTarget as HTMLImageElement);
 	}
 
 	function onPosterError(e: Event & { currentTarget: EventTarget & Element }) {
@@ -223,11 +255,12 @@
 	<div class="relative h-full w-full">
 		{#if item.media_type === 'image' || showPoster}
 			<img
+				{@attach revealIfDecoded}
 				src={stillSrc}
 				alt={item.original_name}
-				class="h-full w-full object-cover"
-				decoding="async"
+				class={['h-full w-full object-cover', !stillReady && 'opacity-0']}
 				draggable="false"
+				onload={onStillLoad}
 				onerror={item.media_type === 'image' ? onImageError : onPosterError}
 			/>
 		{/if}

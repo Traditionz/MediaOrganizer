@@ -101,3 +101,14 @@ export function isCurrentThumbSrc(imgSrc: string, thumbSrc: string): boolean {
 	if (imgSrc === thumbSrc) return true;
 	return imgSrc.endsWith(thumbSrc);
 }
+
+/**
+ * Generation finishes after the card may already be showing this thumb.
+ * A new `?v=` clears the painted bitmap and the card flashes empty.
+ * Keep the epoch once that URL is on screen; otherwise bust so a 404 can retry.
+ */
+export function nextThumbEpoch(paintedSrc: string | null, currentSrc: string, epoch: number): number {
+	const current = Number.isFinite(epoch) ? epoch : 0;
+	if (paintedSrc != null && isCurrentThumbSrc(paintedSrc, currentSrc)) return current;
+	return current + 1;
+}

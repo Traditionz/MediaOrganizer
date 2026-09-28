@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
 	evenThumbEdge,
 	galleryStillSrc,
+	nextThumbEpoch,
 	galleryThumbUrl,
 	isCurrentThumbSrc,
 	isImagePreviewByteSizeOk,
@@ -100,6 +101,16 @@ describe('media thumbnail helpers', () => {
 		expect(galleryStillSrc('/t', null, '/orig')).toBe('/t');
 		expect(galleryStillSrc('/t', '/t', '/orig')).toBe('/orig');
 		expect(galleryStillSrc('/t', '/other', '/orig')).toBe('/t');
+	});
+
+	test('nextThumbEpoch keeps a painted thumb and busts one that has not drawn', () => {
+		expect(nextThumbEpoch('/api/media/a/thumbnail?v=0', '/api/media/a/thumbnail?v=0', 0)).toBe(0);
+		expect(nextThumbEpoch('http://x/api/media/a/thumbnail?v=0', '/api/media/a/thumbnail?v=0', 0)).toBe(
+			0
+		);
+		expect(nextThumbEpoch(null, '/api/media/a/thumbnail?v=0', 0)).toBe(1);
+		expect(nextThumbEpoch('/api/media/a/thumbnail?v=0', '/api/media/a/thumbnail?v=1', 1)).toBe(2);
+		expect(nextThumbEpoch(null, '/t', Number.NaN)).toBe(1);
 	});
 
 	test('isCurrentThumbSrc matches relative and absolute urls', () => {
