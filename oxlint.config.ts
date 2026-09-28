@@ -35,5 +35,19 @@ export default defineConfig({
 		'anti-slop/no-unsafe-dictionary-type': 'error',
 		'anti-slop/no-widen-then-assert': 'error',
 		'anti-slop/require-safety-comment-for-type-assertion': 'error'
-	}
+	},
+	overrides: [
+		{
+			// Build-time constants (`$app/environment`, config defaults) and real video frame capture
+			// have no injection seam; these tests swap the module to reach those branches.
+			files: [
+				'src/**/*.ssr.svelte.vitest.ts',
+				'src/lib/state/preferences.theme.svelte.vitest.ts',
+				'src/lib/state/upload.thumbnail.svelte.vitest.ts'
+			],
+			rules: {
+				'anti-slop/no-module-mocking': 'off'
+			}
+		}
+	]
 });

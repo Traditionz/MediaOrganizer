@@ -8,16 +8,28 @@
 	import Search from '@lucide/svelte/icons/search';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import User from '@lucide/svelte/icons/user';
-	import { albumListQueryNorm, albumNameMatchesQuery, exactAlbumNameMatch } from '$lib/albumNaming';
+	import Heart from '@lucide/svelte/icons/heart';
+	import Clock from '@lucide/svelte/icons/clock';
+	import MapPin from '@lucide/svelte/icons/map-pin';
+	import Copy from '@lucide/svelte/icons/copy';
+	import TagIcon from '@lucide/svelte/icons/tag';
+	import { exactAlbumNameMatch, namedItemsForAddQuery, visibleNamedItems } from '$lib/albumNaming';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
-	import type { Album, LibraryAlbumFilter, Profile } from '$lib/types';
+	import type { Album, LibraryAlbumFilter, Profile, Tag } from '$lib/types';
+	import { tagFilterId } from '$lib/media/libraryNav';
 	import { endInternalDrag, getInternalDrag, isInternalDragActive } from '$lib/dragSession';
-	import { asString, eventHtml, parseJsonText } from '$lib/parse';
+	import {
+		MEDIA_IDS_MIME,
+		dropEffectForTarget,
+		resolveMediaIdsFromDrop,
+		type DropEffect
+	} from '$lib/mediaDropTargets';
+	import { eventHtml } from '$lib/parse';
 	import ContextMenu, { type ContextMenuItem } from './ContextMenu.svelte';
 
 	interface Props {
@@ -26,6 +38,7 @@
 		totalCount: number;
 		unassignedCount: number;
 		trashCount: number;
+		favoritesCount?: number;
 		profile: Profile;
 		profiles: Profile[];
 		profileBusy?: boolean;
@@ -35,14 +48,17 @@
 		onrename: (id: string, name: string) => Promise<void>;
 		onduplicate: (id: string) => Promise<void>;
 		onaddMedia: (ids: string[], albumId: string) => Promise<void>;
+		onfavoriteMedia?: (ids: string[]) => Promise<void>;
+		ontrashMedia?: (ids: string[]) => Promise<void>;
 		onswitchProfile: (id: string) => Promise<void>;
 		oncreateProfile: (name: string) => Promise<void>;
 		ondeleteProfile: (id: string) => Promise<void>;
 		onhome: () => Promise<void> | void;
 		oneditPasscode: () => void;
+		tags?: Tag[];
+		oncreateTag?: (name: string, kind: 'tag' | 'person') => Promise<void>;
+		ondeleteTag?: (id: string) => Promise<void>;
 	}
-
-	const MEDIA_MIME = 'application/x-media-ids';
 
 	let {
 		albums,
@@ -50,6 +66,7 @@
 		totalCount,
 		unassignedCount,
 		trashCount,
+		favoritesCount = 0,
 		profile,
 		profiles,
 		profileBusy: profileBusyProp = false,
@@ -59,11 +76,16 @@
 		onrename,
 		onduplicate,
 		onaddMedia,
+		onfavoriteMedia,
+		ontrashMedia,
 		onswitchProfile,
 		oncreateProfile,
 		ondeleteProfile,
 		onhome,
-		oneditPasscode
+		oneditPasscode,
+		tags = [],
+		oncreateTag,
+		ondeleteTag
 	}: Props = $props();
 
 	let newName = $state('');
@@ -76,7 +98,8 @@
 	let renamingId = $state<string | null>(null);
 	let renameName = $state('');
 	let albumQuery = $state('');
-	let listFilterSource = $state<'add' | 'search'>('search');
+	let tagName = $state('');
+	let personName = $state('');
 	let contextMenu = $state<{
 		open: boolean;
 		x: number;
@@ -88,20 +111,27 @@
 	const isBusy = $derived(profileBusy || profileBusyProp);
 
 	const sortedAlbums = $derived([...albums].sort((a, b) => a.name.localeCompare(b.name)));
-	const listQueryNorm = $derived(albumListQueryNorm(newName, albumQuery, listFilterSource));
-	const visibleAlbums = $derived(
-		sortedAlbums.filter((album) => albumNameMatchesQuery(album.name, listQueryNorm))
-	);
+	const visibleAlbums = $derived(visibleNamedItems(sortedAlbums, newName, albumQuery));
 	const exactName = $derived(
 		exactAlbumNameMatch(
 			albums.map((a) => a.name),
 			newName
 		)
 	);
-
-	const contextAlbum = $derived(
-		contextMenu.albumId ? (albums.find((a) => a.id === contextMenu.albumId) ?? null) : null
+	const tagItems = $derived(
+		namedItemsForAddQuery(
+			tags.filter((t) => t.kind === 'tag'),
+			tagName
+		)
 	);
+	const peopleItems = $derived(
+		namedItemsForAddQuery(
+			tags.filter((t) => t.kind === 'person'),
+			personName
+		)
+	);
+
+	const contextAlbum = $derived(albums.find((a) => a.id === contextMenu.albumId) ?? null);
 
 	const contextMenuItems = $derived.by((): ContextMenuItem[] => {
 		if (!contextAlbum) return [];
@@ -125,6 +155,7 @@
 
 	$effect(() => {
 		const nav = albumNavViewport;
+		/* v8 ignore next -- ScrollArea binds viewportRef before this effect first runs */
 		if (!nav) return;
 		return attachAlbumNavScroll(nav);
 	});
@@ -145,7 +176,7 @@
 		}
 
 		function tick() {
-			if (!velocity || !isInternalDragActive()) {
+			if (!isInternalDragActive()) {
 				stopScroll();
 				return;
 			}
@@ -159,10 +190,6 @@
 		}
 
 		function updateVelocity(clientX: number, clientY: number) {
-			if (!isInternalDragActive()) {
-				stopScroll();
-				return;
-			}
 			const rect = nav.getBoundingClientRect();
 			const inX = clientX >= rect.left && clientX <= rect.right;
 			const inY = clientY >= rect.top - EDGE_PX && clientY <= rect.bottom + EDGE_PX;
@@ -228,7 +255,6 @@
 
 	function cancelCreate() {
 		newName = '';
-		listFilterSource = 'search';
 	}
 
 	function startRename(album: Album) {
@@ -264,11 +290,26 @@
 		const name = newName.trim();
 		if (!name || busy || exactName) return;
 		busy = true;
+		newName = '';
 		try {
 			await oncreate(name);
-			cancelCreate();
 		} catch {
-			/* keep input open so the user can retry */
+			newName = name;
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function submitTag(kind: 'tag' | 'person') {
+		const name = (kind === 'person' ? personName : tagName).trim();
+		if (!name || busy || !oncreateTag) return;
+		busy = true;
+		try {
+			await oncreateTag(name, kind);
+			if (kind === 'person') personName = '';
+			else tagName = '';
+		} catch {
+			/* keep input */
 		} finally {
 			busy = false;
 		}
@@ -281,17 +322,17 @@
 		return hasFiles && !isInternalDragActive();
 	}
 
-	function onDragOverTarget(e: DragEvent, target: string) {
+	function onDragOverTarget(e: DragEvent, target: string, effect?: DropEffect) {
 		if (isOsFileOnly(e.dataTransfer)) return;
 		if (
 			!isInternalDragActive() &&
-			!(e.dataTransfer && [...e.dataTransfer.types].includes(MEDIA_MIME))
+			!(e.dataTransfer && [...e.dataTransfer.types].includes(MEDIA_IDS_MIME))
 		) {
 			return;
 		}
 		e.preventDefault();
 		e.stopPropagation();
-		if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+		if (e.dataTransfer) e.dataTransfer.dropEffect = effect ?? dropEffectForTarget(target);
 		dropTarget = target;
 	}
 
@@ -304,19 +345,11 @@
 		}
 	}
 
-	function parseIdList(raw: string): string[] {
-		try {
-			const parsed = parseJsonText(raw);
-			if (!Array.isArray(parsed)) return [];
-			const ids: string[] = [];
-			for (const item of parsed) {
-				const id = asString(item);
-				if (id) ids.push(id);
-			}
-			return ids;
-		} catch {
-			return [];
-		}
+	function resolveDroppedMediaIds(e: DragEvent): string[] {
+		const session = getInternalDrag();
+		const sessionIds = session?.kind === 'media' ? session.mediaIds : null;
+		const dt = e.dataTransfer;
+		return resolveMediaIdsFromDrop(sessionIds, dt ? (type) => dt.getData(type) : null);
 	}
 
 	async function onDropTarget(e: DragEvent, albumId: string) {
@@ -329,23 +362,28 @@
 		e.stopPropagation();
 		dropTarget = null;
 
-		let ids = session?.kind === 'media' ? session.mediaIds : [];
-		if (!ids.length && dt) {
-			ids = parseIdList(dt.getData(MEDIA_MIME));
-			if (!ids.length) {
-				const plain = dt.getData('text/plain');
-				if (plain.startsWith('media:')) {
-					ids = plain
-						.slice('media:'.length)
-						.split(',')
-						.map((s) => s.trim())
-						.filter(Boolean);
-				}
-			}
-		}
+		const ids = resolveDroppedMediaIds(e);
 		// End session before await so dragend / UI class clears even if request hangs.
 		endInternalDrag();
 		if (ids.length) await onaddMedia(ids, albumId);
+	}
+
+	async function onDropQuickAction(
+		e: DragEvent,
+		action: ((ids: string[]) => Promise<void>) | undefined
+	) {
+		if (isOsFileOnly(e.dataTransfer)) return;
+		const session = getInternalDrag();
+		const dt = e.dataTransfer;
+		if (!session && !dt) return;
+
+		e.preventDefault();
+		e.stopPropagation();
+		dropTarget = null;
+
+		const ids = resolveDroppedMediaIds(e);
+		endInternalDrag();
+		if (ids.length && action) await action(ids);
 	}
 
 	function dropHighlight(target: string) {
@@ -406,6 +444,7 @@
 
 	async function handleContextSelect(id: string) {
 		const album = contextAlbum;
+		/* v8 ignore next -- menu items are empty (nothing to select) whenever contextAlbum is null */
 		if (!album) return;
 
 		if (id === 'copy-name') {
@@ -424,10 +463,7 @@
 			await onduplicate(album.id);
 			return;
 		}
-		if (id === 'delete') {
-			await ondelete(album.id);
-			return;
-		}
+		await ondelete(album.id);
 	}
 </script>
 
@@ -465,6 +501,8 @@
 							size="sm"
 							class="h-auto w-full justify-between gap-2 px-2 py-1.5 font-normal"
 							disabled={isBusy}
+							aria-haspopup="menu"
+							aria-expanded={profileMenuOpen}
 						>
 							<span class="flex min-w-0 items-center gap-2">
 								<User class="text-muted-foreground h-4 w-4 shrink-0" />
@@ -577,19 +615,219 @@
 				<Badge variant="secondary" class="ml-auto">{unassignedCount}</Badge>
 			</Button>
 
+			<div class="border-border mt-2 rounded-lg border p-1">
+				<div
+					class={[
+						'album-drop-row rounded-lg',
+						activeAlbum === 'favorites' && 'bg-accent text-accent-foreground',
+						dropHighlight('favorites')
+					]}
+					ondragenter={(e) => onDragOverTarget(e, 'favorites', 'copy')}
+					ondragover={(e) => onDragOverTarget(e, 'favorites', 'copy')}
+					ondragleave={(e) => onDragLeaveTarget(e, 'favorites')}
+					ondrop={(e) => onDropQuickAction(e, onfavoriteMedia)}
+					role="presentation"
+				>
+					<div
+						class="album-drop-hit flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm font-medium"
+						role="button"
+						tabindex="0"
+						onclick={() => onselect('favorites')}
+						onkeydown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								onselect('favorites');
+							}
+						}}
+					>
+						<Heart class="mo-favorite-icon h-5 w-5 shrink-0" />
+						Favorites
+						<Badge variant="secondary" class="ml-auto shrink-0">{favoritesCount}</Badge>
+					</div>
+				</div>
+				<div
+					class={[
+						'album-drop-row mt-0.5 rounded-lg',
+						activeAlbum === 'trash' && 'bg-accent text-accent-foreground',
+						dropHighlight('trash')
+					]}
+					ondragenter={(e) => onDragOverTarget(e, 'trash', 'move')}
+					ondragover={(e) => onDragOverTarget(e, 'trash', 'move')}
+					ondragleave={(e) => onDragLeaveTarget(e, 'trash')}
+					ondrop={(e) => onDropQuickAction(e, ontrashMedia)}
+					role="presentation"
+				>
+					<div
+						class="album-drop-hit flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm font-medium"
+						role="button"
+						tabindex="0"
+						onclick={() => onselect('trash')}
+						onkeydown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								onselect('trash');
+							}
+						}}
+					>
+						<Trash2 class="h-5 w-5 shrink-0" />
+						Trash
+						<Badge variant="secondary" class="ml-auto shrink-0">{trashCount}</Badge>
+					</div>
+				</div>
+			</div>
+
 			<Button
 				type="button"
 				variant="ghost"
 				class={[
 					'mt-1 w-full justify-start gap-2 font-medium',
-					activeAlbum === 'trash' && 'bg-accent text-accent-foreground'
+					activeAlbum === 'recent' && 'bg-accent text-accent-foreground'
 				]}
-				onclick={() => onselect('trash')}
+				onclick={() => onselect('recent')}
 			>
-				<Trash2 class="h-5 w-5" />
-				Trash
-				<Badge variant="secondary" class="ml-auto">{trashCount}</Badge>
+				<Clock class="h-5 w-5" />
+				Recent
 			</Button>
+			<Button
+				type="button"
+				variant="ghost"
+				class={[
+					'mt-1 w-full justify-start gap-2 font-medium',
+					activeAlbum === 'untagged' && 'bg-accent text-accent-foreground'
+				]}
+				onclick={() => onselect('untagged')}
+			>
+				<TagIcon class="h-5 w-5" />
+				Untagged
+			</Button>
+			<Button
+				type="button"
+				variant="ghost"
+				class={[
+					'mt-1 w-full justify-start gap-2 font-medium',
+					activeAlbum === 'map' && 'bg-accent text-accent-foreground'
+				]}
+				onclick={() => onselect('map')}
+			>
+				<MapPin class="h-5 w-5" />
+				Map
+			</Button>
+			<Button
+				type="button"
+				variant="ghost"
+				class={[
+					'mt-1 w-full justify-start gap-2 font-medium',
+					activeAlbum === 'duplicates' && 'bg-accent text-accent-foreground'
+				]}
+				onclick={() => onselect('duplicates')}
+			>
+				<Copy class="h-5 w-5" />
+				Duplicates
+			</Button>
+
+			<div class="mt-4 mb-2 rounded-lg px-2 py-1">
+				<span class="text-muted-foreground text-xs font-semibold tracking-wide uppercase"
+					>People</span
+				>
+			</div>
+			<form
+				class="mb-2"
+				onsubmit={(e) => {
+					e.preventDefault();
+					void submitTag('person');
+				}}
+			>
+				<Input
+					placeholder="Person name"
+					aria-label="New person"
+					bind:value={personName}
+					disabled={busy}
+				/>
+			</form>
+			<ul class="mb-2 flex flex-col gap-0.5 p-0">
+				{#each peopleItems as person (person.id)}
+					<li>
+						<div
+							class={[
+								'group flex items-center gap-0.5 rounded-lg',
+								activeAlbum === tagFilterId(person.id) && 'bg-accent text-accent-foreground'
+							]}
+						>
+							<Button
+								type="button"
+								variant="ghost"
+								class="min-w-0 flex-1 justify-start gap-2 font-medium"
+								onclick={() => onselect(tagFilterId(person.id))}
+							>
+								<User class="h-4 w-4" />
+								<span class="truncate">{person.name}</span>
+								<Badge variant="secondary" class="ml-auto">{person.media_count ?? 0}</Badge>
+							</Button>
+							{#if ondeleteTag}
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon-xs"
+									class="opacity-0 group-hover:opacity-100"
+									aria-label={`Delete person ${person.name}`}
+									onclick={() => ondeleteTag(person.id)}
+								>
+									<Trash2 class="h-4 w-4" />
+								</Button>
+							{/if}
+						</div>
+					</li>
+				{/each}
+			</ul>
+
+			<div class="mt-2 mb-2 rounded-lg px-2 py-1">
+				<span class="text-muted-foreground text-xs font-semibold tracking-wide uppercase">Tags</span
+				>
+			</div>
+			<form
+				class="mb-2"
+				onsubmit={(e) => {
+					e.preventDefault();
+					void submitTag('tag');
+				}}
+			>
+				<Input placeholder="Tag name" aria-label="New tag" bind:value={tagName} disabled={busy} />
+			</form>
+			<ul class="mb-2 flex flex-col gap-0.5 p-0">
+				{#each tagItems as tag (tag.id)}
+					<li>
+						<div
+							class={[
+								'group flex items-center gap-0.5 rounded-lg',
+								activeAlbum === tagFilterId(tag.id) && 'bg-accent text-accent-foreground'
+							]}
+						>
+							<Button
+								type="button"
+								variant="ghost"
+								class="min-w-0 flex-1 justify-start gap-2 font-medium"
+								onclick={() => onselect(tagFilterId(tag.id))}
+							>
+								<TagIcon class="h-4 w-4" />
+								<span class="truncate">{tag.name}</span>
+								<Badge variant="secondary" class="ml-auto">{tag.media_count ?? 0}</Badge>
+							</Button>
+							{#if ondeleteTag}
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon-xs"
+									class="opacity-0 group-hover:opacity-100"
+									aria-label={`Delete tag ${tag.name}`}
+									onclick={() => ondeleteTag(tag.id)}
+								>
+									<Trash2 class="h-4 w-4" />
+								</Button>
+							{/if}
+						</div>
+					</li>
+				{/each}
+			</ul>
 
 			<div class="mt-4 mb-2 rounded-lg px-2 py-1">
 				<span class="text-muted-foreground text-xs font-semibold tracking-wide uppercase"
@@ -611,9 +849,6 @@
 						aria-label="New album name"
 						bind:value={newName}
 						disabled={busy}
-						oninput={() => {
-							listFilterSource = 'add';
-						}}
 						onkeydown={(e) => {
 							if (e.key === 'Escape') {
 								e.preventDefault();
@@ -634,7 +869,7 @@
 				</div>
 				{#if exactName}
 					<Alert.Root variant="destructive" class="mt-2">
-						<Alert.Description>“{exactName}” already exists.</Alert.Description>
+						<Alert.Description>{`“${exactName}” already exists.`}</Alert.Description>
 					</Alert.Root>
 				{/if}
 			</form>
@@ -650,9 +885,6 @@
 					placeholder="Search albums…"
 					bind:value={albumQuery}
 					aria-label="Search albums"
-					oninput={() => {
-						listFilterSource = 'search';
-					}}
 				/>
 			</div>
 
@@ -737,11 +969,7 @@
 					</li>
 				{:else}
 					<li class="text-muted-foreground px-2 py-6 text-center text-sm">
-						{albums.length === 0
-							? 'No albums yet.'
-							: listFilterSource === 'add' && newName.trim()
-								? 'No albums match this name.'
-								: 'No albums match your search.'}
+						{albums.length === 0 ? 'No albums yet.' : 'No albums match your search.'}
 					</li>
 				{/each}
 			</ul>

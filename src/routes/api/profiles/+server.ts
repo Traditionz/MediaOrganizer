@@ -5,7 +5,8 @@ import {
 	createProfile,
 	deleteProfile,
 	getProfile,
-	setProfilePasscode
+	setProfilePasscode,
+	ProfileDeleteNeedsConfirmError
 } from '$lib/server/profiles';
 import {
 	clearProfileCookie,
@@ -82,8 +83,10 @@ export const DELETE: RequestHandler = async ({ request, cookies }) => {
 	try {
 		deleteProfile(id, confirmation);
 	} catch (err) {
+		if (err instanceof ProfileDeleteNeedsConfirmError) {
+			throw error(400, { message: err.message, mediaCount: err.mediaCount });
+		}
 		const message = err instanceof Error ? err.message : 'Failed to delete profile';
-		if (message === 'Confirmation required') throw error(400, message);
 		if (message.includes('does not match')) throw error(403, message);
 		if (message.includes('not found')) throw error(404, message);
 		throw error(500, message);

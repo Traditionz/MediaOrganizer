@@ -42,4 +42,32 @@ export class SelectionState {
 		this.selectedIds.add(id);
 		this.selectionAnchor = id;
 	}
+
+	/** Click a card. Select mode and Ctrl/Cmd toggle; Shift ranges; else replace. */
+	clickItem(id: string, orderedIds: readonly string[], shift: boolean, additive: boolean) {
+		if (shift && this.selectionAnchor) {
+			const lastIdx = orderedIds.indexOf(this.selectionAnchor);
+			const curIdx = orderedIds.indexOf(id);
+			if (lastIdx >= 0 && curIdx >= 0) {
+				if (!additive && !this.selectMode) this.selectedIds.clear();
+				const [a, b] = lastIdx < curIdx ? [lastIdx, curIdx] : [curIdx, lastIdx];
+				for (let i = a; i <= b; i++) this.selectedIds.add(orderedIds[i]!);
+			} else {
+				this.selectedIds.add(id);
+				this.selectionAnchor = id;
+			}
+			return;
+		}
+		if (additive || this.selectMode) {
+			if (this.selectedIds.has(id)) this.selectedIds.delete(id);
+			else this.selectedIds.add(id);
+			this.selectionAnchor = id;
+			return;
+		}
+		if (this.selectedIds.has(id) && this.selectedIds.size > 1) {
+			this.selectionAnchor = id;
+			return;
+		}
+		this.selectOnly(id);
+	}
 }

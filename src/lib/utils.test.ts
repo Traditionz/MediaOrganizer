@@ -9,6 +9,7 @@ import {
 	isVideoFile,
 	layoutCollage,
 	mapWithConcurrency,
+	probeVideoDimensions,
 	requestServerThumbnail,
 	thumbnailSeekTime
 } from '$lib/utils';
@@ -58,6 +59,62 @@ describe('utils', () => {
 		expect(thumbnailSeekTime(0)).toBe(0);
 		expect(thumbnailSeekTime(1)).toBe(0.04);
 		expect(thumbnailSeekTime(0.04)).toBe(0);
+	});
+
+	test('video probe tears down the element after timeout', async () => {
+		const calls: string[] = [];
+		const video = {
+			preload: '',
+			onloadedmetadata: null as (() => void) | null,
+			onerror: null as (() => void) | null,
+			ondurationchange: null,
+			onloadeddata: null,
+			oncanplay: null,
+			pause() {
+				calls.push('pause');
+			},
+			removeAttribute(name: string) {
+				calls.push(`remove:${name}`);
+			},
+			load() {
+				calls.push('load');
+			}
+		};
+		const originalCreate = globalThis.document.createElement?.bind(globalThis.document);
+		const originalUrl = {
+			create: URL.createObjectURL,
+			revoke: URL.revokeObjectURL
+		};
+		URL.createObjectURL = () => 'blob:test';
+		URL.revokeObjectURL = () => {
+			calls.push('revoke');
+		};
+		globalThis.document.createElement = ((tag: string) => {
+			if (tag === 'video') return video;
+			return originalCreate?.(tag);
+		}) as typeof document.createElement;
+		try {
+			const file = new File(['x'], 'clip.mp4', { type: 'video/mp4' });
+			const result = await probeVideoDimensions(file, 5);
+			expect(result).toBeNull();
+			expect(calls).toContain('pause');
+			expect(calls).toContain('remove:src');
+			expect(calls).toContain('load');
+			expect(calls).toContain('revoke');
+			expect(video.onloadedmetadata).toBeNull();
+		} finally {
+			URL.createObjectURL = originalUrl.create;
+			URL.revokeObjectURL = originalUrl.revoke;
+			if (originalCreate) globalThis.document.createElement = originalCreate;
+		}
+	});
+
+	test('oversized video probe returns null instead of a 16x9 placeholder', async () => {
+		const file = new File([], 'big.mp4', { type: 'video/mp4' });
+		Object.defineProperty(file, 'size', { value: 50 * 1024 * 1024 + 1 });
+		expect(await probeVideoDimensions(file)).toBeNull();
+		const text = new File(['x'], 'notes.txt', { type: 'text/plain' });
+		expect(await probeVideoDimensions(text)).toBeNull();
 	});
 
 	test('file type helpers', () => {

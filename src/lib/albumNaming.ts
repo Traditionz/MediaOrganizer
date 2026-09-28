@@ -44,3 +44,25 @@ export function albumListQueryNorm(
 ): string {
 	return source === 'add' ? normalizeAlbumQuery(addName) : normalizeAlbumQuery(searchQuery);
 }
+
+/** Add-field preview: show matches when any exist; unique name keeps the full list. */
+export function namedItemsForAddQuery<T extends { name: string }>(
+	items: readonly T[],
+	query: string
+): T[] {
+	const q = normalizeAlbumQuery(query);
+	if (!q) return items.slice();
+	const matches = items.filter((item) => albumNameMatchesQuery(item.name, q));
+	return matches.length > 0 ? matches : items.slice();
+}
+
+/** Dedicated search wins; otherwise add-field preview. */
+export function visibleNamedItems<T extends { name: string }>(
+	items: readonly T[],
+	addQuery: string,
+	searchQuery: string
+): T[] {
+	const search = normalizeAlbumQuery(searchQuery);
+	if (search) return items.filter((item) => albumNameMatchesQuery(item.name, search));
+	return namedItemsForAddQuery(items, addQuery);
+}

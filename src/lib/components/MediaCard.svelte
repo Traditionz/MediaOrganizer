@@ -6,11 +6,19 @@
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Spinner } from '$lib/components/ui/spinner/index.js';
 	import { beginMediaDrag, endInternalDrag, setCompactMediaDragImage } from '$lib/dragSession';
+	import { MEDIA_IDS_MIME } from '$lib/mediaDropTargets';
 	import { formatViewCount } from '$lib/media/views';
-	import { galleryStillSrc, galleryThumbUrl, isCurrentThumbSrc } from '$lib/media/thumbnail';
+	import {
+		galleryStillSrc,
+		galleryThumbUrl,
+		isCurrentThumbSrc,
+		nextThumbEpoch
+	} from '$lib/media/thumbnail';
 	import { getAppState } from '$lib/state';
 	import { enqueueThumbnailJob } from '$lib/thumbnailQueue';
 	import { formatDate, formatDuration, requestServerThumbnail } from '$lib/utils';
+	import { mediaDateIso } from '$lib/media/captureDate';
+	import Heart from '@lucide/svelte/icons/heart';
 
 	interface Props {
 		item: MediaItem;
@@ -20,11 +28,10 @@
 		onclick?: (e: MouseEvent) => void;
 		ondblclick?: (e: MouseEvent) => void;
 		oncontextmenu?: (e: MouseEvent, item: MediaItem) => void;
+		onfavorite?: (id: string, favorite: boolean) => void;
 		style?: string;
 		variant?: 'grid' | 'collage';
 	}
-
-	const MEDIA_MIME = 'application/x-media-ids';
 
 	let {
 		item,
@@ -34,13 +41,18 @@
 		onclick,
 		ondblclick,
 		oncontextmenu,
+		onfavorite,
 		style = '',
 		variant = 'grid'
 	}: Props = $props();
 
+	// Context lookups only work during init; the thumbnail job runs later.
+	const { library } = getAppState();
+
 	const originalSrc = $derived(`/api/media/${item.id}`);
 	let thumbEpoch = $state(0);
 	let failedSrc = $state<string | null>(null);
+	let loadedSrc = $state<string | null>(null);
 	const thumbSrc = $derived(galleryThumbUrl(item.id, thumbEpoch));
 	const stillSrc = $derived(galleryStillSrc(thumbSrc, failedSrc, originalSrc));
 	const albumLabel = $derived.by(() => {
@@ -48,8 +60,7 @@
 		if (!names?.length) return null;
 		return names.length > 1 ? `${names[0]} +${names.length - 1}` : names[0];
 	});
-	const albumTitle = $derived(item.album_names?.join(', ') ?? '');
-	const showAlbumChip = $derived(Boolean(item.album_names?.length));
+	const albumTitle = $derived(item.album_names?.join(', '));
 	const showCheckbox = $derived(selected || selectMode);
 	const durationLabel = $derived(
 		item.media_type === 'video' &&
@@ -61,26 +72,29 @@
 	);
 
 	let dragging = $state(false);
-	let cardEl: HTMLDivElement | undefined = $state();
 	let localThumb = $state(false);
 	let generatingThumbnail = $state(false);
 	let thumbStarted = false;
+	let cancelThumb: (() => void) | null = null;
 	let posterErrors = 0;
 	const MAX_POSTER_ERRORS = 2;
+	let imageThumbErrors = 0;
+	const MAX_IMAGE_THUMB_ERRORS = 3;
 
 	const showPoster = $derived(Boolean(item.has_thumbnail) || localThumb);
+	const stillReady = $derived(loadedSrc != null && loadedSrc === stillSrc);
 
-	function handleDragStart(e: DragEvent) {
+	function handleDragStart(e: DragEvent & { currentTarget: HTMLDivElement }) {
 		if (!e.dataTransfer) return;
 		// Snapshot selection up front — SvelteSet + click handlers can mutate mid-gesture.
 		const selected = selectedIds ? Array.from(selectedIds) : [];
 		const ids = selected.length > 1 && selected.includes(item.id) ? selected : [item.id];
 		beginMediaDrag(ids);
-		e.dataTransfer.setData(MEDIA_MIME, JSON.stringify(ids));
+		e.dataTransfer.setData(MEDIA_IDS_MIME, JSON.stringify(ids));
 		e.dataTransfer.setData('text/plain', `media:${ids.join(',')}`);
 		e.dataTransfer.effectAllowed = 'copyMove';
 		dragging = true;
-		if (cardEl) setCompactMediaDragImage(e.dataTransfer, cardEl, ids.length);
+		setCompactMediaDragImage(e.dataTransfer, e.currentTarget, ids.length);
 	}
 
 	function handleDragEnd() {
@@ -95,22 +109,18 @@
 
 	function startLazyThumbnail(force = false) {
 		if (!force && (thumbStarted || item.has_thumbnail || localThumb)) return;
-		if (item.media_type !== 'video') return;
 		thumbStarted = true;
 		generatingThumbnail = true;
 
 		const mediaId = item.id;
-		enqueueThumbnailJob(async () => {
+		cancelThumb?.();
+		cancelThumb = enqueueThumbnailJob(mediaId, async () => {
 			try {
 				const ok = await requestServerThumbnail(mediaId);
 				if (!ok) return;
 				localThumb = true;
-				thumbEpoch += 1;
-				try {
-					getAppState().library.markHasThumbnail(mediaId);
-				} catch {
-					/* outside app context */
-				}
+				thumbEpoch = nextThumbEpoch(loadedSrc, thumbSrc, thumbEpoch);
+				library.markHasThumbnail(mediaId);
 			} catch {
 				/* leave placeholder */
 			} finally {
@@ -119,9 +129,34 @@
 		});
 	}
 
-	function onPosterError(e: Event) {
-		const el = e.currentTarget;
-		if (!(el instanceof HTMLImageElement)) return;
+	function commitStill(node: HTMLImageElement) {
+		const src = node.getAttribute('src');
+		if (!src || node.naturalWidth <= 0) return;
+		const apply = () => {
+			if (node.getAttribute('src') !== src) return;
+			loadedSrc = src;
+		};
+		if (typeof node.decode === 'function') {
+			void node.decode().then(apply, () => {
+				/* onerror owns a failed decode */
+			});
+			return;
+		}
+		apply();
+	}
+
+	function revealIfDecoded(node: HTMLImageElement) {
+		commitStill(node);
+	}
+
+	function onStillLoad(e: Event & { currentTarget: EventTarget & Element }) {
+		// SAFETY: only bound as the onload handler of the card <img>.
+		commitStill(e.currentTarget as HTMLImageElement);
+	}
+
+	function onPosterError(e: Event & { currentTarget: EventTarget & Element }) {
+		// SAFETY: only bound as the onerror handler of the card <img>.
+		const el = e.currentTarget as HTMLImageElement;
 		const src = el.getAttribute('src') ?? '';
 		if (!isCurrentThumbSrc(src, thumbSrc) && !isCurrentThumbSrc(el.src, thumbSrc)) return;
 		if (posterErrors >= MAX_POSTER_ERRORS) return;
@@ -132,21 +167,29 @@
 		startLazyThumbnail(true);
 	}
 
-	function onImageError(e: Event) {
-		const el = e.currentTarget;
-		if (!(el instanceof HTMLImageElement)) return;
+	function onImageError(e: Event & { currentTarget: EventTarget & Element }) {
+		// SAFETY: only bound as the onerror handler of the card <img>.
+		const el = e.currentTarget as HTMLImageElement;
 		const src = el.getAttribute('src') ?? '';
 		if (!isCurrentThumbSrc(src, thumbSrc) && !isCurrentThumbSrc(el.src, thumbSrc)) return;
+		if (imageThumbErrors < MAX_IMAGE_THUMB_ERRORS) {
+			imageThumbErrors += 1;
+			thumbEpoch += 1;
+			return;
+		}
 		failedSrc = thumbSrc;
 	}
 
 	function attachCard(node: HTMLDivElement) {
-		cardEl = node;
-		const needsThumb = item.media_type === 'video' && !item.has_thumbnail && !localThumb;
+		const needsThumb =
+			(item.media_type === 'video' || item.media_type === 'image') &&
+			!item.has_thumbnail &&
+			!localThumb;
 
 		if (!needsThumb) {
 			return () => {
-				if (cardEl === node) cardEl = undefined;
+				cancelThumb?.();
+				cancelThumb = null;
 			};
 		}
 
@@ -157,7 +200,8 @@
 		if (!('IntersectionObserver' in globalThis)) {
 			runVisibleWork();
 			return () => {
-				if (cardEl === node) cardEl = undefined;
+				cancelThumb?.();
+				cancelThumb = null;
 			};
 		}
 
@@ -174,7 +218,8 @@
 
 		return () => {
 			io.disconnect();
-			if (cardEl === node) cardEl = undefined;
+			cancelThumb?.();
+			cancelThumb = null;
 		};
 	}
 </script>
@@ -186,6 +231,7 @@
 		variant === 'grid' && 'rounded-xl shadow-sm hover:shadow-md',
 		variant === 'collage' && 'rounded-lg shadow-sm hover:shadow-md',
 		selected && 'ring-primary ring-offset-background ring-2 ring-offset-2',
+		item.favorite === true && !selected && 'mo-media-favorite',
 		dragging && 'opacity-40',
 		showCheckbox ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
 	]}
@@ -209,11 +255,12 @@
 	<div class="relative h-full w-full">
 		{#if item.media_type === 'image' || showPoster}
 			<img
+				{@attach revealIfDecoded}
 				src={stillSrc}
 				alt={item.original_name}
-				class="h-full w-full object-cover"
-				decoding="async"
+				class={['h-full w-full object-cover', !stillReady && 'opacity-0']}
 				draggable="false"
+				onload={onStillLoad}
 				onerror={item.media_type === 'image' ? onImageError : onPosterError}
 			/>
 		{/if}
@@ -238,14 +285,24 @@
 		{/if}
 	</div>
 
-	<span
-		class="mo-media-chip pointer-events-none absolute top-2 right-2 z-10 flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] leading-none font-medium tabular-nums"
-		title={formatViewCount(item.view_count)}
-		aria-label={formatViewCount(item.view_count)}
-	>
-		<Eye class="size-3" />
-		{formatViewCount(item.view_count)}
-	</span>
+	<div class="absolute top-2 right-2 z-10 flex items-center gap-1">
+		{#if item.favorite === true}
+			<span
+				class="mo-favorite-badge pointer-events-none flex items-center justify-center rounded-full p-1.5"
+				aria-label="Favorited"
+			>
+				<Heart class="mo-favorite-icon size-4" aria-hidden="true" />
+			</span>
+		{/if}
+		<span
+			class="mo-media-chip pointer-events-none flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] leading-none font-medium tabular-nums"
+			title={formatViewCount(item.view_count)}
+			aria-label={formatViewCount(item.view_count)}
+		>
+			<Eye class="size-3" />
+			{formatViewCount(item.view_count)}
+		</span>
+	</div>
 
 	{#if showCheckbox}
 		<div class="absolute top-2 left-2 z-10">
@@ -256,7 +313,8 @@
 				onpointerdown={(e) => e.stopPropagation()}
 				onclick={(e) => e.stopPropagation()}
 				onCheckedChange={() => {
-					onclick?.(new MouseEvent('click'));
+					// Ctrl = toggle; a plain click on a selected card keeps it selected.
+					onclick?.(new MouseEvent('click', { ctrlKey: true }));
 				}}
 			/>
 		</div>
@@ -266,16 +324,38 @@
 		class="mo-media-chip absolute inset-x-0 bottom-0 rounded-none border-x-0 border-b-0 px-2.5 py-2 opacity-0 transition-opacity group-hover:opacity-100"
 		class:opacity-100={selected}
 	>
-		<p class="truncate text-xs font-medium">{item.original_name}</p>
+		<p class="flex items-center gap-1 truncate text-xs font-medium">
+			{#if onfavorite}
+				<button
+					type="button"
+					class="pointer-events-auto relative z-10 shrink-0"
+					aria-label={item.favorite === true ? 'Unfavorite' : 'Favorite'}
+					aria-pressed={item.favorite === true}
+					onpointerdown={(e) => e.stopPropagation()}
+					onclick={(e) => {
+						e.stopPropagation();
+						onfavorite(item.id, !(item.favorite === true));
+					}}
+				>
+					<Heart
+						class={['size-3', item.favorite === true ? 'mo-favorite-icon' : null]}
+						aria-hidden="true"
+					/>
+				</button>
+			{:else if item.favorite}
+				<Heart class="mo-favorite-icon size-3 shrink-0" aria-hidden="true" />
+			{/if}
+			<span class="min-w-0 truncate">{item.original_name}</span>
+		</p>
 		<div class="mt-1 flex items-center justify-between gap-2 text-[10px] text-white/70">
-			{#if showAlbumChip && albumLabel}
+			{#if albumLabel}
 				<Badge variant="secondary" class="max-w-[70%] truncate" title={albumTitle}>
-					{albumLabel}
+					<span class="truncate">{albumLabel}</span>
 				</Badge>
 			{:else}
 				<span></span>
 			{/if}
-			<span>{formatDate(item.created_at)}</span>
+			<span>{formatDate(mediaDateIso(item))}</span>
 		</div>
 	</div>
 
@@ -288,7 +368,7 @@
 		</span>
 	{/if}
 
-	{#if !showCheckbox && showAlbumChip && albumLabel}
+	{#if !showCheckbox && albumLabel}
 		<Badge
 			variant="secondary"
 			class="absolute top-2 left-2 max-w-[75%] truncate shadow-sm"

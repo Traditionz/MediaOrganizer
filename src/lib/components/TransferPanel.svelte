@@ -72,7 +72,7 @@
 							<div
 								class="bg-primary/10 text-primary flex size-8 shrink-0 items-center justify-center rounded-lg"
 							>
-								{#if job.kind === 'compress'}
+								{#if job.kind !== 'upload'}
 									<Spinner class="size-4" />
 								{:else}
 									<Upload class="size-4" />
@@ -115,7 +115,7 @@
 								class="text-foreground w-9 shrink-0 text-right text-xs font-semibold tabular-nums"
 								aria-live="polite"
 							>
-								{job.progress}%
+								{`${job.progress}%`}
 							</span>
 						</Card.Content>
 

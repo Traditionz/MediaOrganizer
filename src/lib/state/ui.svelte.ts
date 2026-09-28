@@ -46,6 +46,8 @@ export type ConfirmModalState = {
 	destructive: boolean;
 	albumId: string | null;
 	mediaIds: string[];
+	/** When set, ConfirmModal requires typing this count before confirm */
+	confirmCount: number | null;
 };
 
 export type PromptModalState = {
@@ -109,7 +111,8 @@ export class UiState {
 		cancelLabel: 'Cancel',
 		destructive: false,
 		albumId: null,
-		mediaIds: []
+		mediaIds: [],
+		confirmCount: null
 	});
 	confirmModalBusy = $state(false);
 
@@ -227,9 +230,7 @@ export class UiState {
 		const index = job.files.findIndex((item) => item.id === fileId);
 		if (index < 0) return;
 		job.files[index] = applyFileProgress(job.files[index], patch);
-		if (job.files.length) {
-			job.progress = averageFileProgress(job.files);
-		}
+		job.progress = averageFileProgress(job.files);
 		this.persistUploadProgress();
 	}
 
@@ -295,6 +296,7 @@ export class UiState {
 		destructive?: boolean;
 		albumId?: string | null;
 		mediaIds?: string[];
+		confirmCount?: number | null;
 	}) {
 		this.confirmModalBusy = false;
 		this.confirmModal = {
@@ -306,7 +308,8 @@ export class UiState {
 			cancelLabel: opts.cancelLabel ?? 'Cancel',
 			destructive: opts.destructive ?? false,
 			albumId: opts.albumId ?? null,
-			mediaIds: opts.mediaIds ?? []
+			mediaIds: opts.mediaIds ?? [],
+			confirmCount: opts.confirmCount ?? null
 		};
 	}
 
@@ -356,7 +359,25 @@ export class UiState {
 		this.contextMenu = { ...this.contextMenu, open: false };
 	}
 
+	dispose() {
+		if (this.persistTimer) {
+			clearTimeout(this.persistTimer);
+			this.persistTimer = null;
+		}
+		if (browser) {
+			window.removeEventListener('pagehide', this.onPageHide);
+			window.removeEventListener('beforeunload', this.onPageHide);
+		}
+		this.onPageHide();
+	}
+
 	setClipboard(ids: string[], mode: 'copy' | 'cut') {
 		this.clipboard = { ids: [...ids], mode };
+	}
+
+	syncPreview(items: readonly MediaItem[]) {
+		if (!this.preview) return;
+		const next = items.find((item) => item.id === this.preview?.id);
+		if (next) this.preview = next;
 	}
 }

@@ -1,15 +1,12 @@
 <script lang="ts">
 	import type { MediaItem } from '$lib/types';
 	import { appDefaults } from '$lib/config/defaults';
-	import { SvelteMap } from 'svelte/reactivity';
 	import {
 		MEDIA_LAYOUT_GAP,
 		MEDIA_OVERSCAN_PX,
 		attachMediaVirtualHost,
-		layoutsInYWindow,
-		toCollageItems
+		collageLayoutsInYWindow
 	} from '$lib/media/virtualLayout';
-	import { layoutCollage } from '$lib/utils';
 	import MediaCard from './MediaCard.svelte';
 
 	/**
@@ -24,6 +21,7 @@
 		onselect: (id: string, event: MouseEvent) => void;
 		onopen: (item: MediaItem) => void;
 		oncontextmenu?: (e: MouseEvent, item: MediaItem) => void;
+		onfavorite?: (id: string, favorite: boolean) => void;
 	}
 
 	let {
@@ -33,7 +31,8 @@
 		columns = appDefaults.columns,
 		onselect,
 		onopen,
-		oncontextmenu
+		oncontextmenu,
+		onfavorite
 	}: Props = $props();
 
 	let width = $state(1200);
@@ -42,13 +41,18 @@
 
 	const columnCount = $derived(Math.max(1, columns));
 	const packed = $derived(
-		layoutCollage(toCollageItems(items), columnCount, width, MEDIA_LAYOUT_GAP)
-	);
-	const visible = $derived(
-		layoutsInYWindow(packed.layouts, visibleTop, visibleBottom, MEDIA_OVERSCAN_PX)
+		collageLayoutsInYWindow(
+			items,
+			columnCount,
+			width,
+			MEDIA_LAYOUT_GAP,
+			visibleTop,
+			visibleBottom,
+			MEDIA_OVERSCAN_PX
+		)
 	);
 	const itemById = $derived.by(() => {
-		const map = new SvelteMap<string, MediaItem>();
+		const map = new Map<string, MediaItem>();
 		for (const item of items) map.set(item.id, item);
 		return map;
 	});
@@ -66,32 +70,31 @@
 	{@attach observeHost}
 	class="relative w-full"
 	data-media-layout="collage"
-	style:height="{packed.totalHeight}px"
+	style:height={`${packed.totalHeight}px`}
 >
-	{#each visible as layout (layout.id)}
-		{@const item = itemById.get(layout.id)}
-		{#if item}
-			<div
-				class="absolute overflow-hidden"
-				style:left="{layout.x}px"
-				style:top="{layout.y}px"
-				style:width="{layout.w}px"
-				style:height="{layout.h}px"
-			>
-				<MediaCard
-					{item}
-					variant="collage"
-					{selectMode}
-					{selectedIds}
-					selected={selectedIds.has(item.id)}
-					onclick={(e) => onselect(item.id, e)}
-					ondblclick={(e) => {
-						e.stopPropagation();
-						onopen(item);
-					}}
-					{oncontextmenu}
-				/>
-			</div>
-		{/if}
+	{#each packed.layouts as layout (layout.id)}
+		{@const item = itemById.get(layout.id)!}
+		<div
+			class="absolute overflow-hidden"
+			style:left={`${layout.x}px`}
+			style:top={`${layout.y}px`}
+			style:width={`${layout.w}px`}
+			style:height={`${layout.h}px`}
+		>
+			<MediaCard
+				{item}
+				variant="collage"
+				{selectMode}
+				{selectedIds}
+				selected={selectedIds.has(item.id)}
+				onclick={(e) => onselect(item.id, e)}
+				ondblclick={(e) => {
+					e.stopPropagation();
+					onopen(item);
+				}}
+				{oncontextmenu}
+				{onfavorite}
+			/>
+		</div>
 	{/each}
 </div>

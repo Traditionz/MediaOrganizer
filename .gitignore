@@ -1,5 +1,6 @@
 node_modules
 /data
+/data/.bun-test-*
 /tools
 
 # Cursor
@@ -12,6 +13,10 @@ node_modules
 .wrangler
 /.svelte-kit
 /build
+
+# Rust / Tauri (Cargo build artifacts — never commit)
+/target/
+/src-tauri/target/
 
 # OS
 .DS_Store

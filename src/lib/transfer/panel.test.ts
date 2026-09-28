@@ -86,6 +86,9 @@ describe('transfer panel', () => {
 
 		const compress = makeTransferJob({ kind: 'compress', files: [] });
 		expect(jobTitle(compress)).toBe('Compressing');
+		expect(jobTitle(makeTransferJob({ kind: 'optimize', files: [] }))).toBe(
+			'Optimizing for playback'
+		);
 
 		const cancelled = makeTransferJob({
 			files: [makeTransferFile({ name: 'a.jpg', status: 'cancelled' })]

@@ -5,6 +5,15 @@
 		resumePlaybackPosition,
 		setPlaybackPosition
 	} from '$lib/playbackPosition';
+	import {
+		canSafelyResumeSeek,
+		classifyPlayError,
+		shouldRetryMediaError,
+		shouldRetryPlayAfterAbort,
+		shouldRetryPlayMuted
+	} from '$lib/playback/logic';
+	import { syncMediaElementPlaybackProps, VOLUME_WRITE_EPSILON } from '$lib/playback/attachSync';
+	import { clockFromMediaElement, shouldPublishMediaClock } from '$lib/playback/mediaClock';
 	import { accumulateWatchDelta } from '$lib/media/views';
 	import {
 		clampSeekTime,
@@ -15,6 +24,13 @@
 		type PlayerKeyAction
 	} from '$lib/media/playerKeys';
 	import { isLightboxTypingTarget } from '$lib/media/lightboxNav';
+	import {
+		parseStoryboardMeta,
+		STORYBOARD_REQUEST_DELAY_MS,
+		storyboardBackground,
+		storyboardUrl,
+		type StoryboardMeta
+	} from '$lib/media/storyboard';
 	import Maximize from '@lucide/svelte/icons/maximize';
 	import Pause from '@lucide/svelte/icons/pause';
 	import Play from '@lucide/svelte/icons/play';
@@ -22,6 +38,8 @@
 	import Volume2 from '@lucide/svelte/icons/volume-2';
 	import VolumeX from '@lucide/svelte/icons/volume-x';
 	import { eventHtml, eventTargetHtml } from '$lib/parse';
+	import { releaseVideoElement } from '$lib/playback/releaseVideo';
+	import { untrack } from 'svelte';
 
 	interface Props {
 		src: string;
@@ -57,14 +75,18 @@
 	let speedMenuOpen = $state(false);
 	let hideTimer: ReturnType<typeof setTimeout> | null = null;
 	let rafId = 0;
+	let playRetryRaf = 0;
 	let pendingSeek: number | null = null;
-	let previewEl: HTMLVideoElement | undefined = $state();
 	let timelineHover = $state(false);
 	let hoverRatio = $state(0);
 	let hoverTime = $state(0);
-	let previewBusy = false;
-	let queuedPreview = -1;
+	let storyboard = $state<{ id: string; meta: StoryboardMeta } | null>(null);
 	let resumeApplied = false;
+	let errorRetried = false;
+	let retryAt: number | null = null;
+	let wantPlay = true;
+	let abortPlayRetryScheduled = false;
+	let ignoreMediaEcho = false;
 	let lastSaveAt = 0;
 	let watchedSeconds = 0;
 	let lastMediaTime = NaN;
@@ -77,12 +99,21 @@
 		showControls || !playing || scrubbing || volumeDragging || speedMenuOpen || timelineHover
 	);
 	const previewAr = $derived.by(() => {
+		if (storyboard) return storyboard.meta.tileW / storyboard.meta.tileH;
 		const w = videoEl?.videoWidth ?? 0;
 		const h = videoEl?.videoHeight ?? 0;
 		return w > 0 && h > 0 ? w / h : 16 / 9;
 	});
 	const previewWRem = $derived(Math.min(PREVIEW_MAX_W_REM, PREVIEW_H_REM * previewAr));
 	const previewHalfRem = $derived(previewWRem / 2);
+	const sprite = $derived(
+		storyboard
+			? {
+					url: `url(${storyboardUrl(storyboard.id)})`,
+					...storyboardBackground(storyboard.meta, hoverTime)
+				}
+			: null
+	);
 
 	function clearHideTimer() {
 		if (hideTimer) {
@@ -144,36 +175,71 @@
 	function syncTime() {
 		if (!videoEl || scrubbing) return;
 		if (pendingSeek != null) {
-			current = pendingSeek;
+			if (current !== pendingSeek) current = pendingSeek;
 			return;
 		}
-		current = videoEl.currentTime;
+		const next = videoEl.currentTime;
+		if (!shouldPublishMediaClock(current, next)) return;
+		current = next;
 	}
 
-	function savePosition(force = false) {
-		if (!mediaId || !videoEl) return;
+	function savePosition(force = false, id = mediaId) {
+		if (!id || !videoEl) return;
 		const t = pendingSeek ?? videoEl.currentTime;
 		const d = duration || videoEl.duration || 0;
 		if (!Number.isFinite(t)) return;
 		const now = Date.now();
 		if (!force && now - lastSaveAt < SAVE_INTERVAL_MS) return;
 		lastSaveAt = now;
-		setPlaybackPosition(mediaId, t, d);
+		setPlaybackPosition(id, t, d);
 	}
 
 	function applyResume() {
 		if (resumeApplied || !mediaId || !videoEl) return;
 		const d = videoEl.duration || duration || 0;
 		if (!Number.isFinite(d) || d <= 0) return;
-		resumeApplied = true;
+		if (!canSafelyResumeSeek(videoEl.readyState)) return;
 		const resume = resumePlaybackPosition(mediaId, d);
+		resumeApplied = true;
 		if (resume == null || resume <= 0) return;
 		pendingSeek = resume;
 		current = resume;
+		wantPlay = true;
 		try {
 			videoEl.currentTime = resume;
 		} catch {
 			/* seek may fail until more data is buffered */
+		}
+	}
+
+	async function ensurePlay() {
+		const video = videoEl;
+		if (!video || !wantPlay || !video.paused) return;
+		try {
+			await video.play();
+		} catch (err) {
+			// Element was detached or swapped while play() was pending.
+			if (videoEl !== video) return;
+			const name = err instanceof DOMException || err instanceof Error ? err.name : '';
+			const kind = classifyPlayError(name);
+			if (shouldRetryPlayMuted(kind, video.muted)) {
+				video.muted = true;
+				muted = true;
+				try {
+					await video.play();
+				} catch {
+					/* ignore second failure */
+				}
+				return;
+			}
+			if (shouldRetryPlayAfterAbort(kind, wantPlay) && !abortPlayRetryScheduled) {
+				abortPlayRetryScheduled = true;
+				playRetryRaf = requestAnimationFrame(() => {
+					playRetryRaf = 0;
+					abortPlayRetryScheduled = false;
+					void ensurePlay();
+				});
+			}
 		}
 	}
 
@@ -205,25 +271,45 @@
 	function attachVideo(node: HTMLVideoElement) {
 		videoEl = node;
 		resumeApplied = false;
+		wantPlay = true;
+		abortPlayRetryScheduled = false;
 		lastSaveAt = 0;
 		watchedSeconds = 0;
 		lastMediaTime = NaN;
-		node.playbackRate = playbackRate;
-		node.volume = volume;
-		node.muted = muted;
+		// Capture id now. A later pagehide can read the prop after the lightbox item is gone.
+		// untrack: the prop getter reads the parent's item object; tracking it re-runs this
+		// attachment on every item replacement and the teardown strips the live video's src.
+		const boundId = untrack(() => mediaId);
 
-		const onPageHide = () => savePosition(true);
+		const onPageHide = () => savePosition(true, boundId);
 		const onVisibility = () => {
-			if (document.visibilityState === 'hidden') savePosition(true);
+			if (document.visibilityState === 'hidden') savePosition(true, boundId);
 		};
 		window.addEventListener('pagehide', onPageHide);
 		document.addEventListener('visibilitychange', onVisibility);
+		// Metadata and play can fire before this attachment runs. Read the element now.
+		// untrack: reading `current` here and writing it back re-runs this attachment
+		// on every clock tick and trips effect_update_depth_exceeded, freezing the UI at 0:00.
+		ignoreMediaEcho = true;
+		untrack(() => {
+			syncMediaElementPlaybackProps(node, { playbackRate, volume, muted });
+			applyMediaClock(node);
+			void ensurePlay();
+		});
+		ignoreMediaEcho = false;
 
 		return () => {
-			savePosition(true);
+			savePosition(true, boundId);
 			window.removeEventListener('pagehide', onPageHide);
 			document.removeEventListener('visibilitychange', onVisibility);
 			stopTick();
+			clearHideTimer();
+			if (playRetryRaf) {
+				cancelAnimationFrame(playRetryRaf);
+				playRetryRaf = 0;
+			}
+			abortPlayRetryScheduled = false;
+			releaseVideoElement(node);
 			if (videoEl === node) videoEl = undefined;
 		};
 	}
@@ -250,40 +336,31 @@
 		window.addEventListener('wheel', onVolumeWheel, { passive: false });
 		return () => {
 			window.removeEventListener('wheel', onVolumeWheel);
-			if (playerEl === node) playerEl = undefined;
+			playerEl = undefined;
 		};
 	}
 
-	function attachPreview(node: HTMLVideoElement) {
-		previewEl = node;
-		node.muted = true;
-		node.defaultMuted = true;
-		node.volume = 0;
-		previewBusy = false;
-		queuedPreview = -1;
+	/** Hover thumbnails come from one server-built sprite, so hovering never decodes video. */
+	function attachStoryboard(_node: HTMLElement) {
+		// untrack: a new item object for the same id must not refetch the sheet.
+		const id = untrack(() => mediaId);
+		if (!id) return;
+		let alive = true;
+		// Delay so flipping through many videos does not queue a sprite build for each.
+		const timer = setTimeout(async () => {
+			try {
+				const res = await fetch(storyboardUrl(id), { method: 'POST' });
+				if (!res.ok) return;
+				const meta = parseStoryboardMeta(await res.json());
+				if (alive && meta) storyboard = { id, meta };
+			} catch {
+				/* hover keeps the time label only */
+			}
+		}, STORYBOARD_REQUEST_DELAY_MS);
 		return () => {
-			if (previewEl === node) previewEl = undefined;
+			alive = false;
+			clearTimeout(timer);
 		};
-	}
-
-	function commitPreviewSeek(t: number) {
-		if (!previewEl || duration <= 0) return;
-		const next = Math.min(Math.max(0, t), Math.max(0, duration - 0.05));
-		if (previewBusy) {
-			queuedPreview = next;
-			return;
-		}
-		if (Math.abs((previewEl.currentTime || 0) - next) < 0.05) return;
-		previewBusy = true;
-		previewEl.currentTime = next;
-	}
-
-	function onPreviewSeeked() {
-		previewBusy = false;
-		if (queuedPreview < 0) return;
-		const t = queuedPreview;
-		queuedPreview = -1;
-		commitPreviewSeek(t);
 	}
 
 	function updateTimelineHover(e: PointerEvent) {
@@ -294,7 +371,6 @@
 		hoverRatio = ratio;
 		hoverTime = ratio * duration;
 		timelineHover = true;
-		commitPreviewSeek(hoverTime);
 	}
 
 	function hideTimelineHover() {
@@ -303,24 +379,80 @@
 		scheduleHide();
 	}
 
-	function onMeta() {
-		if (!videoEl) return;
-		duration = videoEl.duration || 0;
-		applyResume();
-		if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+	function applyMediaClock(node: HTMLVideoElement) {
+		const clock = clockFromMediaElement(node, { scrubbing, pendingSeek, current, duration });
+		duration = clock.duration;
+		if (!scrubbing && pendingSeek == null) current = clock.current;
+		playing = clock.playing;
+		if (playing) startTick();
+		else stopTick();
+		if (node.videoWidth > 0 && node.videoHeight > 0) {
 			onmetadata?.({
-				w: videoEl.videoWidth,
-				h: videoEl.videoHeight,
-				duration: Number.isFinite(duration) ? duration : 0
+				w: node.videoWidth,
+				h: node.videoHeight,
+				duration: clock.duration
 			});
 		}
+	}
+
+	function mediaNode(e?: Event): HTMLVideoElement | undefined {
+		return e?.currentTarget instanceof HTMLVideoElement ? e.currentTarget : videoEl;
+	}
+
+	function onMeta(e: Event) {
+		const node = mediaNode(e);
+		if (!node) return;
+		videoEl = node;
+		applyMediaClock(node);
+		applyResume();
+		// load() fires durationchange with no metadata yet; a seek then is dropped and playback restarts at 0.
+		if (retryAt != null && node.readyState >= HTMLMediaElement.HAVE_METADATA) {
+			pendingSeek = retryAt;
+			node.currentTime = retryAt;
+			retryAt = null;
+		}
+	}
+
+	function onLoadedData(e: Event) {
+		const node = mediaNode(e);
+		if (node) applyMediaClock(node);
+		applyResume();
+	}
+
+	function onCanPlay(e: Event) {
+		const node = mediaNode(e);
+		if (node) applyMediaClock(node);
+		applyResume();
+		if (wantPlay && videoEl?.paused) void ensurePlay();
+	}
+
+	function onWaiting() {
+		showControls = true;
+	}
+
+	function onStalled() {
+		showControls = true;
+	}
+
+	function onVideoError(e: Event) {
+		const node = mediaNode(e);
+		if (node && shouldRetryMediaError(node.error?.code, errorRetried)) {
+			errorRetried = true;
+			retryAt = pendingSeek ?? current;
+			node.load();
+			return;
+		}
+		wantPlay = false;
+		showControls = true;
 	}
 
 	function togglePlay() {
 		if (!videoEl) return;
 		if (videoEl.paused) {
-			void videoEl.play();
+			wantPlay = true;
+			void ensurePlay();
 		} else {
+			wantPlay = false;
 			videoEl.pause();
 		}
 		revealControls();
@@ -340,9 +472,9 @@
 		if (!videoEl) return;
 		if (videoEl.muted || volume === 0) {
 			videoEl.muted = false;
-			applyVolume(lastVolume > 0 ? lastVolume : 1);
+			applyVolume(lastVolume);
 		} else {
-			lastVolume = volume > 0 ? volume : lastVolume;
+			lastVolume = volume;
 			videoEl.muted = true;
 			muted = true;
 		}
@@ -449,6 +581,25 @@
 		scheduleHide();
 	}
 
+	function onVolumeKeydown(e: KeyboardEvent) {
+		e.stopPropagation();
+		if (e.key === 'ArrowLeft') {
+			e.preventDefault();
+			nudgeVolume(-PLAYER_VOLUME_STEP);
+		} else if (e.key === 'ArrowRight') {
+			e.preventDefault();
+			nudgeVolume(PLAYER_VOLUME_STEP);
+		} else if (e.key === 'Home') {
+			e.preventDefault();
+			applyVolume(0);
+			revealControls();
+		} else if (e.key === 'End') {
+			e.preventDefault();
+			applyVolume(1);
+			revealControls();
+		}
+	}
+
 	function toggleFullscreen() {
 		if (!playerEl) return;
 		if (document.fullscreenElement === playerEl) {
@@ -467,6 +618,7 @@
 	function applyPlayerAction(action: PlayerKeyAction) {
 		const seek = playerSeekDelta(action);
 		if (seek != null) {
+			/* v8 ignore next -- keydown listener is torn down before the video attachment clears videoEl */
 			if (!videoEl) return;
 			current = clampSeekTime(pendingSeek ?? videoEl.currentTime, duration, seek);
 			commitSeek();
@@ -501,10 +653,8 @@
 			cyclePlaybackRate(1);
 			return;
 		}
-		if (action === 'closeMenu') {
-			speedMenuOpen = false;
-			scheduleHide();
-		}
+		speedMenuOpen = false;
+		scheduleHide();
 	}
 
 	function onPlayerKeydown(e: KeyboardEvent) {
@@ -538,7 +688,7 @@
 <div
 	{@attach attachPlayer}
 	class={[
-		'custom-player group/player relative h-full w-full overflow-hidden bg-black outline-none',
+		'custom-player group/player relative h-full w-full overflow-visible bg-black outline-none',
 		chromeOpen && 'controls-visible'
 	]}
 	role="group"
@@ -561,39 +711,56 @@
 	<video
 		{@attach attachVideo}
 		{src}
-		class="custom-video h-full w-full object-contain"
+		class="custom-video block h-full w-full max-w-none rounded-lg object-contain"
 		autoplay
 		playsinline
 		preload="auto"
 		onloadedmetadata={onMeta}
 		ondurationchange={onMeta}
+		onloadeddata={onLoadedData}
+		oncanplay={onCanPlay}
 		onprogress={readBuffer}
-		onplay={() => {
-			playing = true;
-			startTick();
+		onwaiting={onWaiting}
+		onstalled={onStalled}
+		onerror={onVideoError}
+		onplay={(e) => {
+			const node = mediaNode(e);
+			if (node) applyMediaClock(node);
+			else {
+				playing = true;
+				startTick();
+			}
 			scheduleHide();
 		}}
-		onpause={() => {
-			playing = false;
-			stopTick();
+		onpause={(e) => {
+			const node = mediaNode(e);
+			if (node) applyMediaClock(node);
+			else {
+				playing = false;
+				stopTick();
+			}
 			syncTime();
 			savePosition(true);
 			showControls = true;
 			clearHideTimer();
 		}}
-		onseeked={() => {
+		onseeked={(e) => {
 			pendingSeek = null;
 			lastMediaTime = NaN;
-			syncTime();
+			const node = mediaNode(e);
+			if (node) applyMediaClock(node);
+			else syncTime();
 			readBuffer();
 			savePosition(true);
+			if (wantPlay) void ensurePlay();
 		}}
 		onvolumechange={() => {
-			if (!videoEl) return;
-			muted = videoEl.muted;
-			volume = videoEl.volume;
+			if (!videoEl || ignoreMediaEcho) return;
+			if (videoEl.muted !== muted) muted = videoEl.muted;
+			if (Math.abs(videoEl.volume - volume) > VOLUME_WRITE_EPSILON) volume = videoEl.volume;
 		}}
 		onended={() => {
+			wantPlay = false;
 			playing = false;
 			stopTick();
 			syncTime();
@@ -601,7 +768,8 @@
 			showControls = true;
 		}}
 		onratechange={() => {
-			if (videoEl) playbackRate = videoEl.playbackRate;
+			if (!videoEl || ignoreMediaEcho) return;
+			playbackRate = videoEl.playbackRate;
 		}}
 		onclick={() => {
 			if (speedMenuOpen) {
@@ -614,30 +782,27 @@
 		<track kind="captions" />
 	</video>
 
-	<div class="custom-chrome absolute inset-x-0 bottom-0 z-20">
+	<div class="custom-chrome absolute inset-x-0 bottom-0 z-[25]">
 		<div class="relative px-3">
 			<div
+				{@attach attachStoryboard}
 				class={['custom-hover-preview', timelineHover && 'is-visible']}
 				style:--x={hoverRatio}
-				style:--preview-w="{previewWRem}rem"
+				style:--preview-w={`${previewWRem}rem`}
 				style:--preview-h="{PREVIEW_H_REM}rem"
-				style:--preview-half="{previewHalfRem}rem"
+				style:--preview-half={`${previewHalfRem}rem`}
 				aria-hidden="true"
 			>
-				<div class="custom-hover-frame">
-					<video
-						{@attach attachPreview}
-						{src}
-						class="custom-hover-video"
-						muted
-						playsinline
-						preload="metadata"
-						onseeked={onPreviewSeeked}
-						onloadeddata={() => {
-							if (timelineHover) commitPreviewSeek(hoverTime);
-						}}
-					></video>
-				</div>
+				{#if sprite}
+					<div class="custom-hover-frame">
+						<div
+							class="custom-hover-sprite"
+							style:background-image={sprite.url}
+							style:background-size={sprite.size}
+							style:background-position={sprite.position}
+						></div>
+					</div>
+				{/if}
 				<span class="custom-hover-time">{formatDuration(hoverTime)}</span>
 			</div>
 			<div
@@ -657,10 +822,12 @@
 					if (!videoEl) return;
 					if (e.key === 'ArrowLeft') {
 						e.preventDefault();
+						e.stopPropagation();
 						current = Math.max(0, (pendingSeek ?? videoEl.currentTime) - 5);
 						commitSeek();
 					} else if (e.key === 'ArrowRight') {
 						e.preventDefault();
+						e.stopPropagation();
 						current = Math.min(duration, (pendingSeek ?? videoEl.currentTime) + 5);
 						commitSeek();
 					}
@@ -729,6 +896,7 @@
 					onpointermove={onVolumePointerMove}
 					onpointerup={onVolumePointerUp}
 					onpointercancel={onVolumePointerUp}
+					onkeydown={onVolumeKeydown}
 					onclick={(e) => e.stopPropagation()}
 				>
 					<div class="custom-volume-track">
@@ -939,12 +1107,11 @@
 			0 6px 22px rgb(0 0 0 / 0.55);
 	}
 
-	.custom-hover-video {
-		display: block;
+	.custom-hover-sprite {
 		width: 100%;
 		height: 100%;
-		object-fit: cover;
-		background: #000;
+		background-color: #000;
+		background-repeat: no-repeat;
 	}
 
 	.custom-hover-time {

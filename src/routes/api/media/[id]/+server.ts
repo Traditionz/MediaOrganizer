@@ -2,6 +2,7 @@ import { error } from '@sveltejs/kit';
 import { Readable } from 'node:stream';
 import type { RequestHandler } from './$types';
 import { getMediaForServe, openFileReadStream } from '$lib/server/media';
+import { mediaCacheControl } from '$lib/server/mediaUtil';
 import { resolveProfileFromCookies } from '$lib/server/profileContext';
 
 function parseRange(header: string | null, size: number): { start: number; end: number } | null {
@@ -33,10 +34,12 @@ export const GET: RequestHandler = async ({ params, url, request, cookies }) => 
 	const id = params.id;
 	if (!id) throw error(400, 'Invalid media id');
 
-	const row = getMediaForServe(profile.id, id);
+	const asDownload = url.searchParams.has('download');
+	const row = getMediaForServe(profile.id, id, {
+		playback: url.searchParams.has('playback') && !asDownload
+	});
 	if (!row) throw error(404, 'Media not found');
 
-	const asDownload = url.searchParams.has('download');
 	const disposition = asDownload ? 'attachment' : 'inline';
 	const filename = encodeURIComponent(row.originalName);
 	const range = parseRange(request.headers.get('range'), row.size);
@@ -54,7 +57,7 @@ export const GET: RequestHandler = async ({ params, url, request, cookies }) => 
 				'Content-Length': String(end - start + 1),
 				'Content-Range': `bytes ${start}-${end}/${row.size}`,
 				'Accept-Ranges': 'bytes',
-				'Cache-Control': 'private, max-age=3600',
+				'Cache-Control': mediaCacheControl(row.mimeType, false),
 				'Content-Disposition': `${disposition}; filename="${filename}"`
 			}
 		});
@@ -70,7 +73,7 @@ export const GET: RequestHandler = async ({ params, url, request, cookies }) => 
 			'Content-Type': row.mimeType,
 			'Content-Length': String(row.size),
 			'Accept-Ranges': 'bytes',
-			'Cache-Control': asDownload ? 'no-store' : 'private, max-age=3600',
+			'Cache-Control': mediaCacheControl(row.mimeType, asDownload),
 			'Content-Disposition': `${disposition}; filename="${filename}"`
 		}
 	});

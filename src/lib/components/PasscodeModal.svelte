@@ -12,7 +12,7 @@
 		passcodeEditTitle,
 		validatePasscodeEdit
 	} from '$lib/profile/passcodeEdit';
-	import { parseConfirmMediaCount, validateDeleteProfileConfirm } from '$lib/profile/deleteConfirm';
+	import { validateDeleteProfileConfirm } from '$lib/profile/deleteConfirm';
 	import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
 
 	interface Props {
@@ -88,7 +88,7 @@
 		mode === 'create'
 			? 'Optionally protect this profile with a passcode.'
 			: mode === 'delete'
-				? `Permanently delete “${profileName}” and all of its media. Type the profile name and media count to confirm.`
+				? `Permanently delete “${profileName}” and all of its media (${mediaCount} item${mediaCount === 1 ? '' : 's'}, including trash). Type the profile name and media count to confirm.`
 				: mode === 'passcode'
 					? requiresPasscode
 						? `Update the passcode for “${profileName}”.`
@@ -105,15 +105,14 @@
 		localError = '';
 
 		if (mode === 'delete') {
-			const typedCount = parseConfirmMediaCount(String(confirmMediaCount));
 			const editError = validateDeleteProfileConfirm({
 				typedName: confirmName,
 				typedCountRaw: String(confirmMediaCount),
 				profileName,
 				mediaCount
 			});
-			if (editError || typedCount == null) {
-				localError = editError ?? 'Enter the media count as a whole number';
+			if (editError) {
+				localError = editError;
 				return;
 			}
 			await onsubmit({
@@ -121,7 +120,7 @@
 				confirmPasscode: '',
 				usePasscode: false,
 				confirmName: confirmName.trim(),
-				confirmMediaCount: typedCount
+				confirmMediaCount: mediaCount
 			});
 			return;
 		}
@@ -148,8 +147,7 @@
 			return;
 		}
 
-		const wantsPasscode =
-			mode === 'create' ? usePasscode : mode === 'unlock' ? requiresPasscode : false;
+		const wantsPasscode = mode === 'create' ? usePasscode : requiresPasscode;
 
 		if (mode === 'create' && !name.trim()) {
 			localError = 'Profile name is required';
@@ -173,20 +171,10 @@
 			usePasscode: wantsPasscode
 		});
 	}
-
-	function dismiss() {
-		if (busy || !open) return;
-		oncancel();
-	}
 </script>
 
 {#if open}
-	<Dialog.Root
-		open={true}
-		onOpenChange={(next) => {
-			if (!next) dismiss();
-		}}
-	>
+	<Dialog.Root open={true} onOpenChange={() => oncancel()}>
 		<Dialog.Content
 			class="flex max-h-[min(36rem,92vh)] flex-col gap-0 overflow-hidden p-0 sm:max-w-md"
 			showCloseButton={false}
@@ -241,12 +229,14 @@
 								/>
 							</div>
 							<div class="mt-3 grid gap-2">
-								<Label class="text-muted-foreground text-xs">Type media count</Label>
+								<Label class="text-muted-foreground text-xs"
+									>Type media count ({mediaCount})</Label
+								>
 								<Input
 									type="text"
 									inputmode="numeric"
 									pattern="[0-9]*"
-									placeholder="Total media items"
+									placeholder={String(mediaCount)}
 									bind:value={confirmMediaCount}
 									disabled={busy}
 									required
@@ -348,8 +338,7 @@
 					>
 						{#if busy}
 							<Spinner class="size-3" />
-						{/if}
-						{mode === 'unlock'
+						{/if}{mode === 'unlock'
 							? 'Unlock'
 							: mode === 'create'
 								? 'Create'

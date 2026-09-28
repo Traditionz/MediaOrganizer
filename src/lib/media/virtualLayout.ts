@@ -1,5 +1,5 @@
 import type { MediaType } from '$lib/types';
-import type { CollageItem, CollageLayout } from '$lib/utils';
+import type { CollageItem, CollageLayout, CollageResult } from '$lib/utils';
 import { layoutCollage } from '$lib/utils';
 import type { SelectionRect } from '$lib/selection/geometry';
 import { rectsIntersect } from '$lib/selection/geometry';
@@ -87,6 +87,44 @@ export function gridCardLayouts(
 	return layouts;
 }
 
+/** Closed-form grid layouts only for the visible Y-window (plus overscan). */
+export function gridCardLayoutsInYWindow(
+	ids: readonly string[],
+	columns: number,
+	containerWidth: number,
+	gap: number,
+	visibleTop: number,
+	visibleBottom: number,
+	overscanPx: number
+): CollageLayout[] {
+	if (ids.length === 0) return [];
+	const cols = Math.max(1, columns);
+	const cell = gridCellSize(containerWidth, cols, gap);
+	const stride = cell + gap;
+	if (!(stride > 0)) return [];
+	const top = visibleTop - overscanPx;
+	const bottom = visibleBottom + overscanPx;
+	if (!(bottom > top)) return [];
+	const firstRow = Math.max(0, Math.ceil((top - cell) / stride));
+	const lastRow = Math.min(Math.ceil(ids.length / cols) - 1, Math.floor(bottom / stride));
+	if (lastRow < firstRow) return [];
+	const layouts: CollageLayout[] = [];
+	for (let row = firstRow; row <= lastRow; row++) {
+		for (let col = 0; col < cols; col++) {
+			const index = row * cols + col;
+			if (index >= ids.length) break;
+			layouts.push({
+				id: ids[index]!,
+				x: col * stride,
+				y: row * stride,
+				w: cell,
+				h: cell
+			});
+		}
+	}
+	return layouts;
+}
+
 export function collageCardLayouts(
 	items: readonly CollageAspectItem[],
 	columns: number,
@@ -131,6 +169,132 @@ export function layoutsInYWindow(
 		out.push(layout);
 	}
 	return out;
+}
+
+export type TimelineSectionMetric = {
+	index: number;
+	top: number;
+	height: number;
+	gridTop: number;
+	gridHeight: number;
+};
+
+export type TimelineMetrics = {
+	sections: TimelineSectionMetric[];
+	totalHeight: number;
+};
+
+export type GridIndexRange = {
+	start: number;
+	end: number;
+};
+
+/** Month header plus the square grid under it. Gap sits between sections, not after the last. */
+export function timelineSectionMetrics(
+	itemCounts: readonly number[],
+	columns: number,
+	cellSize: number,
+	gap: number,
+	headerHeight: number,
+	sectionGap: number
+): TimelineMetrics {
+	const sections: TimelineSectionMetric[] = [];
+	let top = 0;
+	for (let index = 0; index < itemCounts.length; index++) {
+		const gridHeight = gridTotalHeight(itemCounts[index] ?? 0, columns, cellSize, gap);
+		const height = headerHeight + gridHeight;
+		sections.push({
+			index,
+			top,
+			height,
+			gridTop: top + headerHeight,
+			gridHeight
+		});
+		top += height;
+		if (index < itemCounts.length - 1) top += sectionGap;
+	}
+	return { sections, totalHeight: top };
+}
+
+/** Inclusive-exclusive card indexes whose rows intersect the local Y window. */
+export function gridIndexRange(
+	itemCount: number,
+	columns: number,
+	cellSize: number,
+	gap: number,
+	localTop: number,
+	localBottom: number,
+	overscanPx: number
+): GridIndexRange {
+	if (itemCount <= 0) return { start: 0, end: 0 };
+	const stride = cellSize + gap;
+	if (!(stride > 0) || !(localBottom > localTop)) return { start: 0, end: 0 };
+	const cols = Math.max(1, columns);
+	const firstRow = Math.max(0, Math.floor((localTop - overscanPx) / stride));
+	const lastRow = Math.max(firstRow, Math.floor((localBottom + overscanPx) / stride));
+	return {
+		start: Math.min(itemCount, firstRow * cols),
+		end: Math.min(itemCount, (lastRow + 1) * cols)
+	};
+}
+
+export function gridCardBox(
+	index: number,
+	columns: number,
+	cellSize: number,
+	gap: number
+): CollageLayout {
+	const cols = Math.max(1, columns);
+	const col = index % cols;
+	const row = Math.floor(index / cols);
+	const stride = cellSize + gap;
+	return {
+		id: '',
+		x: col * stride,
+		y: row * stride,
+		w: cellSize,
+		h: cellSize
+	};
+}
+
+let collagePackCache: { key: string; packed: CollageResult } | null = null;
+
+function collagePackKey(
+	items: readonly CollageAspectItem[],
+	columns: number,
+	containerWidth: number,
+	gap: number
+): string {
+	let key = `${columns}:${containerWidth}:${gap}:${items.length}`;
+	for (const item of items) {
+		key += `|${item.id}:${item.width ?? ''}:${item.height ?? ''}:${item.media_type}`;
+	}
+	return key;
+}
+
+/**
+ * Pack the collage once per geometry. A view-count or album-name change reuses the pack
+ * so a large library does not lay out every card again.
+ */
+export function collageLayoutsInYWindow(
+	items: readonly CollageAspectItem[],
+	columns: number,
+	containerWidth: number,
+	gap: number,
+	visibleTop: number,
+	visibleBottom: number,
+	overscanPx: number
+) {
+	const key = collagePackKey(items, columns, containerWidth, gap);
+	let packed = collagePackCache?.key === key ? collagePackCache.packed : null;
+	if (!packed) {
+		packed = layoutCollage(toCollageItems(items), columns, containerWidth, gap);
+		collagePackCache = { key, packed };
+	}
+	return {
+		layouts: layoutsInYWindow(packed.layouts, visibleTop, visibleBottom, overscanPx),
+		totalHeight: packed.totalHeight
+	} as const;
 }
 
 export function idsIntersectingBox(

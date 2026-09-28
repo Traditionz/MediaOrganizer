@@ -5,6 +5,7 @@ import {
 	parseFfmpegDurationSeconds,
 	resetAv1Cancel
 } from '$lib/server/compress';
+import { parseFfmpegCreationTime, parseFfmpegGps } from '$lib/server/ffmpegParse';
 
 describe('av1 cancel flags', () => {
 	beforeEach(() => {
@@ -29,5 +30,24 @@ describe('parseFfmpegDurationSeconds', () => {
 	test('returns null for missing or zero duration', () => {
 		expect(parseFfmpegDurationSeconds('no duration here')).toBeNull();
 		expect(parseFfmpegDurationSeconds('Duration: 00:00:00.00')).toBeNull();
+	});
+});
+
+describe('parseFfmpegCreationTime / GPS', () => {
+	test('parses creation_time', () => {
+		expect(parseFfmpegCreationTime('     creation_time   : 2018-06-23T07:00:00.000000Z')).toBe(
+			'2018-06-23T07:00:00.000Z'
+		);
+		expect(parseFfmpegCreationTime('no time')).toBeNull();
+		expect(parseFfmpegCreationTime('creation_time : not-a-date')).toBeNull();
+	});
+
+	test('parses location', () => {
+		expect(parseFfmpegGps('location        : +37.2431-115.7930/')).toEqual({
+			lat: 37.2431,
+			lng: -115.793
+		});
+		expect(parseFfmpegGps('location : +91.0-010.0/')).toBeNull();
+		expect(parseFfmpegGps('nope')).toBeNull();
 	});
 });

@@ -102,6 +102,17 @@ export function setProfilePasscode(
 	return getProfile(id)!;
 }
 
+/** Thrown when delete needs name+count confirm; carries the real on-disk media total. */
+export class ProfileDeleteNeedsConfirmError extends Error {
+	readonly mediaCount: number;
+
+	constructor(mediaCount: number) {
+		super('Confirmation required');
+		this.name = 'ProfileDeleteNeedsConfirmError';
+		this.mediaCount = mediaCount;
+	}
+}
+
 /** Deletes an empty profile immediately. Non-empty needs matching name + media count. */
 export function deleteProfile(
 	id: string,
@@ -118,6 +129,9 @@ export function deleteProfile(
 		confirmation?.name ?? null,
 		confirmation?.mediaCount ?? null
 	);
+	if (confirmError === 'Confirmation required') {
+		throw new ProfileDeleteNeedsConfirmError(actualCount);
+	}
 	if (confirmError) throw new Error(confirmError);
 
 	registryDb.delete(profiles).where(eq(profiles.id, id)).run();

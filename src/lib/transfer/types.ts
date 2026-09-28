@@ -1,4 +1,4 @@
-export type TransferKind = 'upload' | 'compress';
+export type TransferKind = 'upload' | 'compress' | 'optimize';
 
 export type TransferFileStatus = 'queued' | 'uploading' | 'saving' | 'done' | 'error' | 'cancelled';
 

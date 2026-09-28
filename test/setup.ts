@@ -1,4 +1,21 @@
+import { mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { mock } from 'bun:test';
+
+/** Isolate SQLite + name crypto from the developer's real `data/` folder. */
+const testDataDir = join(process.cwd(), 'data', `.bun-test-${process.pid}`);
+process.env.MEDIA_DATA_DIR = testDataDir;
+process.env.MEDIA_NAME_KEY =
+	process.env.MEDIA_NAME_KEY ?? '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+mkdirSync(testDataDir, { recursive: true });
+
+process.on('exit', () => {
+	try {
+		rmSync(testDataDir, { recursive: true, force: true });
+	} catch {
+		/* best-effort */
+	}
+});
 
 mock.module('$app/environment', () => ({
 	browser: true,

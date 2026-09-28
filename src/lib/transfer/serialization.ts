@@ -34,7 +34,7 @@ export function parseFileKind(value: string | null): TransferFileKind {
 }
 
 export function parseTransferKind(value: string | null): TransferKind | null {
-	if (value === 'upload' || value === 'compress') return value;
+	if (value === 'upload' || value === 'compress' || value === 'optimize') return value;
 	return null;
 }
 
@@ -91,7 +91,7 @@ export function restoreTransferJobsFromStorage(raw: string | null): TransferJob[
 					(file) =>
 						file.status === 'queued' || file.status === 'uploading' || file.status === 'saving'
 				) ||
-				(kind === 'compress' && progress < 100) ||
+				(kind !== 'upload' && progress < 100) ||
 				(kind === 'upload' && !files.length && progress < 100);
 			if (inFlight) continue;
 			if (files.length && files.every((file) => file.status === 'cancelled')) continue;

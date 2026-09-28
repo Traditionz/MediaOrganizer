@@ -4,8 +4,10 @@ import {
 	albumNameMatchesQuery,
 	albumNameStem,
 	exactAlbumNameMatch,
+	namedItemsForAddQuery,
 	nextDuplicateAlbumName,
-	normalizeAlbumQuery
+	normalizeAlbumQuery,
+	visibleNamedItems
 } from '$lib/albumNaming';
 
 describe('albumNaming', () => {
@@ -41,5 +43,22 @@ describe('albumNaming', () => {
 		expect(albumListQueryNorm('  Trip  ', 'zzz', 'add')).toBe('trip');
 		expect(albumListQueryNorm('Trip', '  Vac  ', 'search')).toBe('vac');
 		expect(albumListQueryNorm('', '', 'search')).toBe('');
+	});
+
+	test('namedItemsForAddQuery keeps full list when unique', () => {
+		const items = [{ name: 'Trip' }, { name: 'Beach' }];
+		expect(namedItemsForAddQuery(items, '')).toEqual(items);
+		expect(namedItemsForAddQuery(items, '  ')).toEqual(items);
+		expect(namedItemsForAddQuery(items, 'bea')).toEqual([{ name: 'Beach' }]);
+		expect(namedItemsForAddQuery(items, 'zzz')).toEqual(items);
+		expect(namedItemsForAddQuery([], 'zzz')).toEqual([]);
+	});
+
+	test('visibleNamedItems prefers dedicated search', () => {
+		const items = [{ name: 'Trip' }, { name: 'Beach' }];
+		expect(visibleNamedItems(items, 'Beach', 'tri')).toEqual([{ name: 'Trip' }]);
+		expect(visibleNamedItems(items, 'Beach', '')).toEqual([{ name: 'Beach' }]);
+		expect(visibleNamedItems(items, 'zzz', '')).toEqual(items);
+		expect(visibleNamedItems(items, 'Beach', 'zzz')).toEqual([]);
 	});
 });

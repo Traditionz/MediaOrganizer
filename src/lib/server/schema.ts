@@ -40,6 +40,8 @@ export const media = sqliteTable(
 	{
 		id: text('id').primaryKey(),
 		originalName: text('original_name').notNull(),
+		/** HMAC of normalized plaintext name — duplicate / exact lookup. */
+		nameKey: text('name_key').notNull().default(''),
 		mimeType: text('mime_type').notNull(),
 		mediaType: text('media_type', { enum: ['image', 'video'] }).notNull(),
 		size: integer('size').notNull(),
@@ -53,14 +55,76 @@ export const media = sqliteTable(
 			.notNull()
 			.default(sql`(datetime('now'))`),
 		/** Soft-delete timestamp; null = active library */
-		deletedAt: text('deleted_at')
+		deletedAt: text('deleted_at'),
+		/** Capture/taken time (EXIF / container), else mtime */
+		capturedAt: text('captured_at'),
+		contentHash: text('content_hash'),
+		cameraMake: text('camera_make'),
+		cameraModel: text('camera_model'),
+		gpsLat: real('gps_lat'),
+		gpsLng: real('gps_lng'),
+		favorite: integer('favorite').notNull().default(0),
+		/** Relative import path for watched-folder skip-path */
+		sourcePath: text('source_path'),
+		/** Timeline sprite: `{ key, interval, count, cols, rows, tileW, tileH }` */
+		storyboard: text('storyboard'),
+		/** H.264 short-GOP copy the player prefers over the original */
+		playbackKey: text('playback_key')
 	},
 	(t) => [
 		index('idx_media_type').on(t.mediaType),
 		index('idx_media_created').on(t.createdAt),
-		index('idx_media_deleted').on(t.deletedAt)
+		index('idx_media_deleted').on(t.deletedAt),
+		index('idx_media_deleted_created').on(t.deletedAt, t.createdAt),
+		index('idx_media_name_key').on(t.nameKey),
+		index('idx_media_captured').on(t.capturedAt),
+		index('idx_media_content_hash').on(t.contentHash),
+		index('idx_media_favorite').on(t.favorite)
 	]
 );
+
+export const tags = sqliteTable(
+	'tags',
+	{
+		id: text('id').primaryKey(),
+		name: text('name').notNull(),
+		nameKey: text('name_key').notNull(),
+		kind: text('kind', { enum: ['tag', 'person'] })
+			.notNull()
+			.default('tag'),
+		createdAt: text('created_at')
+			.notNull()
+			.default(sql`(datetime('now'))`)
+	},
+	(t) => [uniqueIndex('idx_tags_name_key').on(t.nameKey)]
+);
+
+export const mediaTags = sqliteTable(
+	'media_tags',
+	{
+		tagId: text('tag_id')
+			.notNull()
+			.references(() => tags.id, { onDelete: 'cascade' }),
+		mediaId: text('media_id')
+			.notNull()
+			.references(() => media.id, { onDelete: 'cascade' })
+	},
+	(t) => [
+		primaryKey({ columns: [t.tagId, t.mediaId] }),
+		index('idx_media_tags_media').on(t.mediaId),
+		index('idx_media_tags_tag').on(t.tagId)
+	]
+);
+
+export const watchedFolders = sqliteTable('watched_folders', {
+	id: text('id').primaryKey(),
+	path: text('path').notNull().unique(),
+	recursive: integer('recursive').notNull().default(1),
+	lastScanAt: text('last_scan_at'),
+	createdAt: text('created_at')
+		.notNull()
+		.default(sql`(datetime('now'))`)
+});
 
 export const albumMedia = sqliteTable(
 	'album_media',
@@ -83,3 +147,6 @@ export type ProfileRow = typeof profiles.$inferSelect;
 export type AlbumRow = typeof albums.$inferSelect;
 export type MediaRow = typeof media.$inferSelect;
 export type AlbumMediaRow = typeof albumMedia.$inferSelect;
+export type TagRow = typeof tags.$inferSelect;
+export type MediaTagRow = typeof mediaTags.$inferSelect;
+export type WatchedFolderRow = typeof watchedFolders.$inferSelect;

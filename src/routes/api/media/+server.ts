@@ -5,20 +5,33 @@ import {
 	addMediaToAlbum,
 	backfillMissingDurations,
 	compressMedia,
+	InvalidVideoError,
+	countAllMedia,
+	countFavoriteMedia,
+	countTrashMedia,
+	countUnassignedMedia,
 	deleteMedia,
 	duplicateMedia,
+	ensureImageThumbnail,
 	insertMediaFromStream,
+	getMediaMeta,
 	listMedia,
+	lookupMediaByNames,
 	purgeExpiredTrash,
 	removeMediaFromAlbum,
 	renameMedia,
 	restoreMedia,
 	recordMediaView,
+	setMediaFavorite,
 	softDeleteMedia,
 	updateMediaDuration
 } from '$lib/server/media';
+import { cropMediaImage, rotateMediaImage } from '$lib/server/mediaEdit';
+import { importMediaFromFolder } from '$lib/server/folderImport';
 import { resolveProfileFromCookies } from '$lib/server/profileContext';
 import type { MediaType } from '$lib/types';
+import { isMediaSortBy, isMediaSortDir } from '$lib/media/sort';
+import { parseMediaListLimit, parseMediaListOffset } from '$lib/media/page';
 import { asFiniteNumber, own, ownNumber, ownString, readJsonObject, stringList } from '$lib/parse';
 
 const VIDEO_EXT = new Set(['mp4', 'm4v', 'mov', 'webm', 'mkv', 'avi']);
@@ -28,6 +41,12 @@ function requireProfile(cookies: Parameters<RequestHandler>[0]['cookies']) {
 	const profile = resolveProfileFromCookies(cookies);
 	if (!profile) throw error(401, 'Select a profile first');
 	return profile;
+}
+
+function requireMedia(profileId: string, id: string) {
+	const item = getMediaMeta(profileId, id);
+	if (!item) throw error(404, 'Media not found');
+	return item;
 }
 
 function extOf(name: string): string {
@@ -79,12 +98,29 @@ function parseContentLength(raw: string | null): number | null {
 
 export const GET: RequestHandler = async ({ url, cookies }) => {
 	const profile = requireProfile(cookies);
+
+	if (url.searchParams.get('meta') === '1') {
+		return json({
+			totalCount: countAllMedia(profile.id),
+			trashCount: countTrashMedia(profile.id),
+			favoritesCount: countFavoriteMedia(profile.id),
+			unassignedCount: countUnassignedMedia(profile.id)
+		});
+	}
+
 	const albumParam = url.searchParams.get('album') ?? url.searchParams.get('folder');
 	const typeParam = url.searchParams.get('type') ?? 'all';
 	const mediaType = typeParam === 'image' || typeParam === 'video' ? typeParam : 'all';
 	const dateFrom = url.searchParams.get('from') ?? undefined;
 	const dateTo = url.searchParams.get('to') ?? undefined;
 	const trash = url.searchParams.get('trash') === '1' || url.searchParams.get('trash') === 'true';
+	const search = url.searchParams.get('q') ?? url.searchParams.get('search') ?? undefined;
+	const sortRaw = url.searchParams.get('sort') ?? 'date';
+	const dirRaw = url.searchParams.get('dir') ?? 'desc';
+	const sortBy = isMediaSortBy(sortRaw) ? sortRaw : 'date';
+	const sortDir = isMediaSortDir(dirRaw) ? dirRaw : 'desc';
+	const limit = parseMediaListLimit(url.searchParams.get('limit'));
+	const offset = parseMediaListOffset(url.searchParams.get('offset'));
 
 	let albumId: string | null | 'all' = 'all';
 	if (albumParam === 'null' || albumParam === 'unfiled' || albumParam === 'unassigned') {
@@ -99,7 +135,12 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 			mediaType,
 			dateFrom,
 			dateTo,
-			trash
+			trash,
+			search,
+			sortBy,
+			sortDir,
+			limit,
+			offset
 		})
 	);
 };
@@ -110,7 +151,37 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
 	if (contentType.includes('application/json')) {
 		const body = await readJsonObject(request);
-		if (ownString(body ?? {}, 'action') === 'duplicate') {
+		const action = ownString(body ?? {}, 'action');
+
+		if (action === 'lookup-names') {
+			const names = stringList(body ? own(body, 'names') : undefined);
+			return json({ found: lookupMediaByNames(profile.id, names) });
+		}
+
+		if (action === 'import-folder') {
+			const folderPath = ownString(body ?? {}, 'path') ?? '';
+			if (!folderPath.trim()) throw error(400, 'Folder path is required');
+			const albumId = parseAlbumId(
+				ownString(body ?? {}, 'albumId') ?? ownString(body ?? {}, 'folderId')
+			);
+			const recursive = own(body ?? {}, 'recursive') !== false;
+			try {
+				const result = await importMediaFromFolder(profile.id, folderPath, {
+					albumId,
+					recursive
+				});
+				return json(result, { status: 201 });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : 'Import failed';
+				if (message.includes('not found') || message.includes('must be')) {
+					throw error(400, message);
+				}
+				if (message.includes('data directory')) throw error(400, message);
+				throw error(500, message);
+			}
+		}
+
+		if (action === 'duplicate') {
 			const ids = stringList(body ? own(body, 'ids') : undefined);
 			if (!ids.length) throw error(400, 'At least one media id is required');
 			const albumId = parseAlbumId(
@@ -121,6 +192,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				return json(created, { status: 201 });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : 'Failed to duplicate media';
+				if (err instanceof InvalidVideoError) throw error(400, message);
 				if (message.includes('not found')) throw error(404, message);
 				throw error(500, message);
 			}
@@ -165,6 +237,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			return json(item, { status: 201 });
 		} catch (err) {
 			const message = err instanceof Error ? err.message : 'Upload failed';
+			if (err instanceof InvalidVideoError) throw error(400, message);
 			if (message.includes('not found')) throw error(404, message);
 			throw error(500, message);
 		}
@@ -205,6 +278,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		return json(item, { status: 201 });
 	} catch (err) {
 		const message = err instanceof Error ? err.message : 'Upload failed';
+		if (err instanceof InvalidVideoError) throw error(400, message);
 		if (message.includes('not found')) throw error(404, message);
 		throw error(500, message);
 	}
@@ -260,12 +334,15 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 	if (action === 'compress') {
 		const ids = stringList(body ? own(body, 'ids') : undefined);
 		if (!ids.length) throw error(400, 'At least one media id is required');
+		const presetRaw = ownString(body ?? {}, 'preset');
+		const preset = presetRaw === 'quality' ? 'quality' : 'fast';
 		const results = [];
 		for (const id of ids) {
 			try {
-				results.push(await compressMedia(profile.id, id));
+				results.push(await compressMedia(profile.id, id, { preset }));
 			} catch (err) {
 				const message = err instanceof Error ? err.message : 'Compress failed';
+				if (err instanceof InvalidVideoError) throw error(400, message);
 				if (message.includes('not found')) throw error(404, message);
 				throw error(500, message);
 			}
@@ -281,13 +358,58 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 	if (action === 'restore') {
 		const ids = stringList(body ? own(body, 'ids') : undefined);
 		if (!ids.length) throw error(400, 'At least one media id is required');
-		restoreMedia(profile.id, ids);
-		return json({ ok: true });
+		const items = restoreMedia(profile.id, ids);
+		return json({ ok: true, items });
 	}
 
 	if (action === 'purge-trash') {
 		const purged = purgeExpiredTrash(profile.id);
 		return json({ ok: true, purged });
+	}
+
+	if (action === 'favorite') {
+		const ids = stringList(body ? own(body, 'ids') : undefined);
+		if (!ids.length) throw error(400, 'At least one media id is required');
+		const favorite = own(body ?? {}, 'favorite') !== false;
+		return json({ ok: true, items: setMediaFavorite(profile.id, ids, favorite) });
+	}
+
+	if (action === 'rotate') {
+		const id = body ? (ownString(body, 'id') ?? '') : '';
+		const degrees = ownNumber(body ?? {}, 'degrees');
+		if (!id) throw error(400, 'Media id is required');
+		if (degrees == null) throw error(400, 'Degrees is required');
+		try {
+			await rotateMediaImage(profile.id, id, degrees);
+			await ensureImageThumbnail(profile.id, id);
+			return json(requireMedia(profile.id, id));
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'Rotate failed';
+			if (message.includes('not found') || message.includes('missing')) throw error(404, message);
+			if (message.includes('only for') || message.includes('Rotate must'))
+				throw error(400, message);
+			throw error(500, message);
+		}
+	}
+
+	if (action === 'crop') {
+		const id = body ? (ownString(body, 'id') ?? '') : '';
+		if (!id) throw error(400, 'Media id is required');
+		const left = ownNumber(body ?? {}, 'left') ?? 0;
+		const top = ownNumber(body ?? {}, 'top') ?? 0;
+		const width = ownNumber(body ?? {}, 'width') ?? 0;
+		const height = ownNumber(body ?? {}, 'height') ?? 0;
+		const normalized = own(body ?? {}, 'normalized') === true;
+		try {
+			await cropMediaImage(profile.id, id, { left, top, width, height, normalized });
+			await ensureImageThumbnail(profile.id, id);
+			return json(requireMedia(profile.id, id));
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'Crop failed';
+			if (message.includes('not found') || message.includes('missing')) throw error(404, message);
+			if (message.includes('only for') || message.includes('Invalid')) throw error(400, message);
+			throw error(500, message);
+		}
 	}
 
 	const ids = stringList(body ? own(body, 'ids') : undefined);
@@ -300,26 +422,26 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 	if (action === 'remove-from-album') {
 		if (!albumId) throw error(400, 'Album id is required');
 		try {
-			removeMediaFromAlbum(profile.id, ids, albumId);
+			const items = removeMediaFromAlbum(profile.id, ids, albumId);
+			return json({ ok: true, items });
 		} catch (err) {
 			const message = err instanceof Error ? err.message : 'Failed to remove from album';
 			if (message.includes('not found')) throw error(404, message);
 			throw error(500, message);
 		}
-		return json({ ok: true });
 	}
 
 	// Default / add-to-album: additive membership
 	if (action === 'add-to-album' || action === null || action === 'move') {
 		if (!albumId) throw error(400, 'Album id is required');
 		try {
-			addMediaToAlbum(profile.id, ids, albumId);
+			const items = addMediaToAlbum(profile.id, ids, albumId);
+			return json({ ok: true, items });
 		} catch (err) {
 			const message = err instanceof Error ? err.message : 'Failed to add to album';
 			if (message.includes('not found')) throw error(404, message);
 			throw error(500, message);
 		}
-		return json({ ok: true });
 	}
 
 	throw error(400, 'Unsupported action');
@@ -333,8 +455,8 @@ export const DELETE: RequestHandler = async ({ request, cookies }) => {
 	const permanent = body?.permanent === true;
 	if (permanent) {
 		deleteMedia(profile.id, ids);
-	} else {
-		softDeleteMedia(profile.id, ids);
+		return json({ ok: true, ids, permanent: true });
 	}
-	return json({ ok: true });
+	const items = softDeleteMedia(profile.id, ids);
+	return json({ ok: true, ids, permanent: false, items });
 };

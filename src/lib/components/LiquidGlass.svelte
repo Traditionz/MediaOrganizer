@@ -80,8 +80,8 @@
 		!animate && 'mo-liquid-glass-static',
 		className
 	)}
-	style:--mo-glass-radius="{rad}px"
-	style:--mo-glass-blur="{blur}px"
+	style:--mo-glass-radius={`${rad}px`}
+	style:--mo-glass-blur={`${blur}px`}
 	data-glass={useRefract && scale > 0 ? 'refract' : 'frost'}
 >
 	{#if useRefract && scale > 0}

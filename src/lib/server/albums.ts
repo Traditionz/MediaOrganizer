@@ -1,4 +1,4 @@
-import { and, count, eq, isNull, sql } from 'drizzle-orm';
+import { count, eq, isNull } from 'drizzle-orm';
 import type { Album } from '$lib/types';
 import { nextDuplicateAlbumName } from '$lib/albumNaming.js';
 import { getProfileDb, isUniqueConstraintError, newId } from './db';
@@ -11,18 +11,20 @@ function normalizeCreated(iso: string): string {
 
 export function listAlbums(profileId: string): Album[] {
 	const db = getProfileDb(profileId);
-	const mediaCount = db
-		.select({ c: count() })
+	const countRows = db
+		.select({ albumId: albumMedia.albumId, c: count() })
 		.from(albumMedia)
 		.innerJoin(media, eq(media.id, albumMedia.mediaId))
-		.where(and(eq(albumMedia.albumId, albums.id), isNull(media.deletedAt)));
+		.where(isNull(media.deletedAt))
+		.groupBy(albumMedia.albumId)
+		.all();
+	const counts = new Map(countRows.map((row) => [row.albumId, row.c]));
 
 	const rows = db
 		.select({
 			id: albums.id,
 			name: albums.name,
-			createdAt: albums.createdAt,
-			mediaCount: sql<number>`(${mediaCount})`.mapWith(Number)
+			createdAt: albums.createdAt
 		})
 		.from(albums)
 		.all();
@@ -32,7 +34,7 @@ export function listAlbums(profileId: string): Album[] {
 			id: row.id,
 			name: decryptName(row.name),
 			created_at: normalizeCreated(row.createdAt),
-			media_count: row.mediaCount
+			media_count: counts.get(row.id) ?? 0
 		}))
 		.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }

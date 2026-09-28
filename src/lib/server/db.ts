@@ -3,13 +3,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { asPlainObject, type JsonObject, type JsonValue } from '$lib/parse';
 import * as schema from './schema';
-import {
-	decryptName,
-	encryptName,
-	ensureEncryptedName,
-	isEncryptedName,
-	nameLookupKey
-} from './nameCrypto';
+import { decryptName, ensureEncryptedName, nameLookupKey } from './nameCrypto';
 import {
 	DATA_DIR,
 	PROFILES_DIR,
@@ -97,6 +91,7 @@ function createProfileSchema(sqlite: Database.Database) {
 		CREATE TABLE IF NOT EXISTS media (
 			id TEXT PRIMARY KEY NOT NULL,
 			original_name TEXT NOT NULL,
+			name_key TEXT NOT NULL DEFAULT '',
 			mime_type TEXT NOT NULL,
 			media_type TEXT NOT NULL CHECK (media_type IN ('image', 'video')),
 			size INTEGER NOT NULL,
@@ -107,13 +102,45 @@ function createProfileSchema(sqlite: Database.Database) {
 			duration REAL,
 			view_count INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL DEFAULT (datetime('now')),
-			deleted_at TEXT
+			deleted_at TEXT,
+			captured_at TEXT,
+			content_hash TEXT,
+			camera_make TEXT,
+			camera_model TEXT,
+			gps_lat REAL,
+			gps_lng REAL,
+			favorite INTEGER NOT NULL DEFAULT 0,
+			source_path TEXT,
+			storyboard TEXT,
+			playback_key TEXT
 		);
 
 		CREATE TABLE IF NOT EXISTS album_media (
 			album_id TEXT NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
 			media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE,
 			PRIMARY KEY (album_id, media_id)
+		);
+
+		CREATE TABLE IF NOT EXISTS tags (
+			id TEXT PRIMARY KEY NOT NULL,
+			name TEXT NOT NULL,
+			name_key TEXT NOT NULL,
+			kind TEXT NOT NULL DEFAULT 'tag' CHECK (kind IN ('tag', 'person')),
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+
+		CREATE TABLE IF NOT EXISTS media_tags (
+			tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+			media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+			PRIMARY KEY (tag_id, media_id)
+		);
+
+		CREATE TABLE IF NOT EXISTS watched_folders (
+			id TEXT PRIMARY KEY NOT NULL,
+			path TEXT NOT NULL UNIQUE,
+			recursive INTEGER NOT NULL DEFAULT 1,
+			last_scan_at TEXT,
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_media_type ON media(media_type);
@@ -123,6 +150,8 @@ function createProfileSchema(sqlite: Database.Database) {
 		CREATE INDEX IF NOT EXISTS idx_album_media_album ON album_media(album_id);
 	`);
 
+	// Existing profile DBs keep their old CREATE TABLE shape — ALTER before any
+	// index that needs new columns (CREATE TABLE IF NOT EXISTS will not add them).
 	const mediaCols = tableColumns(sqlite, 'media');
 	if (mediaCols.size > 0 && !mediaCols.has('thumbnail_key')) {
 		sqlite.exec('ALTER TABLE media ADD COLUMN thumbnail_key TEXT');
@@ -136,6 +165,50 @@ function createProfileSchema(sqlite: Database.Database) {
 	if (mediaCols.size > 0 && !mediaCols.has('view_count')) {
 		sqlite.exec('ALTER TABLE media ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0');
 	}
+	if (mediaCols.size > 0 && !mediaCols.has('name_key')) {
+		sqlite.exec(`ALTER TABLE media ADD COLUMN name_key TEXT NOT NULL DEFAULT ''`);
+	}
+	if (mediaCols.size > 0 && !mediaCols.has('captured_at')) {
+		sqlite.exec('ALTER TABLE media ADD COLUMN captured_at TEXT');
+	}
+	if (mediaCols.size > 0 && !mediaCols.has('content_hash')) {
+		sqlite.exec('ALTER TABLE media ADD COLUMN content_hash TEXT');
+	}
+	if (mediaCols.size > 0 && !mediaCols.has('camera_make')) {
+		sqlite.exec('ALTER TABLE media ADD COLUMN camera_make TEXT');
+	}
+	if (mediaCols.size > 0 && !mediaCols.has('camera_model')) {
+		sqlite.exec('ALTER TABLE media ADD COLUMN camera_model TEXT');
+	}
+	if (mediaCols.size > 0 && !mediaCols.has('gps_lat')) {
+		sqlite.exec('ALTER TABLE media ADD COLUMN gps_lat REAL');
+	}
+	if (mediaCols.size > 0 && !mediaCols.has('gps_lng')) {
+		sqlite.exec('ALTER TABLE media ADD COLUMN gps_lng REAL');
+	}
+	if (mediaCols.size > 0 && !mediaCols.has('favorite')) {
+		sqlite.exec('ALTER TABLE media ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0');
+	}
+	if (mediaCols.size > 0 && !mediaCols.has('source_path')) {
+		sqlite.exec('ALTER TABLE media ADD COLUMN source_path TEXT');
+	}
+	if (mediaCols.size > 0 && !mediaCols.has('storyboard')) {
+		sqlite.exec('ALTER TABLE media ADD COLUMN storyboard TEXT');
+	}
+	if (mediaCols.size > 0 && !mediaCols.has('playback_key')) {
+		sqlite.exec('ALTER TABLE media ADD COLUMN playback_key TEXT');
+	}
+
+	sqlite.exec(
+		'CREATE INDEX IF NOT EXISTS idx_media_deleted_created ON media(deleted_at, created_at)'
+	);
+	sqlite.exec('CREATE INDEX IF NOT EXISTS idx_media_name_key ON media(name_key)');
+	sqlite.exec('CREATE INDEX IF NOT EXISTS idx_media_captured ON media(captured_at)');
+	sqlite.exec('CREATE INDEX IF NOT EXISTS idx_media_content_hash ON media(content_hash)');
+	sqlite.exec('CREATE INDEX IF NOT EXISTS idx_media_favorite ON media(favorite)');
+	sqlite.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_name_key ON tags (name_key)');
+	sqlite.exec('CREATE INDEX IF NOT EXISTS idx_media_tags_media ON media_tags(media_id)');
+	sqlite.exec('CREATE INDEX IF NOT EXISTS idx_media_tags_tag ON media_tags(tag_id)');
 
 	migrateEncryptedNames(sqlite);
 }
@@ -151,6 +224,7 @@ function migrateEncryptedNames(sqlite: Database.Database) {
 	sqlite.exec('DROP INDEX IF EXISTS idx_albums_name');
 
 	type AlbumRow = { id: string; name: string; name_key: string | null };
+	// SAFETY: SELECT id, name, name_key FROM albums yields these columns.
 	const albumRows = sqlite.prepare('SELECT id, name, name_key FROM albums').all() as AlbumRow[];
 	const updateAlbum = sqlite.prepare('UPDATE albums SET name = ?, name_key = ? WHERE id = ?');
 	for (const row of albumRows) {
@@ -164,12 +238,21 @@ function migrateEncryptedNames(sqlite: Database.Database) {
 
 	sqlite.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_albums_name_key ON albums (name_key)');
 
-	type MediaNameRow = { id: string; original_name: string };
-	const mediaRows = sqlite.prepare('SELECT id, original_name FROM media').all() as MediaNameRow[];
-	const updateMedia = sqlite.prepare('UPDATE media SET original_name = ? WHERE id = ?');
+	type MediaNameRow = { id: string; original_name: string; name_key: string | null };
+	// SAFETY: SELECT id, original_name, name_key FROM media yields these columns.
+	const mediaRows = sqlite
+		.prepare('SELECT id, original_name, name_key FROM media')
+		.all() as MediaNameRow[];
+	const updateMedia = sqlite.prepare(
+		'UPDATE media SET original_name = ?, name_key = ? WHERE id = ?'
+	);
 	for (const row of mediaRows) {
-		if (isEncryptedName(row.original_name)) continue;
-		updateMedia.run(encryptName(row.original_name), row.id);
+		const plain = decryptName(row.original_name);
+		const cipher = ensureEncryptedName(row.original_name);
+		const key = nameLookupKey(plain);
+		if (cipher !== row.original_name || row.name_key !== key) {
+			updateMedia.run(cipher, key, row.id);
+		}
 	}
 }
 

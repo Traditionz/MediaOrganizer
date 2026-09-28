@@ -56,20 +56,10 @@
 		}
 		await onsubmit(trimmed);
 	}
-
-	function dismiss() {
-		if (busy || !open) return;
-		oncancel();
-	}
 </script>
 
 {#if open}
-	<Dialog.Root
-		open={true}
-		onOpenChange={(next) => {
-			if (!next) dismiss();
-		}}
-	>
+	<Dialog.Root open={true} onOpenChange={() => oncancel()}>
 		<Dialog.Content
 			class="sm:max-w-md"
 			showCloseButton={false}
@@ -99,8 +89,7 @@
 					<Button type="submit" size="sm" disabled={busy}>
 						{#if busy}
 							<Spinner class="size-3" />
-						{/if}
-						{confirmLabel}
+						{/if}{confirmLabel}
 					</Button>
 				</Dialog.Footer>
 			</form>

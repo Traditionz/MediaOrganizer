@@ -6,13 +6,30 @@ export type InternalDragKind = 'media';
 let kind: InternalDragKind | null = null;
 let mediaIds: string[] = [];
 let dragGhostEl: HTMLElement | null = null;
+let windowCleanup: (() => void) | null = null;
 
 const DRAG_CLASS = 'mo-media-dragging';
+
+function attachWindowCleanup() {
+	if (!browser || typeof window === 'undefined' || !window.addEventListener) return;
+	if (windowCleanup) return;
+	const onEnd = () => {
+		endInternalDrag();
+	};
+	window.addEventListener('dragend', onEnd);
+	window.addEventListener('drop', onEnd);
+	windowCleanup = () => {
+		window.removeEventListener('dragend', onEnd);
+		window.removeEventListener('drop', onEnd);
+		windowCleanup = null;
+	};
+}
 
 export function beginMediaDrag(ids: string[]) {
 	kind = 'media';
 	mediaIds = ids.filter((id) => id.length > 0);
 	if (browser) document.documentElement.classList.add(DRAG_CLASS);
+	attachWindowCleanup();
 }
 
 export function endInternalDrag() {
@@ -20,6 +37,7 @@ export function endInternalDrag() {
 	mediaIds = [];
 	clearDragGhost();
 	if (browser) document.documentElement.classList.remove(DRAG_CLASS);
+	windowCleanup?.();
 }
 
 function clearDragGhost() {
