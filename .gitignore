@@ -41,3 +41,9 @@ vite.config.ts.timestamp-*
 /playwright-report
 /blob-report
 /playwright/.cache
+
+# Vitest browser failure screenshots and traces
+/.vitest
+
+# Accidental data dir when MEDIA_DATA_DIR was the string "undefined"
+/undefined

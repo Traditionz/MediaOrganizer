@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { asPlainObject, type JsonObject, type JsonValue } from '$lib/parse';
 import * as schema from './schema';
 import { decryptName, ensureEncryptedName, nameLookupKey } from './nameCrypto';
@@ -288,6 +288,34 @@ export function destroyProfileStorage(profileId: string): void {
 		rmSync(dir, { recursive: true, force: true });
 	}
 }
+
+const PROFILE_DIR_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Profile folders left on disk after a delete (or a crashed delete) are removed. */
+export function removeOrphanProfileDirs(): string[] {
+	if (!existsSync(PROFILES_DIR)) return [];
+	const live = new Set(
+		registryDb
+			.select({ id: schema.profiles.id })
+			.from(schema.profiles)
+			.all()
+			.map((row) => row.id)
+	);
+	const removed: string[] = [];
+	for (const name of readdirSync(PROFILES_DIR)) {
+		if (!PROFILE_DIR_ID.test(name) || live.has(name)) continue;
+		// An open handle belongs to a caller that has not registered the row yet.
+		if (profileDbCache.has(name)) continue;
+		const dir = profileDir(name);
+		if (!statSync(dir).isDirectory()) continue;
+		closeProfileDb(name);
+		rmSync(dir, { recursive: true, force: true });
+		removed.push(name);
+	}
+	return removed;
+}
+
+removeOrphanProfileDirs();
 
 export default registryDb;
 export { registryDb, registrySqlite };
