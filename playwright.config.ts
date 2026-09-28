@@ -9,6 +9,8 @@ export default defineConfig({
 	retries: process.env.CI ? 2 : 0,
 	/** Shared SQLite under MEDIA_DATA_DIR — one worker avoids races. */
 	workers: 1,
+	globalSetup: './e2e/cleanupE2eData.ts',
+	globalTeardown: './e2e/cleanupE2eData.ts',
 	reporter: process.env.CI ? 'github' : 'list',
 	timeout: 60_000,
 	expect: { timeout: 10_000 },

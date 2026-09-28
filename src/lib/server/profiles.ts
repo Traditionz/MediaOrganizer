@@ -5,7 +5,8 @@ import registryDb, {
 	destroyProfileStorage,
 	getProfileDb,
 	isUniqueConstraintError,
-	newId
+	newId,
+	removeOrphanProfileDirs
 } from './db';
 import { media, profiles } from './schema';
 import type { ProfileRow } from './schema';
@@ -136,4 +137,5 @@ export function deleteProfile(
 
 	registryDb.delete(profiles).where(eq(profiles.id, id)).run();
 	destroyProfileStorage(id);
+	removeOrphanProfileDirs();
 }

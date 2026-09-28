@@ -1,9 +1,13 @@
 import { join, resolve } from 'node:path';
 
+/** `process.env` turns a missing value into the string `"undefined"`, which used to create a repo-root folder. */
+export function resolveMediaDataDir(override: string | undefined, cwd: string): string {
+	if (!override || override === 'undefined' || override === 'null') return join(cwd, 'data');
+	return resolve(cwd, override);
+}
+
 /** Override with MEDIA_DATA_DIR for isolated e2e / test runs. */
-export const DATA_DIR = process.env.MEDIA_DATA_DIR
-	? resolve(process.cwd(), process.env.MEDIA_DATA_DIR)
-	: join(process.cwd(), 'data');
+export const DATA_DIR = resolveMediaDataDir(process.env.MEDIA_DATA_DIR, process.cwd());
 
 export const REGISTRY_DB_PATH = join(DATA_DIR, 'registry.db');
 export const PROFILES_DIR = join(DATA_DIR, 'profiles');
