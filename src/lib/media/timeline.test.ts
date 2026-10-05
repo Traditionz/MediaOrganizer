@@ -1,8 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { groupMediaByMonth, timelineMonthLabel } from './timeline';
+import { groupMediaByMonth, timelineMonthHeading, timelineMonthLabel } from './timeline';
 
 describe('timeline', () => {
 	test('labels months and unknown', () => {
+		expect(timelineMonthHeading('2026-09')).toEqual({ label: 'September', detail: '2026' });
+		expect(timelineMonthHeading('2026-01')).toEqual({ label: 'January', detail: '2026' });
+		expect(timelineMonthHeading('unknown')).toEqual({ label: 'Unknown date', detail: null });
+		expect(timelineMonthHeading('xx')).toEqual({ label: 'xx', detail: null });
+		expect(timelineMonthHeading('2026-13')).toEqual({ label: '2026-13', detail: null });
 		expect(timelineMonthLabel('2026-09')).toBe('September 2026');
 		expect(timelineMonthLabel('2026-01')).toBe('January 2026');
 		expect(timelineMonthLabel('unknown')).toBe('Unknown date');

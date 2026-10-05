@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Search from '@lucide/svelte/icons/search';
+	import GroupHeading from '$lib/components/GroupHeading.svelte';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
@@ -53,7 +54,7 @@
 		open,
 		albums,
 		memberAlbumIds = new Set<string>(),
-		title = 'Add to album',
+		title = 'Albums',
 		oncancel,
 		onconfirm
 	}: Props = $props();
@@ -92,6 +93,14 @@
 	const availableLetters = $derived(new Set<string>(groupedAlbums.map((g) => g.letter)));
 	const selectedCount = $derived(selectedIds.size);
 
+	function sameAlbumIds(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+		if (a.size !== b.size) return false;
+		for (const id of a) if (!b.has(id)) return false;
+		return true;
+	}
+
+	const membershipDirty = $derived(!sameAlbumIds(selectedIds, memberAlbumIds));
+
 	function resetOnOpen(_node: HTMLElement) {
 		query = '';
 		activeLetter = null;
@@ -119,7 +128,7 @@
 	}
 
 	async function submit() {
-		if (busy || selectedCount === 0) return;
+		if (busy || !membershipDirty) return;
 		busy = true;
 		try {
 			await onconfirm([...selectedIds]);
@@ -141,7 +150,9 @@
 			<header class="border-border shrink-0 border-b px-5 py-4">
 				<Dialog.Header>
 					<Dialog.Title>{title}</Dialog.Title>
-					<Dialog.Description>Select one or more albums, then confirm.</Dialog.Description>
+					<Dialog.Description>
+						Check an album to add this media. Uncheck an album to remove it.
+					</Dialog.Description>
 				</Dialog.Header>
 				<div class="relative mt-3">
 					<Search
@@ -168,11 +179,7 @@
 						{:else}
 							{#each groupedAlbums as group (group.letter)}
 								<section class="mb-2" data-letter={group.letter}>
-									<h3
-										class="bg-popover/95 text-muted-foreground sticky top-0 z-10 px-3 py-1.5 text-xs font-semibold tracking-wide backdrop-blur"
-									>
-										{group.letter}
-									</h3>
+									<GroupHeading level={3} label={group.letter} count={group.albums.length} />
 									<ul class="flex w-full flex-col p-0">
 										{#each group.albums as album (album.id)}
 											<li>
@@ -233,11 +240,11 @@
 					<Button type="button" variant="ghost" size="sm" disabled={busy} onclick={oncancel}>
 						Cancel
 					</Button>
-					<Button type="button" size="sm" disabled={busy || selectedCount === 0} onclick={submit}>
+					<Button type="button" size="sm" disabled={busy || !membershipDirty} onclick={submit}>
 						{#if busy}
 							<Spinner class="size-3" />
 						{/if}
-						Add
+						Save
 					</Button>
 				</div>
 			</footer>

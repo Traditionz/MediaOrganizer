@@ -37,7 +37,7 @@ export async function probeImageExif(
 	path: string
 ): Promise<ParsedExif & { width: number | null; height: number | null }> {
 	try {
-		const meta = await sharp(path, { failOn: 'none' }).rotate().metadata();
+		const meta = await sharp(path, { failOn: 'none' }).metadata();
 		const exif = parseImageExifBytes(meta.exif);
 		return {
 			...exif,

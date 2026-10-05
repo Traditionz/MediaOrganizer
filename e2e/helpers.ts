@@ -147,8 +147,8 @@ export async function confirmDialog(page: Page, confirmLabel: string): Promise<v
 
 export async function pickAlbumInModal(page: Page, albumName: string): Promise<void> {
 	const dialog = page.getByRole('dialog');
-	await expect(dialog.getByRole('heading', { name: 'Add to album' })).toBeVisible();
+	await expect(dialog.getByRole('heading', { name: 'Albums' })).toBeVisible();
 	await dialog.locator('label').filter({ hasText: albumName }).click();
-	await dialog.getByRole('button', { name: 'Add' }).click();
+	await dialog.getByRole('button', { name: 'Save' }).click();
 	await expect(dialog).toBeHidden({ timeout: 15_000 });
 }

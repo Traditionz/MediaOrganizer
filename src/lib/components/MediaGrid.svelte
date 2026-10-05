@@ -12,7 +12,8 @@
 		gridTotalHeight,
 		timelineSectionMetrics
 	} from '$lib/media/virtualLayout';
-	import { groupMediaByMonth } from '$lib/media/timeline';
+	import { groupMediaByMonth, timelineMonthHeading } from '$lib/media/timeline';
+	import GroupHeading from './GroupHeading.svelte';
 	import MediaCard from './MediaCard.svelte';
 
 	interface Props {
@@ -39,7 +40,7 @@
 		groupByMonth = true
 	}: Props = $props();
 
-	const TIMELINE_HEADER_PX = 40;
+	const TIMELINE_HEADER_PX = 48;
 	const TIMELINE_SECTION_GAP_PX = 24;
 
 	let width = $state(800);
@@ -132,17 +133,14 @@
 	>
 		{#each visibleSections as metric (metric.index)}
 			{@const section = sections[metric.index]!}
+			{@const heading = timelineMonthHeading(section.key)}
 			{@const range = localCardRange(metric.gridTop, metric.gridHeight, section.items.length)}
 			<section
 				class="absolute inset-x-0"
 				style:top={`${metric.top}px`}
 				style:height={`${metric.height}px`}
 			>
-				<h2
-					class="bg-background/90 text-foreground sticky top-0 z-10 flex h-10 items-center text-sm font-semibold tracking-tight"
-				>
-					{section.label}
-				</h2>
+				<GroupHeading label={heading.label} detail={heading.detail} count={section.items.length} />
 				<div class="relative w-full" style:height={`${metric.gridHeight}px`}>
 					{#each section.items.slice(range.start, range.end) as item, offset (item.id)}
 						{@const box = gridCardBox(range.start + offset, columns, cellSize, MEDIA_LAYOUT_GAP)}

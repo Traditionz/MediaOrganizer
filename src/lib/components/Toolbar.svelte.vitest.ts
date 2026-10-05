@@ -114,7 +114,7 @@ describe('Toolbar', () => {
 		await expect.element(page.getByText('2 selected')).toBeVisible();
 		await expect.element(button('Clear')).toBeVisible();
 		await expect.element(button('Done')).toBeVisible();
-		await button('Add to album…').click();
+		await button('Albums…').click();
 		await button('Move to trash').click();
 		await button('Favorite').click();
 		await button('Export zip').click();
@@ -128,14 +128,14 @@ describe('Toolbar', () => {
 			...toolbarProps({ selectMode: true, selectedCount: 0 })
 		});
 		await expect.element(page.getByText('0 selected')).toBeVisible();
-		await expect.element(button('Add to album…')).toBeDisabled();
+		await expect.element(button('Albums…')).toBeDisabled();
 		await expect.element(button('Move to trash')).toBeDisabled();
 		await expect.element(button('Favorite')).not.toBeInTheDocument();
 		await expect.element(button('Export zip')).not.toBeInTheDocument();
 		await expect.element(button('Compress')).not.toBeInTheDocument();
 		await screen.rerender({ selectMode: false, selectedCount: 3, uploading: true });
 		await expect.element(page.getByText('3 selected')).toBeVisible();
-		await expect.element(button('Add to album…')).toBeEnabled();
+		await expect.element(button('Albums…')).toBeEnabled();
 		await expect.element(button('Move to trash')).toBeEnabled();
 	});
 

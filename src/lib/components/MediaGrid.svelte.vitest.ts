@@ -58,6 +58,13 @@ describe('MediaGrid', () => {
 			}
 		});
 		await expect.poll(() => document.querySelectorAll('section h2').length).toBe(2);
+		const january = document.querySelector('section h2');
+		expect(january?.textContent).toContain('January');
+		expect(january?.textContent).toContain('2026');
+		expect(january?.className).toContain('w-fit');
+		expect(january?.querySelector('[data-slot="badge"]')?.className).toContain('text-lg');
+		expect(january?.querySelectorAll('[data-slot="badge"]').length).toBe(1);
+		expect(january?.querySelector('[data-slot="separator"]')).toBeNull();
 		expect(document.querySelector('[data-media-layout="timeline"]')).toBeTruthy();
 		cardFor('m1')?.click();
 		cardFor('m1')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));

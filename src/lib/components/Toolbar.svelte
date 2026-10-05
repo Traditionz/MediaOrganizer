@@ -129,7 +129,7 @@
 					Delete forever
 				</Button>
 			{:else}
-				<Button size="sm" disabled={!selectedCount} onclick={onopenAlbumPicker}>Add to album…</Button>
+				<Button size="sm" disabled={!selectedCount} onclick={onopenAlbumPicker}>Albums…</Button>
 				<Button size="sm" variant="destructive" disabled={!selectedCount} onclick={ondelete}>
 					Move to trash
 				</Button>

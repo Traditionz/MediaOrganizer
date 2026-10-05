@@ -21,12 +21,23 @@ const MONTH_NAMES = [
 	'December'
 ] as const;
 
-export function timelineMonthLabel(key: string): string {
-	if (key === 'unknown') return 'Unknown date';
+export type TimelineHeading = {
+	label: string;
+	detail: string | null;
+};
+
+/** Month name plus year. Unknown or invalid keys stay a single label. */
+export function timelineMonthHeading(key: string): TimelineHeading {
+	if (key === 'unknown') return { label: 'Unknown date', detail: null };
 	const year = Number(key.slice(0, 4));
 	const month = Number(key.slice(5, 7));
-	if (!Number.isFinite(year) || month < 1 || month > 12) return key;
-	return `${MONTH_NAMES[month - 1]} ${year}`;
+	if (!Number.isFinite(year) || month < 1 || month > 12) return { label: key, detail: null };
+	return { label: MONTH_NAMES[month - 1] ?? key, detail: String(year) };
+}
+
+export function timelineMonthLabel(key: string): string {
+	const heading = timelineMonthHeading(key);
+	return heading.detail == null ? heading.label : `${heading.label} ${heading.detail}`;
 }
 
 export function groupMediaByMonth<T extends DateFields & { id: string }>(

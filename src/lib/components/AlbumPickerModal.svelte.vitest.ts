@@ -17,7 +17,7 @@ function letterButton(letter: string) {
 }
 
 describe('AlbumPickerModal', () => {
-	test('Add stays disabled until an album is picked, then confirms ids', async () => {
+	test('Save stays disabled until membership changes, then confirms ids', async () => {
 		const picked: string[][] = [];
 		await render(AlbumPickerModal, {
 			open: true,
@@ -27,12 +27,31 @@ describe('AlbumPickerModal', () => {
 				picked.push(ids);
 			}
 		});
-		const add = page.getByRole('button', { name: 'Add', exact: true });
+		const add = page.getByRole('button', { name: 'Save', exact: true });
 		await expect.element(add).toBeDisabled();
 		await page.getByText('Trip').click();
 		await expect.element(page.getByText('1 selected')).toBeVisible();
 		await add.click();
 		await expect.poll(() => picked).toEqual([['a1']]);
+	});
+
+	test('unchecking a current album can save an empty selection', async () => {
+		const picked: string[][] = [];
+		await render(AlbumPickerModal, {
+			open: true,
+			albums: [beach],
+			memberAlbumIds: new Set(['a2']),
+			oncancel: () => undefined,
+			onconfirm: (ids) => {
+				picked.push(ids);
+			}
+		});
+		const save = page.getByRole('button', { name: 'Save', exact: true });
+		await expect.element(save).toBeDisabled();
+		await page.getByText('Beach').click();
+		await expect.element(page.getByText('None selected')).toBeVisible();
+		await save.click();
+		await expect.poll(() => picked).toEqual([[]]);
 	});
 
 	test('search filters and shows empty message; cancel fires', async () => {
@@ -87,7 +106,10 @@ describe('AlbumPickerModal', () => {
 		const bSection = document.querySelector('section[data-letter="B"]')!;
 		expect(bSection.textContent).toContain('Beach');
 		expect(bSection.textContent).toContain('Bikes');
-		expect(bSection.querySelectorAll('[data-slot="badge"]').length).toBe(1);
+		expect(bSection.querySelector('h3')?.textContent).toContain('B');
+		expect(bSection.querySelector('h3')?.className).toContain('w-fit');
+		expect(bSection.querySelectorAll('h3 [data-slot="badge"]').length).toBe(1);
+		expect(bSection.querySelectorAll('label [data-slot="badge"]').length).toBe(1);
 		expect(letterButton('A').disabled).toBe(true);
 		letterButton('A').dispatchEvent(new MouseEvent('click', { bubbles: true }));
 		expect(scroll).not.toHaveBeenCalled();
@@ -97,9 +119,10 @@ describe('AlbumPickerModal', () => {
 		expect(letterButton('T').className).not.toContain('bg-primary/15');
 		await page.getByText('Beach').click();
 		await expect.element(page.getByText('None selected')).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
 		await page.getByText('Bikes').click();
 		await page.getByText('2024 Summer').click();
-		await page.getByRole('button', { name: 'Add', exact: true }).click();
+		await page.getByRole('button', { name: 'Save', exact: true }).click();
 		await expect.poll(() => picked).toEqual([['a3', 'a4']]);
 		scroll.mockRestore();
 	});
