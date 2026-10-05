@@ -52,6 +52,7 @@
 		libraryCardLayouts
 	} from '$lib/media/virtualLayout';
 	import { MarqueeController, shouldStartMarquee } from '$lib/selection/marqueeController';
+	import { albumMembershipDiff } from '$lib/media/albumMembership';
 	import { buildContextMenuItems } from '$lib/media/contextMenuItems';
 	import { playbackJobErrors } from '$lib/media/playbackEncode';
 	import { runPlaybackOptimize } from '$lib/media/playbackJobsClient';
@@ -1145,8 +1146,13 @@
 
 	async function handleAlbumPickerConfirm(albumIds: string[]) {
 		const ids = ui.albumPicker.mediaIds;
+		const previous = [...albumPickerMemberIds];
 		ui.closeAlbumPicker();
-		for (const albumId of albumIds) {
+		const { add, remove } = albumMembershipDiff(previous, albumIds);
+		for (const albumId of remove) {
+			await removeMediaFromAlbum(ids, albumId);
+		}
+		for (const albumId of add) {
 			await addMediaToAlbum(ids, albumId);
 		}
 	}

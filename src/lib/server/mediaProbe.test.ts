@@ -51,6 +51,25 @@ describe('mediaProbe', () => {
 		expect(readFileHead(big).length).toBe(256 * 1024);
 	});
 
+	test('probe jpeg keeps the file pixel size when EXIF orientation is set', async () => {
+		const dir = join(tmpdir(), `mo-probe-orient-${Date.now()}`);
+		dirs.push(dir);
+		mkdirSync(dir, { recursive: true });
+		const path = join(dir, 'portrait.jpg');
+		const raw = await sharp({
+			create: { width: 40, height: 20, channels: 3, background: { r: 9, g: 9, b: 9 } }
+		})
+			.jpeg()
+			.toBuffer();
+		await sharp(raw).withMetadata({ orientation: 6 }).toFile(path);
+		const image = await probeImageExif(path);
+		expect(image.width).toBe(40);
+		expect(image.height).toBe(20);
+		const probed = await probeMediaFile(path, 'image', '2026-01-01T00:00:00.000Z');
+		expect(probed.width).toBe(40);
+		expect(probed.height).toBe(20);
+	});
+
 	test('probe missing image', async () => {
 		const missing = join(tmpdir(), 'mo-missing-probe-xyz.png');
 		const image = await probeImageExif(missing);

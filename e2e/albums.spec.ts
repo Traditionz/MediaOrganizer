@@ -114,7 +114,7 @@ test.describe('albums', () => {
 
 		await enterSelectMode(page);
 		await mediaCards(page).first().click();
-		await page.getByRole('button', { name: 'Add to album…' }).click();
+		await page.getByRole('button', { name: 'Albums…' }).click();
 		await pickAlbumInModal(page, album);
 
 		await page.getByRole('button', { name: new RegExp(`^${album}`) }).click();
@@ -129,7 +129,7 @@ test.describe('albums', () => {
 
 		await enterSelectMode(page);
 		await mediaCards(page).first().click();
-		await page.getByRole('button', { name: 'Add to album…' }).click();
+		await page.getByRole('button', { name: 'Albums…' }).click();
 		await pickAlbumInModal(page, album);
 
 		await page.getByRole('button', { name: new RegExp(`^${album}`) }).click();

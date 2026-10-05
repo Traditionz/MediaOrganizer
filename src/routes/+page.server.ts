@@ -15,7 +15,7 @@ import { listTags } from '$lib/server/tags';
 import { loadHomePageData } from '$lib/server/homePageLoad';
 
 export const load: PageServerLoad = async ({ cookies, isDataRequest }) => {
-	return loadHomePageData(
+	const data = loadHomePageData(
 		{
 			listProfiles,
 			resolveActiveProfile: () =>
@@ -34,4 +34,5 @@ export const load: PageServerLoad = async ({ cookies, isDataRequest }) => {
 		},
 		{ initialAlbum: defaultActiveAlbum() }
 	);
+	return data;
 };

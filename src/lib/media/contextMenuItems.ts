@@ -77,7 +77,7 @@ export function buildContextMenuItems(input: ContextMenuBuildInput): ContextMenu
 		{ id: 'copy', label: count > 1 ? `Copy ${count} items` : 'Copy' },
 		{ id: 'cut', label: count > 1 ? `Cut ${count} items` : 'Cut' },
 		{ id: 'duplicate', label: count > 1 ? `Duplicate ${count}` : 'Duplicate' },
-		{ id: 'add-to-album', label: 'Add to album…' }
+		{ id: 'add-to-album', label: 'Albums…' }
 	];
 	if (!isSpecialLibraryFilter(input.activeAlbum) && input.activeAlbum !== null) {
 		items.push({ id: 'remove-from-album', label: 'Remove from album' });

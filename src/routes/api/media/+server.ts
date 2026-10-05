@@ -129,20 +129,19 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 		albumId = albumParam;
 	}
 
-	return json(
-		listMedia(profile.id, {
-			albumId: trash ? 'all' : albumId,
-			mediaType,
-			dateFrom,
-			dateTo,
-			trash,
-			search,
-			sortBy,
-			sortDir,
-			limit,
-			offset
-		})
-	);
+	const page = listMedia(profile.id, {
+		albumId: trash ? 'all' : albumId,
+		mediaType,
+		dateFrom,
+		dateTo,
+		trash,
+		search,
+		sortBy,
+		sortDir,
+		limit,
+		offset
+	});
+	return json(page);
 };
 
 export const POST: RequestHandler = async ({ request, cookies }) => {
