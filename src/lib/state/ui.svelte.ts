@@ -63,6 +63,11 @@ export type AlbumPickerState = {
 	mediaIds: string[];
 };
 
+export type TagPickerState = {
+	open: boolean;
+	mediaIds: string[];
+};
+
 export type ContextMenuState = {
 	open: boolean;
 	x: number;
@@ -127,6 +132,11 @@ export class UiState {
 	promptModalError = $state('');
 
 	albumPicker = $state<AlbumPickerState>({
+		open: false,
+		mediaIds: []
+	});
+
+	tagPicker = $state<TagPickerState>({
 		open: false,
 		mediaIds: []
 	});
@@ -337,6 +347,14 @@ export class UiState {
 
 	closeAlbumPicker() {
 		this.albumPicker = { open: false, mediaIds: [] };
+	}
+
+	openTagPicker(mediaIds: string[]) {
+		this.tagPicker = { open: true, mediaIds: [...mediaIds] };
+	}
+
+	closeTagPicker() {
+		this.tagPicker = { open: false, mediaIds: [] };
 	}
 
 	closeProfileModal() {

@@ -45,7 +45,10 @@ describe('CustomPlayer storyboard hover', () => {
 		await expect
 			.poll(() => screen.container.querySelector('.custom-hover-sprite'), WAIT)
 			.toBeTruthy();
-		expect(fetchSpy).toHaveBeenCalledWith('/api/media/sb1/storyboard', { method: 'POST' });
+		expect(fetchSpy).toHaveBeenCalledWith('/api/media/sb1/storyboard', {
+			method: 'POST',
+			signal: expect.any(AbortSignal)
+		});
 		expect(screen.container.querySelectorAll('video')).toHaveLength(1);
 
 		const sprite = screen.container.querySelector<HTMLElement>('.custom-hover-sprite')!;
@@ -100,6 +103,19 @@ describe('CustomPlayer storyboard hover', () => {
 		answer(jsonResponse(META));
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		expect(container.querySelector('.custom-hover-sprite')).toBeNull();
+	});
+
+	test('leaving mid-request aborts the storyboard fetch', async () => {
+		let signal: AbortSignal | null | undefined;
+		const slow = vi.spyOn(window, 'fetch').mockImplementation((_url, init) => {
+			signal = init?.signal;
+			return new Promise<Response>(() => undefined);
+		});
+		const pending = await mountWithDuration('sb5');
+		await expect.poll(() => slow.mock.calls.length, WAIT).toBe(1);
+		expect(signal?.aborted).toBe(false);
+		await pending.screen.unmount();
+		expect(signal?.aborted).toBe(true);
 	});
 
 	test('no media id never asks for a storyboard', async () => {

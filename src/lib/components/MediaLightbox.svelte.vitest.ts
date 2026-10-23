@@ -128,6 +128,27 @@ describe('MediaLightbox', () => {
 		expect(document.querySelector('[data-lightbox-frame]')).toBeTruthy();
 	});
 
+	test('skipping to another video releases the outgoing video before its slide finishes leaving', async () => {
+		const a = testVideo({ id: 'va', original_name: 'a.mp4' });
+		const b = testVideo({ id: 'vb', original_name: 'b.mp4' });
+		const items = [a, b];
+		const screen = await render(MediaLightbox, {
+			item: a,
+			items,
+			onclose: () => undefined,
+			onnavigate: (next) => {
+				void screen.rerender({ item: next, items });
+			}
+		});
+		await expect.poll(() => document.querySelector('video[src$="/api/media/va"]')).toBeTruthy();
+		const outgoing = document.querySelector('video');
+		document.querySelector<HTMLButtonElement>('[aria-label="Next media"]')?.click();
+		await expect.poll(() => document.querySelectorAll('.slide-stage').length).toBe(2);
+		await expect.poll(() => outgoing?.hasAttribute('src')).toBe(false);
+		expect(document.querySelector('video[src$="/api/media/vb"]')).toBeTruthy();
+		await expect.poll(() => document.querySelectorAll('.slide-stage').length).toBe(1);
+	});
+
 	test('image dwell records a view', async () => {
 		const views: Array<{ id: string; count: number }> = [];
 		installLibraryFetch({

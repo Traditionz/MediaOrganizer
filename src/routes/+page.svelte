@@ -9,6 +9,7 @@
 	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
 	import PromptModal from '$lib/components/PromptModal.svelte';
 	import AlbumPickerModal from '$lib/components/AlbumPickerModal.svelte';
+	import TagPickerModal from '$lib/components/TagPickerModal.svelte';
 	import Toolbar from '$lib/components/Toolbar.svelte';
 	import MediaGrid from '$lib/components/MediaGrid.svelte';
 	import MediaCollage from '$lib/components/MediaCollage.svelte';
@@ -42,10 +43,7 @@
 	} from '$lib/media/libraryUi';
 	import { parseIdsFromOk } from '$lib/state/library.svelte';
 	import { passcodePatchBody } from '$lib/profile/passcodeEdit';
-	import {
-		profileDeleteMediaCount,
-		profileDeleteNeedsConfirm
-	} from '$lib/profile/deleteConfirm';
+	import { profileDeleteMediaCount, profileDeleteNeedsConfirm } from '$lib/profile/deleteConfirm';
 	import {
 		MEDIA_LAYOUT_GAP,
 		idsIntersectingBox,
@@ -53,6 +51,7 @@
 	} from '$lib/media/virtualLayout';
 	import { MarqueeController, shouldStartMarquee } from '$lib/selection/marqueeController';
 	import { albumMembershipDiff } from '$lib/media/albumMembership';
+	import { sharedTagIds } from '$lib/media/tagSuggestions';
 	import { buildContextMenuItems } from '$lib/media/contextMenuItems';
 	import { playbackJobErrors } from '$lib/media/playbackEncode';
 	import { runPlaybackOptimize } from '$lib/media/playbackJobsClient';
@@ -93,8 +92,7 @@
 		);
 		return idsIntersectingBox(layouts, box, host.offsetLeft, host.offsetTop);
 	});
-	let promptKind: 'rename' | 'import-folder' | 'watch-folder' | 'assign-tag' | 'assign-person' =
-		'rename';
+	let promptKind: 'rename' | 'import-folder' | 'watch-folder' | 'assign-person' = 'rename';
 	let assignTargetIds: string[] = [];
 	let queryReloadTimer: ReturnType<typeof setTimeout> | null = null;
 	let folderInput = $state<HTMLInputElement | null>(null);
@@ -733,10 +731,15 @@
 		);
 		const tag = existing ?? (await createTag(trimmed, kind));
 		if (!tag) return;
+		await assignExistingTag(ids, tag.id);
+	}
+
+	async function assignExistingTag(ids: string[], tagId: string) {
+		if (!ids.length) return;
 		const res = await fetch('/api/tags', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ action: 'assign', tagId: tag.id, ids })
+			body: JSON.stringify({ action: 'assign', tagId, ids })
 		});
 		if (!res.ok) {
 			const body = await res.json().catch(() => ({}));
@@ -763,19 +766,34 @@
 		await library.refreshTags();
 	}
 
-	function openAssignPrompt(ids: string[], kind: 'tag' | 'person') {
+	function openAssignPrompt(ids: string[]) {
 		assignTargetIds = ids;
-		promptKind = kind === 'person' ? 'assign-person' : 'assign-tag';
+		promptKind = 'assign-person';
 		ui.promptModalBusy = false;
 		ui.promptModalError = '';
 		ui.promptModal = {
 			open: true,
-			title: kind === 'person' ? 'Add person' : 'Add tag',
-			label: kind === 'person' ? 'Person name' : 'Tag name',
+			title: 'Add person',
+			label: 'Person name',
 			initialValue: '',
 			mediaId: null
 		};
 	}
+
+	async function handleTagPick(tag: { id: string }) {
+		const ids = ui.tagPicker.mediaIds;
+		ui.closeTagPicker();
+		await assignExistingTag(ids, tag.id);
+	}
+
+	async function handleTagCreate(name: string) {
+		const ids = ui.tagPicker.mediaIds;
+		ui.closeTagPicker();
+		await assignTagByName(ids, name, 'tag');
+	}
+
+	/** Tags every picked item already has. */
+	const tagPickerAssignedIds = $derived(sharedTagIds(loadedMedia(ui.tagPicker.mediaIds)));
 
 	async function toggleFavoriteSelected() {
 		const ids = [...selection.selectedIds];
@@ -1048,11 +1066,11 @@
 			return;
 		}
 		if (id === 'assign-tag') {
-			openAssignPrompt(ids, 'tag');
+			ui.openTagPicker(ids);
 			return;
 		}
 		if (id === 'assign-person') {
-			openAssignPrompt(ids, 'person');
+			openAssignPrompt(ids);
 			return;
 		}
 		if (id === 'remove-tag') {
@@ -1307,11 +1325,6 @@
 		}
 		if (promptKind === 'watch-folder') {
 			await runWatchFolder(value);
-			return;
-		}
-		if (promptKind === 'assign-tag') {
-			await assignTagByName(assignTargetIds, value, 'tag');
-			ui.closePromptModal();
 			return;
 		}
 		if (promptKind === 'assign-person') {
@@ -1725,6 +1738,15 @@
 		memberAlbumIds={albumPickerMemberIds}
 		oncancel={() => ui.closeAlbumPicker()}
 		onconfirm={handleAlbumPickerConfirm}
+	/>
+
+	<TagPickerModal
+		open={ui.tagPicker.open}
+		tags={library.tags}
+		assignedIds={tagPickerAssignedIds}
+		oncancel={() => ui.closeTagPicker()}
+		onpick={handleTagPick}
+		oncreate={handleTagCreate}
 	/>
 {/if}
 

@@ -28,6 +28,7 @@
 	} from '$lib/media/lightboxHud';
 	import { lightboxFitSize } from '$lib/media/lightboxFit';
 	import { playbackSrc } from '$lib/media/playbackEncode';
+	import { releasePlayersIn } from '$lib/playback/releaseVideo';
 	import { eventTargetHtml } from '$lib/parse';
 	import { formatBytes, formatDate } from '$lib/utils';
 	import { mediaDateIso } from '$lib/media/captureDate';
@@ -342,7 +343,12 @@
 	>
 		<div class="slide-host">
 			{#key item.id}
-				<div class="slide-stage" in:fly={flyIn} out:fly={flyOut}>
+				<div
+					class="slide-stage"
+					in:fly={flyIn}
+					out:fly={flyOut}
+					onoutrostart={(e) => releasePlayersIn(e.currentTarget)}
+				>
 					{#if item.media_type === 'image'}
 						<div class="frame relative inline-flex" data-lightbox-frame>
 							<img

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { releaseVideoElement } from './releaseVideo';
+import { PLAYER_RELEASE_EVENT, releasePlayersIn, releaseVideoElement } from './releaseVideo';
 
 function fakeVideo() {
 	const calls: string[] = [];
@@ -43,5 +43,38 @@ describe('releaseVideoElement', () => {
 		};
 		releaseVideoElement(video);
 		expect(calls).toEqual(['remove:src', 'load']);
+	});
+
+	test('tolerates load throwing', () => {
+		const { video, calls } = fakeVideo();
+		video.load = () => {
+			throw new Error('detached');
+		};
+		expect(() => releaseVideoElement(video)).not.toThrow();
+		expect(calls).toEqual(['pause', 'remove:src']);
+	});
+});
+
+describe('releasePlayersIn', () => {
+	test('dispatches the release event on every player under the root', () => {
+		const seen: string[] = [];
+		const player = (name: string) => ({
+			dispatchEvent(e: Event) {
+				seen.push(`${name}:${e.type}`);
+				return true;
+			}
+		});
+		const root = {
+			querySelectorAll(selector: string) {
+				expect(selector).toBe('.custom-player');
+				return [player('a'), player('b')];
+			}
+		};
+		expect(releasePlayersIn(root)).toBe(2);
+		expect(seen).toEqual([`a:${PLAYER_RELEASE_EVENT}`, `b:${PLAYER_RELEASE_EVENT}`]);
+	});
+
+	test('does nothing when no player is mounted', () => {
+		expect(releasePlayersIn({ querySelectorAll: () => [] })).toBe(0);
 	});
 });
