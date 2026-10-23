@@ -34,15 +34,11 @@ export function exactAlbumNameMatch(
 	return null;
 }
 
-export type AlbumListFilterSource = 'add' | 'search';
-
-/** Active field drives list filter so add-as-you-type can show dupes. */
-export function albumListQueryNorm(
-	addName: string,
-	searchQuery: string,
-	source: AlbumListFilterSource
-): string {
-	return source === 'add' ? normalizeAlbumQuery(addName) : normalizeAlbumQuery(searchQuery);
+/** True when trimmed query is non-empty and not already taken. */
+export function canCreateNamedItem(existingNames: readonly string[], query: string): boolean {
+	const trimmed = query.trim();
+	if (!trimmed) return false;
+	return exactAlbumNameMatch(existingNames, trimmed) == null;
 }
 
 /** Add-field preview: show matches when any exist; unique name keeps the full list. */
@@ -54,15 +50,4 @@ export function namedItemsForAddQuery<T extends { name: string }>(
 	if (!q) return items.slice();
 	const matches = items.filter((item) => albumNameMatchesQuery(item.name, q));
 	return matches.length > 0 ? matches : items.slice();
-}
-
-/** Dedicated search wins; otherwise add-field preview. */
-export function visibleNamedItems<T extends { name: string }>(
-	items: readonly T[],
-	addQuery: string,
-	searchQuery: string
-): T[] {
-	const search = normalizeAlbumQuery(searchQuery);
-	if (search) return items.filter((item) => albumNameMatchesQuery(item.name, search));
-	return namedItemsForAddQuery(items, addQuery);
 }

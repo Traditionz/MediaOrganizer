@@ -80,6 +80,32 @@ describe('MediaLightbox', () => {
 		expect(closed).toBe(true);
 	});
 
+	test('organize menu opens tag people and album pickers', async () => {
+		const opened: string[] = [];
+		const item = testMedia();
+		await render(MediaLightbox, {
+			item,
+			items: [item],
+			onclose: () => undefined,
+			onaddTag: (id) => {
+				opened.push(`tag:${id}`);
+			},
+			onaddPeople: (id) => {
+				opened.push(`people:${id}`);
+			},
+			onaddAlbum: (id) => {
+				opened.push(`album:${id}`);
+			}
+		});
+		await page.getByRole('button', { name: 'Organize' }).click();
+		await page.getByRole('menuitem', { name: 'Tags…' }).click();
+		await page.getByRole('button', { name: 'Organize' }).click();
+		await page.getByRole('menuitem', { name: 'People…' }).click();
+		await page.getByRole('button', { name: 'Organize' }).click();
+		await page.getByRole('menuitem', { name: 'Albums…' }).click();
+		expect(opened).toEqual(['tag:m1', 'people:m1', 'album:m1']);
+	});
+
 	test('gallery keys and buttons navigate; Escape closes', async () => {
 		const nav: string[] = [];
 		let closed = false;

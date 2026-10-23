@@ -35,10 +35,15 @@
 	import { fade, fly } from 'svelte/transition';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import ChevronUp from '@lucide/svelte/icons/chevron-up';
+	import Folder from '@lucide/svelte/icons/folder';
 	import Heart from '@lucide/svelte/icons/heart';
 	import MoveDiagonal2 from '@lucide/svelte/icons/move-diagonal-2';
+	import Plus from '@lucide/svelte/icons/plus';
 	import RotateCw from '@lucide/svelte/icons/rotate-cw';
+	import Tag from '@lucide/svelte/icons/tag';
+	import User from '@lucide/svelte/icons/user';
 	import X from '@lucide/svelte/icons/x';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 	import CustomPlayer from './CustomPlayer.svelte';
 	import MediaLightboxInspector from './MediaLightboxInspector.svelte';
 	import CopyableText from './CopyableText.svelte';
@@ -55,6 +60,9 @@
 			id: string,
 			box: { left: number; top: number; width: number; height: number; normalized: boolean }
 		) => void;
+		onaddTag?: (id: string) => void;
+		onaddPeople?: (id: string) => void;
+		onaddAlbum?: (id: string) => void;
 	}
 
 	let {
@@ -65,8 +73,13 @@
 		onview,
 		onrotate,
 		onfavorite,
-		oncrop
+		oncrop,
+		onaddTag,
+		onaddPeople,
+		onaddAlbum
 	}: Props = $props();
+
+	const showOrganize = $derived(!!(onaddTag || onaddPeople || onaddAlbum));
 
 	let recorded = false;
 	let intrinsic = $state<{ w: number; h: number } | null>(null);
@@ -234,6 +247,43 @@
 					<span>Rotate</span>
 				</button>
 			{/if}
+			{#if showOrganize}
+				<DropdownMenu.Root>
+					<DropdownMenu.Trigger>
+						{#snippet child({ props })}
+							<button
+								{...props}
+								type="button"
+								class={lightboxActionChipClass()}
+								aria-label="Organize"
+							>
+								<Plus class="size-3.5" />
+								<span>Add</span>
+							</button>
+						{/snippet}
+					</DropdownMenu.Trigger>
+					<DropdownMenu.Content class="z-[60]" align="end">
+						{#if onaddTag}
+							<DropdownMenu.Item onclick={() => onaddTag(current.id)}>
+								<Tag class="size-4" />
+								Tags…
+							</DropdownMenu.Item>
+						{/if}
+						{#if onaddPeople}
+							<DropdownMenu.Item onclick={() => onaddPeople(current.id)}>
+								<User class="size-4" />
+								People…
+							</DropdownMenu.Item>
+						{/if}
+						{#if onaddAlbum}
+							<DropdownMenu.Item onclick={() => onaddAlbum(current.id)}>
+								<Folder class="size-4" />
+								Albums…
+							</DropdownMenu.Item>
+						{/if}
+					</DropdownMenu.Content>
+				</DropdownMenu.Root>
+			{/if}
 			<button
 				type="button"
 				class={lightboxInfoChipClass(showInfo)}
@@ -366,11 +416,11 @@
 						<div
 							class={[
 								'frame video-resize relative overflow-visible rounded-lg bg-black shadow-2xl',
-								resizing && 'is-resizing'
+								resizing && 'is-resizing',
+								resizing && 'select-none'
 							]}
 							style:width={`${videoWidth}px`}
 							style:height={`${videoHeight}px`}
-							class:select-none={resizing}
 							data-lightbox-frame
 						>
 							<CustomPlayer

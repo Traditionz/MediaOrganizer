@@ -64,6 +64,7 @@ describe('buildContextMenuItems', () => {
 			favoriteItems: [{ favorite: true }]
 		});
 		expect(items.find((item) => item.id === 'add-to-album')?.label).toBe('Albums…');
+		expect(items.find((item) => item.id === 'assign-person')?.label).toBe('People…');
 		expect(items.some((item) => item.id === 'remove-from-album')).toBe(true);
 		expect(items.find((item) => item.id === 'favorite')?.label).toBe('Unfavorite');
 		expect(items.find((item) => item.id === 'rename')?.disabled).toBe(false);

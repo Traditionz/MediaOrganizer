@@ -6,12 +6,19 @@ function sameName(a: string, b: string): boolean {
 	return a.trim().toLocaleLowerCase() === b.trim().toLocaleLowerCase();
 }
 
-/** Tag ids that every given item already carries. */
-export function sharedTagIds(items: readonly Pick<MediaItem, 'tags'>[]): Set<string> {
+/** Tag ids that every given item already carries. Optional kind limits to tag or person. */
+export function sharedTagIds(
+	items: readonly Pick<MediaItem, 'tags'>[],
+	kind?: TagKind
+): Set<string> {
 	if (!items.length) return new Set();
-	let shared = new Set((items[0].tags ?? []).map((tag) => tag.id));
+	const idsOn = (item: Pick<MediaItem, 'tags'>) =>
+		(item.tags ?? [])
+			.filter((tag) => kind == null || tag.kind === kind)
+			.map((tag) => tag.id);
+	let shared = new Set(idsOn(items[0]));
 	for (let i = 1; i < items.length; i++) {
-		const next = new Set((items[i].tags ?? []).map((tag) => tag.id));
+		const next = new Set(idsOn(items[i]));
 		shared = new Set([...shared].filter((id) => next.has(id)));
 	}
 	return shared;

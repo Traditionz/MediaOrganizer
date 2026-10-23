@@ -71,6 +71,25 @@ describe('LibraryState', () => {
 		expect(library.findKnown('m3')).toBeUndefined();
 		library.replaceAlbums([{ ...testAlbum, name: 'X' }]);
 		expect(library.albums[0]?.name).toBe('X');
+		library.replaceTags([{ ...testTag, name: 'Renamed' }]);
+		expect(library.tags[0]?.name).toBe('Renamed');
+		library.upsertMedia([
+			testMedia({
+				id: 'm-tag',
+				tags: [
+					{ id: 't1', name: 'Old', kind: 'tag' },
+					{ id: 't2', name: 'Keep', kind: 'person' }
+				]
+			})
+		]);
+		library.renameTagOnMedia('t1', 'New');
+		expect(library.media.find((item) => item.id === 'm-tag')?.tags).toEqual([
+			{ id: 't1', name: 'New', kind: 'tag' },
+			{ id: 't2', name: 'Keep', kind: 'person' }
+		]);
+		expect(library.findKnown('m-tag')?.tags?.[0]?.name).toBe('New');
+		library.renameTagOnMedia('missing', 'Nope');
+		expect(library.media.find((item) => item.id === 'm-tag')?.tags?.[1]?.name).toBe('Keep');
 
 		app.prefs.setShowImages(false);
 		app.prefs.setSearchQuery('lake');

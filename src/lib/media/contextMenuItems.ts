@@ -93,7 +93,7 @@ export function buildContextMenuItems(input: ContextMenuBuildInput): ContextMenu
 			label: favoriteMenuLabel(input.favoriteItems)
 		},
 		{ id: 'assign-tag', label: 'Add tag…' },
-		{ id: 'assign-person', label: 'Add person…' },
+		{ id: 'assign-person', label: 'People…' },
 		{ id: 'download', label: count > 1 ? `Download ${count}` : 'Download' },
 		{ id: 'export-zip', label: 'Export zip' },
 		...optimizeMenuItem(input.favoriteItems),

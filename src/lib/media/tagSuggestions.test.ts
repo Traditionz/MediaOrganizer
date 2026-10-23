@@ -77,11 +77,20 @@ describe('tagEnterAction', () => {
 
 describe('sharedTagIds', () => {
 	test('intersection across items', () => {
-		const mt = (id: string) => ({ id, name: id, kind: 'tag' as const });
+		const mt = (id: string, kind: 'tag' | 'person' = 'tag') => ({ id, name: id, kind });
 		expect(sharedTagIds([])).toEqual(new Set());
 		expect(sharedTagIds([{}])).toEqual(new Set());
 		expect(sharedTagIds([{ tags: [mt('a'), mt('b')] }, { tags: [mt('b')] }])).toEqual(
 			new Set(['b'])
 		);
+		expect(
+			sharedTagIds(
+				[
+					{ tags: [mt('a'), mt('p', 'person')] },
+					{ tags: [mt('a'), mt('p', 'person'), mt('q', 'person')] }
+				],
+				'person'
+			)
+		).toEqual(new Set(['p']));
 	});
 });

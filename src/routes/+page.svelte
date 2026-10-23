@@ -9,6 +9,7 @@
 	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
 	import PromptModal from '$lib/components/PromptModal.svelte';
 	import AlbumPickerModal from '$lib/components/AlbumPickerModal.svelte';
+	import PeoplePickerModal from '$lib/components/PeoplePickerModal.svelte';
 	import TagPickerModal from '$lib/components/TagPickerModal.svelte';
 	import Toolbar from '$lib/components/Toolbar.svelte';
 	import MediaGrid from '$lib/components/MediaGrid.svelte';
@@ -29,7 +30,8 @@
 		parseMediaItem,
 		parseMediaItems,
 		parseOkMediaItems,
-		parseTag
+		parseTag,
+		tagsWithUpsert
 	} from '$lib/library/mutationHandlers';
 	import { invertUndo, type UndoAction } from '$lib/media/undo';
 	import { resolveLibraryHotkey, nextGridSelectionId } from '$lib/media/libraryHotkeys';
@@ -92,8 +94,7 @@
 		);
 		return idsIntersectingBox(layouts, box, host.offsetLeft, host.offsetTop);
 	});
-	let promptKind: 'rename' | 'import-folder' | 'watch-folder' | 'assign-person' = 'rename';
-	let assignTargetIds: string[] = [];
+	let promptKind: 'rename' | 'import-folder' | 'watch-folder' = 'rename';
 	let queryReloadTimer: ReturnType<typeof setTimeout> | null = null;
 	let folderInput = $state<HTMLInputElement | null>(null);
 
@@ -450,7 +451,7 @@
 	}
 
 	async function createAlbum(name: string) {
-		await albums.createAlbum(name);
+		return albums.createAlbum(name);
 	}
 
 	async function deleteAlbum(id: string) {
@@ -723,6 +724,28 @@
 		}
 	}
 
+	async function renameTag(id: string, name: string) {
+		const res = await fetch('/api/tags', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ id, name })
+		});
+		if (!res.ok) {
+			const body = await res.json().catch(() => ({}));
+			ui.errorMessage = body.message || 'Failed to rename tag';
+			throw new Error(ui.errorMessage);
+		}
+		const tag = parseTag(await res.json());
+		if (tag) library.replaceTags(tagsWithUpsert(library.tags, tag));
+		else await library.refreshTags();
+		library.renameTagOnMedia(id, name);
+		const previewId = ui.preview?.id;
+		if (previewId) {
+			const known = library.findKnown(previewId);
+			if (known) ui.syncPreview([known]);
+		}
+	}
+
 	async function assignTagByName(ids: string[], name: string, kind: 'tag' | 'person') {
 		const trimmed = name.trim();
 		if (!ids.length || !trimmed) return;
@@ -750,9 +773,8 @@
 		await library.refreshTags();
 	}
 
-	async function unassignCurrentTag(ids: string[]) {
-		const tagId = parseTagFilterId(library.activeAlbum);
-		if (!tagId || !ids.length) return;
+	async function unassignTag(ids: string[], tagId: string) {
+		if (!ids.length || !tagId) return;
 		const res = await fetch('/api/tags', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -766,18 +788,9 @@
 		await library.refreshTags();
 	}
 
-	function openAssignPrompt(ids: string[]) {
-		assignTargetIds = ids;
-		promptKind = 'assign-person';
-		ui.promptModalBusy = false;
-		ui.promptModalError = '';
-		ui.promptModal = {
-			open: true,
-			title: 'Add person',
-			label: 'Person name',
-			initialValue: '',
-			mediaId: null
-		};
+	async function unassignCurrentTag(ids: string[]) {
+		const tagId = parseTagFilterId(library.activeAlbum);
+		if (tagId) await unassignTag(ids, tagId);
 	}
 
 	async function handleTagPick(tag: { id: string }) {
@@ -1070,7 +1083,7 @@
 			return;
 		}
 		if (id === 'assign-person') {
-			openAssignPrompt(ids);
+			if (ids.length) ui.openPeoplePicker(ids);
 			return;
 		}
 		if (id === 'remove-tag') {
@@ -1099,6 +1112,8 @@
 				),
 				blocked: Boolean(
 					ui.albumPicker.open ||
+					ui.peoplePicker.open ||
+					ui.tagPicker.open ||
 					ui.confirmModal.open ||
 					ui.promptModal.open ||
 					ui.profileModal.open ||
@@ -1175,10 +1190,29 @@
 		}
 	}
 
+	async function handlePeoplePickerConfirm(personIds: string[]) {
+		const ids = ui.peoplePicker.mediaIds;
+		const previous = [...peoplePickerMemberIds];
+		ui.closePeoplePicker();
+		const { add, remove } = albumMembershipDiff(previous, personIds);
+		for (const tagId of remove) {
+			await unassignTag(ids, tagId);
+		}
+		for (const tagId of add) {
+			await assignExistingTag(ids, tagId);
+		}
+	}
+
 	function openAlbumPickerForSelection() {
 		const ids = [...selection.selectedIds];
 		if (!ids.length) return;
 		ui.openAlbumPicker(ids);
+	}
+
+	function openPeoplePickerForSelection() {
+		const ids = [...selection.selectedIds];
+		if (!ids.length) return;
+		ui.openPeoplePicker(ids);
 	}
 
 	/** Albums that every selected picker item already belongs to. */
@@ -1194,6 +1228,11 @@
 		}
 		return shared;
 	});
+
+	/** People every selected picker item already has. */
+	const peoplePickerMemberIds = $derived(
+		sharedTagIds(loadedMedia(ui.peoplePicker.mediaIds), 'person')
+	);
 
 	async function deleteSelected() {
 		if (!selection.selectedIds.size) return;
@@ -1325,11 +1364,6 @@
 		}
 		if (promptKind === 'watch-folder') {
 			await runWatchFolder(value);
-			return;
-		}
-		if (promptKind === 'assign-person') {
-			await assignTagByName(assignTargetIds, value, 'person');
-			ui.closePromptModal();
 			return;
 		}
 		if (!ui.promptModal.mediaId) return;
@@ -1479,6 +1513,8 @@
 				await createTag(name, kind);
 			}}
 			ondeleteTag={deleteTag}
+			onrenameTag={renameTag}
+			onassignTag={assignExistingTag}
 			onswitchProfile={switchProfileWithPrompt}
 			oncreateProfile={createProfileWithPrompt}
 			ondeleteProfile={deleteProfile}
@@ -1540,6 +1576,7 @@
 				ontoggleSelect={() => selection.toggleSelectMode()}
 				onclearSelection={() => selection.clear()}
 				onopenAlbumPicker={openAlbumPickerForSelection}
+				onopenPeoplePicker={openPeoplePickerForSelection}
 				ondelete={deleteSelected}
 				onrestore={() => restoreSelected()}
 				onemptyTrash={emptyTrash}
@@ -1695,6 +1732,9 @@
 			onrotate={rotatePreview}
 			onfavorite={(id, favorite) => setFavorite([id], favorite)}
 			oncrop={cropPreview}
+			onaddTag={(id) => ui.openTagPicker([id])}
+			onaddPeople={(id) => ui.openPeoplePicker([id])}
+			onaddAlbum={(id) => ui.openAlbumPicker([id])}
 		/>
 	{/if}
 
@@ -1738,6 +1778,16 @@
 		memberAlbumIds={albumPickerMemberIds}
 		oncancel={() => ui.closeAlbumPicker()}
 		onconfirm={handleAlbumPickerConfirm}
+		oncreate={async (name) => createAlbum(name)}
+	/>
+
+	<PeoplePickerModal
+		open={ui.peoplePicker.open}
+		people={library.tags}
+		memberPersonIds={peoplePickerMemberIds}
+		oncancel={() => ui.closePeoplePicker()}
+		onconfirm={handlePeoplePickerConfirm}
+		oncreate={async (name) => createTag(name, 'person')}
 	/>
 
 	<TagPickerModal

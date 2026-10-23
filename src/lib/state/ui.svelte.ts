@@ -68,6 +68,11 @@ export type TagPickerState = {
 	mediaIds: string[];
 };
 
+export type PeoplePickerState = {
+	open: boolean;
+	mediaIds: string[];
+};
+
 export type ContextMenuState = {
 	open: boolean;
 	x: number;
@@ -137,6 +142,11 @@ export class UiState {
 	});
 
 	tagPicker = $state<TagPickerState>({
+		open: false,
+		mediaIds: []
+	});
+
+	peoplePicker = $state<PeoplePickerState>({
 		open: false,
 		mediaIds: []
 	});
@@ -355,6 +365,14 @@ export class UiState {
 
 	closeTagPicker() {
 		this.tagPicker = { open: false, mediaIds: [] };
+	}
+
+	openPeoplePicker(mediaIds: string[]) {
+		this.peoplePicker = { open: true, mediaIds: [...mediaIds] };
+	}
+
+	closePeoplePicker() {
+		this.peoplePicker = { open: false, mediaIds: [] };
 	}
 
 	closeProfileModal() {

@@ -206,6 +206,11 @@ describe('UiState', () => {
 		ui.closeTagPicker();
 		expect(ui.tagPicker).toEqual({ open: false, mediaIds: [] });
 
+		ui.openPeoplePicker(['m1']);
+		expect(ui.peoplePicker).toEqual({ open: true, mediaIds: ['m1'] });
+		ui.closePeoplePicker();
+		expect(ui.peoplePicker).toEqual({ open: false, mediaIds: [] });
+
 		ui.profileModal.open = true;
 		ui.profileModalError = 'x';
 		ui.closeProfileModal();

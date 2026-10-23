@@ -5,7 +5,6 @@
 	import Inbox from '@lucide/svelte/icons/inbox';
 	import Plus from '@lucide/svelte/icons/plus';
 	import KeyRound from '@lucide/svelte/icons/key-round';
-	import Search from '@lucide/svelte/icons/search';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import User from '@lucide/svelte/icons/user';
 	import Heart from '@lucide/svelte/icons/heart';
@@ -13,8 +12,7 @@
 	import MapPin from '@lucide/svelte/icons/map-pin';
 	import Copy from '@lucide/svelte/icons/copy';
 	import TagIcon from '@lucide/svelte/icons/tag';
-	import { exactAlbumNameMatch, namedItemsForAddQuery, visibleNamedItems } from '$lib/albumNaming';
-	import * as Alert from '$lib/components/ui/alert/index.js';
+	import { exactAlbumNameMatch, namedItemsForAddQuery } from '$lib/albumNaming';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
@@ -58,6 +56,8 @@
 		tags?: Tag[];
 		oncreateTag?: (name: string, kind: 'tag' | 'person') => Promise<void>;
 		ondeleteTag?: (id: string) => Promise<void>;
+		onrenameTag?: (id: string, name: string) => Promise<void>;
+		onassignTag?: (ids: string[], tagId: string) => Promise<void>;
 	}
 
 	let {
@@ -85,7 +85,9 @@
 		oneditPasscode,
 		tags = [],
 		oncreateTag,
-		ondeleteTag
+		ondeleteTag,
+		onrenameTag,
+		onassignTag
 	}: Props = $props();
 
 	let newName = $state('');
@@ -97,7 +99,6 @@
 	let profileBusy = $state(false);
 	let renamingId = $state<string | null>(null);
 	let renameName = $state('');
-	let albumQuery = $state('');
 	let tagName = $state('');
 	let personName = $state('');
 	let contextMenu = $state<{
@@ -105,13 +106,14 @@
 		x: number;
 		y: number;
 		albumId: string | null;
-	}>({ open: false, x: 0, y: 0, albumId: null });
+		tagId: string | null;
+	}>({ open: false, x: 0, y: 0, albumId: null, tagId: null });
 
 	const otherProfiles = $derived(profiles.filter((p) => p.id !== profile.id));
 	const isBusy = $derived(profileBusy || profileBusyProp);
 
 	const sortedAlbums = $derived([...albums].sort((a, b) => a.name.localeCompare(b.name)));
-	const visibleAlbums = $derived(visibleNamedItems(sortedAlbums, newName, albumQuery));
+	const visibleAlbums = $derived(namedItemsForAddQuery(sortedAlbums, newName));
 	const exactName = $derived(
 		exactAlbumNameMatch(
 			albums.map((a) => a.name),
@@ -132,8 +134,16 @@
 	);
 
 	const contextAlbum = $derived(albums.find((a) => a.id === contextMenu.albumId) ?? null);
+	const contextTag = $derived(tags.find((t) => t.id === contextMenu.tagId) ?? null);
 
 	const contextMenuItems = $derived.by((): ContextMenuItem[] => {
+		if (contextTag) {
+			const items: ContextMenuItem[] = [];
+			if (onrenameTag) items.push({ id: 'rename', label: 'Rename' });
+			if (onrenameTag && ondeleteTag) items.push({ id: 'sep-1', label: '', separator: true });
+			if (ondeleteTag) items.push({ id: 'delete', label: 'Delete', danger: true });
+			return items;
+		}
 		if (!contextAlbum) return [];
 		return [
 			{ id: 'copy-name', label: 'Copy name' },
@@ -257,9 +267,9 @@
 		newName = '';
 	}
 
-	function startRename(album: Album) {
-		renamingId = album.id;
-		renameName = album.name;
+	function startRename(item: { id: string; name: string }) {
+		renamingId = item.id;
+		renameName = item.name;
 	}
 
 	function cancelRename() {
@@ -271,13 +281,31 @@
 		const name = renameName.trim();
 		if (!renamingId || !name || busy) return;
 		const album = albums.find((a) => a.id === renamingId);
-		if (album && name === album.name) {
+		if (album) {
+			if (name === album.name) {
+				cancelRename();
+				return;
+			}
+			busy = true;
+			try {
+				await onrename(renamingId, name);
+				cancelRename();
+			} catch {
+				/* keep input open so the user can retry */
+			} finally {
+				busy = false;
+			}
+			return;
+		}
+		const tag = tags.find((t) => t.id === renamingId);
+		if (!tag || !onrenameTag) return;
+		if (name === tag.name) {
 			cancelRename();
 			return;
 		}
 		busy = true;
 		try {
-			await onrename(renamingId, name);
+			await onrenameTag(renamingId, name);
 			cancelRename();
 		} catch {
 			/* keep input open so the user can retry */
@@ -368,6 +396,19 @@
 		if (ids.length) await onaddMedia(ids, albumId);
 	}
 
+	async function onDropTagTarget(e: DragEvent, tagId: string) {
+		if (isOsFileOnly(e.dataTransfer)) return;
+		const session = getInternalDrag();
+		const dt = e.dataTransfer;
+		if (!session && !dt) return;
+		e.preventDefault();
+		e.stopPropagation();
+		dropTarget = null;
+		const ids = resolveDroppedMediaIds(e);
+		endInternalDrag();
+		if (ids.length && onassignTag) await onassignTag(ids, tagId);
+	}
+
 	async function onDropQuickAction(
 		e: DragEvent,
 		action: ((ids: string[]) => Promise<void>) | undefined
@@ -438,11 +479,35 @@
 			open: true,
 			x: e.clientX,
 			y: e.clientY,
-			albumId: album.id
+			albumId: album.id,
+			tagId: null
+		};
+	}
+
+	function openTagContextMenu(e: MouseEvent, tag: Tag) {
+		e.preventDefault();
+		e.stopPropagation();
+		contextMenu = {
+			open: true,
+			x: e.clientX,
+			y: e.clientY,
+			albumId: null,
+			tagId: tag.id
 		};
 	}
 
 	async function handleContextSelect(id: string) {
+		if (contextTag) {
+			if (id === 'rename') {
+				startRename(contextTag);
+				return;
+			}
+			if (id === 'delete' && ondeleteTag) {
+				await ondeleteTag(contextTag.id);
+			}
+			return;
+		}
+
 		const album = contextAlbum;
 		/* v8 ignore next -- menu items are empty (nothing to select) whenever contextAlbum is null */
 		if (!album) return;
@@ -749,31 +814,66 @@
 					<li>
 						<div
 							class={[
-								'group flex items-center gap-0.5 rounded-lg',
-								activeAlbum === tagFilterId(person.id) && 'bg-accent text-accent-foreground'
+								'album-drop-row group flex items-center gap-0.5 rounded-lg',
+								activeAlbum === tagFilterId(person.id) && 'bg-accent text-accent-foreground',
+								dropHighlight(person.id)
 							]}
+							ondragenter={(e) => onDragOverTarget(e, person.id)}
+							ondragover={(e) => onDragOverTarget(e, person.id)}
+							ondragleave={(e) => onDragLeaveTarget(e, person.id)}
+							ondrop={(e) => onDropTagTarget(e, person.id)}
+							oncontextmenu={(e) => openTagContextMenu(e, person)}
+							role="presentation"
 						>
-							<Button
-								type="button"
-								variant="ghost"
-								class="min-w-0 flex-1 justify-start gap-2 font-medium"
-								onclick={() => onselect(tagFilterId(person.id))}
-							>
-								<User class="h-4 w-4" />
-								<span class="truncate">{person.name}</span>
-								<Badge variant="secondary" class="ml-auto">{person.media_count ?? 0}</Badge>
-							</Button>
-							{#if ondeleteTag}
+							{#if renamingId === person.id}
+								<form
+									class="min-w-0 flex-1 px-1 py-0.5"
+									onsubmit={(e) => {
+										e.preventDefault();
+										submitRename();
+									}}
+								>
+									<Input
+										{@attach autofocusCreate}
+										class="h-7 min-w-0 text-xs"
+										aria-label="Rename"
+										bind:value={renameName}
+										disabled={busy}
+										onclick={(e) => e.stopPropagation()}
+										onkeydown={(e) => {
+											if (e.key === 'Escape') {
+												e.preventDefault();
+												cancelRename();
+											}
+										}}
+										onblur={() => {
+											if (renamingId === person.id) submitRename();
+										}}
+									/>
+								</form>
+							{:else}
 								<Button
 									type="button"
 									variant="ghost"
-									size="icon-xs"
-									class="opacity-0 group-hover:opacity-100"
-									aria-label={`Delete person ${person.name}`}
-									onclick={() => ondeleteTag(person.id)}
+									class="album-drop-hit min-w-0 flex-1 justify-start gap-2 font-medium"
+									onclick={() => onselect(tagFilterId(person.id))}
 								>
-									<Trash2 class="h-4 w-4" />
+									<User class="h-4 w-4" />
+									<span class="truncate">{person.name}</span>
+									<Badge variant="secondary" class="ml-auto">{person.media_count ?? 0}</Badge>
 								</Button>
+								{#if ondeleteTag}
+									<Button
+										type="button"
+										variant="ghost"
+										size="icon-xs"
+										class="album-drop-hit opacity-0 group-hover:opacity-100"
+										aria-label={`Delete person ${person.name}`}
+										onclick={() => ondeleteTag(person.id)}
+									>
+										<Trash2 class="h-4 w-4" />
+									</Button>
+								{/if}
 							{/if}
 						</div>
 					</li>
@@ -798,31 +898,66 @@
 					<li>
 						<div
 							class={[
-								'group flex items-center gap-0.5 rounded-lg',
-								activeAlbum === tagFilterId(tag.id) && 'bg-accent text-accent-foreground'
+								'album-drop-row group flex items-center gap-0.5 rounded-lg',
+								activeAlbum === tagFilterId(tag.id) && 'bg-accent text-accent-foreground',
+								dropHighlight(tag.id)
 							]}
+							ondragenter={(e) => onDragOverTarget(e, tag.id)}
+							ondragover={(e) => onDragOverTarget(e, tag.id)}
+							ondragleave={(e) => onDragLeaveTarget(e, tag.id)}
+							ondrop={(e) => onDropTagTarget(e, tag.id)}
+							oncontextmenu={(e) => openTagContextMenu(e, tag)}
+							role="presentation"
 						>
-							<Button
-								type="button"
-								variant="ghost"
-								class="min-w-0 flex-1 justify-start gap-2 font-medium"
-								onclick={() => onselect(tagFilterId(tag.id))}
-							>
-								<TagIcon class="h-4 w-4" />
-								<span class="truncate">{tag.name}</span>
-								<Badge variant="secondary" class="ml-auto">{tag.media_count ?? 0}</Badge>
-							</Button>
-							{#if ondeleteTag}
+							{#if renamingId === tag.id}
+								<form
+									class="min-w-0 flex-1 px-1 py-0.5"
+									onsubmit={(e) => {
+										e.preventDefault();
+										submitRename();
+									}}
+								>
+									<Input
+										{@attach autofocusCreate}
+										class="h-7 min-w-0 text-xs"
+										aria-label="Rename"
+										bind:value={renameName}
+										disabled={busy}
+										onclick={(e) => e.stopPropagation()}
+										onkeydown={(e) => {
+											if (e.key === 'Escape') {
+												e.preventDefault();
+												cancelRename();
+											}
+										}}
+										onblur={() => {
+											if (renamingId === tag.id) submitRename();
+										}}
+									/>
+								</form>
+							{:else}
 								<Button
 									type="button"
 									variant="ghost"
-									size="icon-xs"
-									class="opacity-0 group-hover:opacity-100"
-									aria-label={`Delete tag ${tag.name}`}
-									onclick={() => ondeleteTag(tag.id)}
+									class="album-drop-hit min-w-0 flex-1 justify-start gap-2 font-medium"
+									onclick={() => onselect(tagFilterId(tag.id))}
 								>
-									<Trash2 class="h-4 w-4" />
+									<TagIcon class="h-4 w-4" />
+									<span class="truncate">{tag.name}</span>
+									<Badge variant="secondary" class="ml-auto">{tag.media_count ?? 0}</Badge>
 								</Button>
+								{#if ondeleteTag}
+									<Button
+										type="button"
+										variant="ghost"
+										size="icon-xs"
+										class="album-drop-hit opacity-0 group-hover:opacity-100"
+										aria-label={`Delete tag ${tag.name}`}
+										onclick={() => ondeleteTag(tag.id)}
+									>
+										<Trash2 class="h-4 w-4" />
+									</Button>
+								{/if}
 							{/if}
 						</div>
 					</li>
@@ -842,51 +977,19 @@
 					submitCreate();
 				}}
 			>
-				<div class="relative">
-					<Input
-						class="pr-8"
-						placeholder="Album name"
-						aria-label="New album name"
-						bind:value={newName}
-						disabled={busy}
-						onkeydown={(e) => {
-							if (e.key === 'Escape') {
-								e.preventDefault();
-								cancelCreate();
-							}
-						}}
-					/>
-					<Button
-						type="submit"
-						variant="ghost"
-						size="icon-xs"
-						class="absolute top-1/2 right-1 -translate-y-1/2"
-						aria-label="Add album"
-						disabled={busy || !newName.trim() || Boolean(exactName)}
-					>
-						<Plus class="h-4 w-4" />
-					</Button>
-				</div>
-				{#if exactName}
-					<Alert.Root variant="destructive" class="mt-2">
-						<Alert.Description>{`“${exactName}” already exists.`}</Alert.Description>
-					</Alert.Root>
-				{/if}
-			</form>
-
-			<div class="relative mb-2">
-				<Search
-					class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
-					aria-hidden="true"
-				/>
 				<Input
-					type="search"
-					class="pl-8"
-					placeholder="Search albums…"
-					bind:value={albumQuery}
-					aria-label="Search albums"
+					placeholder="Album name"
+					aria-label="New album"
+					bind:value={newName}
+					disabled={busy}
+					onkeydown={(e) => {
+						if (e.key === 'Escape') {
+							e.preventDefault();
+							cancelCreate();
+						}
+					}}
 				/>
-			</div>
+			</form>
 
 			<ul class="flex w-full flex-col gap-0.5 p-0">
 				{#each visibleAlbums as album (album.id)}
@@ -915,6 +1018,7 @@
 									<Input
 										{@attach autofocusCreate}
 										class="h-7 min-w-0 text-xs"
+										aria-label="Rename"
 										bind:value={renameName}
 										disabled={busy}
 										onclick={(e) => e.stopPropagation()}
@@ -968,9 +1072,7 @@
 						</div>
 					</li>
 				{:else}
-					<li class="text-muted-foreground px-2 py-6 text-center text-sm">
-						{albums.length === 0 ? 'No albums yet.' : 'No albums match your search.'}
-					</li>
+					<li class="text-muted-foreground px-2 py-6 text-center text-sm">No albums yet.</li>
 				{/each}
 			</ul>
 		</nav>

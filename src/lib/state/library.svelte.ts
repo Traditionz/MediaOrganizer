@@ -11,6 +11,7 @@ import {
 	stringList,
 	type JsonValue
 } from '$lib/parse';
+import { mediaWithRenamedTag } from '$lib/library/mutationHandlers';
 import { albumCountDelta, mergeMembershipIntoList } from '$lib/media/viewMembership';
 import { KNOWN_CACHE_CAP, forgetIds, pruneKnown, pruneThumbReady } from '$lib/media/knownCache';
 import type { PreferencesState } from './preferences.svelte';
@@ -299,6 +300,23 @@ export class LibraryState {
 
 	replaceAlbums(albums: Album[]) {
 		this.albums = albums;
+	}
+
+	replaceTags(tags: Tag[]) {
+		this.tags = tags;
+	}
+
+	/** Keep cached media tag labels in sync after a rename. */
+	renameTagOnMedia(tagId: string, name: string) {
+		this.media = mediaWithRenamedTag(this.media, tagId, name);
+		this.trash = mediaWithRenamedTag(this.trash, tagId, name);
+		for (const [id, item] of this.known) {
+			if (!item.tags?.some((tag) => tag.id === tagId)) continue;
+			this.known.set(id, {
+				...item,
+				tags: item.tags.map((tag) => (tag.id === tagId ? { ...tag, name } : tag))
+			});
+		}
 	}
 
 	markHasThumbnail(id: string) {

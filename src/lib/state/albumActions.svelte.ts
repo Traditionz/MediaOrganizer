@@ -35,6 +35,7 @@ export class AlbumActions {
 		if (album) this.library.replaceAlbums(albumsWithUpsert(this.library.albums, album));
 		else await this.library.refreshAlbums();
 		await this.library.refreshCounts();
+		return album;
 	}
 
 	async runDeleteAlbum(id: string) {
