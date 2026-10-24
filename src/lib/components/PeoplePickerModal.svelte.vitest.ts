@@ -1,5 +1,5 @@
 import { page } from 'vitest/browser';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import PeoplePickerModal from './PeoplePickerModal.svelte';
 import { testTag } from '../../test-utils/fixtures';
@@ -72,6 +72,25 @@ describe('PeoplePickerModal', () => {
 			onconfirm: () => undefined
 		});
 		await expect.element(page.getByText('No people yet.')).toBeVisible();
+	});
+
+	test('letter index jumps only when that letter has people', async () => {
+		const scroll = vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(() => {});
+		await render(PeoplePickerModal, {
+			open: true,
+			people: [testTag, bob],
+			oncancel: () => undefined,
+			onconfirm: () => undefined
+		});
+		const letterButton = (letter: string) =>
+			document.querySelector<HTMLButtonElement>(`[aria-label="Jump to ${letter}"]`)!;
+		expect(letterButton('C').disabled).toBe(true);
+		letterButton('C').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+		expect(scroll).not.toHaveBeenCalled();
+		letterButton('A').click();
+		expect(scroll).toHaveBeenCalledTimes(1);
+		await expect.poll(() => letterButton('A').className).toContain('bg-primary/15');
+		scroll.mockRestore();
 	});
 
 	test('filters out non-person tags from the list', async () => {

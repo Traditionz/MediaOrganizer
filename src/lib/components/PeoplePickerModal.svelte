@@ -54,6 +54,8 @@
 		'Z'
 	] as const;
 
+	type IndexLetter = (typeof LETTERS)[number];
+
 	let {
 		open,
 		people,
@@ -66,15 +68,15 @@
 
 	let query = $state('');
 	let listEl = $state<HTMLElement | null>(null);
-	let activeLetter = $state<string | null>(null);
+	let activeLetter = $state<IndexLetter | null>(null);
 	let selectedIds = new SvelteSet<string>();
 	let busy = $state(false);
 
 	const createName = $derived(canCreateTag(people, query, 'person') ? query.trim() : null);
 
-	function personLetter(name: string): string {
+	function personLetter(name: string): IndexLetter {
 		const ch = name.trim().charAt(0).toLocaleUpperCase();
-		return /^[A-Z]$/.test(ch) ? ch : '#';
+		return /^[A-Z]$/.test(ch) ? (ch as IndexLetter) : '#';
 	}
 
 	const personTags = $derived(people.filter((p) => p.kind === 'person'));
@@ -116,7 +118,7 @@
 		return () => {};
 	}
 
-	function jumpToLetter(letter: string) {
+	function jumpToLetter(letter: IndexLetter) {
 		if (!availableLetters.includes(letter) || !listEl) return;
 		const section = listEl.querySelector<HTMLElement>(`[data-letter="${letter}"]`);
 		section?.scrollIntoView({ block: 'start', behavior: 'smooth' });

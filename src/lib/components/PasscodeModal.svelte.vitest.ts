@@ -31,7 +31,7 @@ function setup(props: Partial<Props> = {}) {
 		oncancel: () => {
 			cancels++;
 		},
-		onsubmit: (payload) => {
+		onsubmit: (payload: Payload) => {
 			payloads.push(payload);
 		},
 		...props
