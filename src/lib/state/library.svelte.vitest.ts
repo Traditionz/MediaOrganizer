@@ -223,6 +223,14 @@ describe('LibraryState', () => {
 		expect(library.loadedMedia(['m1', 'nope']).map((item) => item.id)).toEqual(['m1']);
 	});
 
+	test('loadedMedia sees tags after upsert', () => {
+		const { library } = createAppState(testLoad());
+		library.upsertMedia([
+			testMedia({ tags: [{ id: 't1', name: 'beach', kind: 'tag' }] })
+		]);
+		expect(library.loadedMedia(['m1'])[0]?.tags?.map((tag) => tag.id)).toEqual(['t1']);
+	});
+
 	test('applyMembership edge cases', () => {
 		const other = { id: 'a2', name: 'Other', created_at: testAlbum.created_at };
 		const { library } = createAppState(testLoad({ albums: [testAlbum, other] }));

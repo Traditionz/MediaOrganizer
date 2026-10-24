@@ -22,13 +22,19 @@ function names() {
 function props(overrides: Record<string, unknown> = {}) {
 	const picked: string[] = [];
 	const created: string[] = [];
+	let cancelled = 0;
 	return {
 		picked,
 		created,
+		get cancelled() {
+			return cancelled;
+		},
 		props: {
 			open: true,
 			tags: [night, rare, ada, beach],
-			oncancel: () => undefined,
+			oncancel: () => {
+				cancelled += 1;
+			},
 			onpick: (t: Tag) => {
 				picked.push(t.id);
 			},
@@ -50,10 +56,17 @@ describe('TagPickerModal', () => {
 	});
 
 	test('clicking a suggestion picks it', async () => {
-		const { picked, props: p } = props();
-		await render(TagPickerModal, p);
+		const state = props();
+		await render(TagPickerModal, state.props);
 		await page.getByRole('button', { name: /night/ }).click();
-		await expect.poll(() => picked).toEqual(['t1']);
+		await expect.poll(() => state.picked).toEqual(['t1']);
+		expect(state.cancelled).toBe(0);
+		await expect.element(page.getByRole('heading', { name: 'Add tag' })).toBeVisible();
+		expect(names()).toEqual(['beach 9', 'rare 0']);
+		await page.getByRole('button', { name: /beach/ }).click();
+		await expect.poll(() => state.picked).toEqual(['t1', 't2']);
+		expect(state.cancelled).toBe(0);
+		expect(names()).toEqual(['rare 0']);
 	});
 
 	test('hides tags the media already has', async () => {
@@ -70,6 +83,7 @@ describe('TagPickerModal', () => {
 		expect(names()).toEqual(['Create “sun”']);
 		await page.getByRole('button', { name: /Create “sun”/ }).click();
 		await expect.poll(() => created).toEqual(['sun']);
+		await expect.element(page.getByRole('heading', { name: 'Add tag' })).toBeVisible();
 	});
 
 	test('no create row for an existing name', async () => {

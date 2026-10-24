@@ -35,7 +35,13 @@
 	} from '$lib/library/mutationHandlers';
 	import { invertUndo, type UndoAction } from '$lib/media/undo';
 	import { resolveLibraryHotkey, nextGridSelectionId } from '$lib/media/libraryHotkeys';
-	import { isSpecialLibraryFilter, parseTagFilterId, tagFilterId } from '$lib/media/libraryNav';
+	import {
+		hasTagFilter,
+		isSpecialLibraryFilter,
+		nextLibraryFilterFromSidebar,
+		parseTagFilterIds,
+		toggleTagFilter
+	} from '$lib/media/libraryNav';
 	import {
 		WATCH_POLL_MS,
 		emptyLibraryDetail,
@@ -126,12 +132,16 @@
 	async function selectAlbumFilter(id: LibraryAlbumFilter) {
 		selection.selectedIds.clear();
 		selection.selectionAnchor = null;
-		if (id === 'trash') {
+		ui.closeTagPicker();
+		ui.closePeoplePicker();
+		ui.closeAlbumPicker();
+		const next = nextLibraryFilterFromSidebar(library.activeAlbum, id);
+		if (next === 'trash') {
 			await library.ensureTrashLoaded();
-			library.setActiveAlbum(id);
+			library.setActiveAlbum(next);
 			return;
 		}
-		library.setActiveAlbum(id);
+		library.setActiveAlbum(next);
 		await library.reloadQuery();
 	}
 
@@ -719,8 +729,9 @@
 			return;
 		}
 		await library.refreshTags();
-		if (library.activeAlbum === tagFilterId(id)) {
-			await selectAlbumFilter('all');
+		if (hasTagFilter(library.activeAlbum, id)) {
+			library.setActiveAlbum(toggleTagFilter(library.activeAlbum, id));
+			await library.reloadQuery();
 		}
 	}
 
@@ -782,26 +793,25 @@
 		});
 		if (!res.ok) return;
 		library.upsertMedia(parseOkMediaItems(await res.json()));
-		if (library.activeAlbum === tagFilterId(tagId)) {
+		if (hasTagFilter(library.activeAlbum, tagId)) {
 			library.removeMediaIds(ids);
 		}
 		await library.refreshTags();
 	}
 
 	async function unassignCurrentTag(ids: string[]) {
-		const tagId = parseTagFilterId(library.activeAlbum);
-		if (tagId) await unassignTag(ids, tagId);
+		for (const tagId of parseTagFilterIds(library.activeAlbum)) {
+			await unassignTag(ids, tagId);
+		}
 	}
 
 	async function handleTagPick(tag: { id: string }) {
 		const ids = ui.tagPicker.mediaIds;
-		ui.closeTagPicker();
 		await assignExistingTag(ids, tag.id);
 	}
 
 	async function handleTagCreate(name: string) {
 		const ids = ui.tagPicker.mediaIds;
-		ui.closeTagPicker();
 		await assignTagByName(ids, name, 'tag');
 	}
 

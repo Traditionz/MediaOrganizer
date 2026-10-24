@@ -33,14 +33,17 @@
 
 	let query = $state('');
 	let busy = $state(false);
+	let sessionIds = $state<string[]>([]);
 
-	const suggestions = $derived(rankTagSuggestions(tags, { query, excludeIds: assignedIds }));
+	const excludeIds = $derived(new Set([...assignedIds, ...sessionIds]));
+	const suggestions = $derived(rankTagSuggestions(tags, { query, excludeIds }));
 	const createName = $derived(canCreateTag(tags, query) ? query.trim() : null);
 	const hasTags = $derived(tags.some((tag) => tag.kind === 'tag'));
 
 	function resetOnOpen(node: HTMLElement) {
 		query = '';
 		busy = false;
+		sessionIds = [];
 		queueMicrotask(() => {
 			node.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
 		});
@@ -52,18 +55,28 @@
 		busy = true;
 		try {
 			await action();
+			query = '';
 		} finally {
 			busy = false;
 		}
 	}
 
+	function rememberPick(tagId: string) {
+		if (sessionIds.includes(tagId)) return;
+		sessionIds = [...sessionIds, tagId];
+	}
+
 	function onSearchKeydown(e: KeyboardEvent) {
 		if (e.key !== 'Enter') return;
 		e.preventDefault();
-		const action = tagEnterAction(tags, query, { excludeIds: assignedIds });
+		const action = tagEnterAction(tags, query, { excludeIds });
 		if (!action) return;
-		if (action.type === 'pick') void run(() => onpick(action.tag));
-		else void run(() => oncreate(action.name));
+		if (action.type === 'pick') {
+			void run(async () => {
+				await onpick(action.tag);
+				rememberPick(action.tag.id);
+			});
+		} else void run(() => oncreate(action.name));
 	}
 </script>
 
@@ -80,7 +93,8 @@
 				<Dialog.Header>
 					<Dialog.Title>{title}</Dialog.Title>
 					<Dialog.Description>
-						Pick a tag. The most used tags are listed first. Type to search or add a new one.
+						Pick multiple tags. The most used tags are listed first. Type to search or add a new
+						one, then Cancel when done.
 					</Dialog.Description>
 				</Dialog.Header>
 				<div class="relative mt-3">
@@ -121,7 +135,11 @@
 								type="button"
 								class="hover:bg-muted flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left disabled:opacity-60"
 								disabled={busy}
-								onclick={() => run(() => onpick(tag))}
+								onclick={() =>
+									run(async () => {
+										await onpick(tag);
+										rememberPick(tag.id);
+									})}
 							>
 								<span class="min-w-0 flex-1 truncate">{tag.name}</span>
 								<Badge variant="secondary" class="shrink-0">{tag.media_count ?? 0}</Badge>

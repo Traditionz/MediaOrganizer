@@ -146,7 +146,10 @@ export class LibraryState {
 	loadedMedia(ids: readonly string[]): MediaItem[] {
 		const items: MediaItem[] = [];
 		for (const id of ids) {
-			const item = this.findKnown(id);
+			const item =
+				this.media.find((row) => row.id === id) ??
+				this.trash.find((row) => row.id === id) ??
+				this.findKnown(id);
 			if (item) items.push(item);
 		}
 		return items;

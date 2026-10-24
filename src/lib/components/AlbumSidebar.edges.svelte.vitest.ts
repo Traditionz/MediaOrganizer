@@ -244,6 +244,13 @@ describe('AlbumSidebar edges', () => {
 			await screen.rerender({ activeAlbum: view });
 			expect(el()?.className).toContain('bg-accent');
 		}
+		await screen.rerender({ activeAlbum: 'tag:t1,t2' });
+		expect(page.getByRole('button', { name: /Ada/ }).element().parentElement?.className).toContain(
+			'bg-accent'
+		);
+		expect(page.getByRole('button', { name: /night/ }).element().parentElement?.className).toContain(
+			'bg-accent'
+		);
 	});
 
 	test('context menu empties when its album disappears', async () => {

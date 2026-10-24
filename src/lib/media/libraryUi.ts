@@ -1,5 +1,5 @@
 import type { LibraryAlbumFilter, MediaItem } from '$lib/types';
-import { isDuplicateFilter, isLibraryViewFilter, parseTagFilterId } from './libraryNav';
+import { isDuplicateFilter, isLibraryViewFilter, parseTagFilterId, parseTagFilterIds } from './libraryNav';
 
 export const WATCH_POLL_MS = 30_000;
 
@@ -35,7 +35,11 @@ export function emptyLibraryHeadline(searchQuery: string, activeAlbum: LibraryAl
 	if (activeAlbum === 'untagged') return 'No untagged media';
 	if (activeAlbum === 'map') return 'No geotagged media';
 	if (isDuplicateFilter(activeAlbum)) return 'No duplicates';
-	if (parseTagFilterId(activeAlbum)) return 'No media with this tag';
+	if (parseTagFilterId(activeAlbum)) {
+		return parseTagFilterIds(activeAlbum).length > 1
+			? 'No media with these tags'
+			: 'No media with this tag';
+	}
 	if (activeAlbum === 'all') return 'No media yet';
 	return 'No media yet';
 }
@@ -54,7 +58,11 @@ export function emptyLibraryDetail(searchQuery: string, activeAlbum: LibraryAlbu
 		return 'Add tags or people from the sidebar, then assign them to items.';
 	if (activeAlbum === 'map') return 'Import photos with GPS coordinates to see them on the map.';
 	if (isDuplicateFilter(activeAlbum)) return 'Identical file contents show here after import.';
-	if (parseTagFilterId(activeAlbum)) return 'Assign this tag from the item context menu.';
+	if (parseTagFilterId(activeAlbum)) {
+		return parseTagFilterIds(activeAlbum).length > 1
+			? 'Assign these tags from the item context menu.'
+			: 'Assign this tag from the item context menu.';
+	}
 	return 'Drag and drop pictures or videos here, or use Upload. Double-click an item to expand it.';
 }
 

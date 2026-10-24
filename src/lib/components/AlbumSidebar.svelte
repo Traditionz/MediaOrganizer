@@ -19,7 +19,7 @@
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
 	import type { Album, LibraryAlbumFilter, Profile, Tag } from '$lib/types';
-	import { tagFilterId } from '$lib/media/libraryNav';
+	import { hasTagFilter, tagFilterId } from '$lib/media/libraryNav';
 	import { endInternalDrag, getInternalDrag, isInternalDragActive } from '$lib/dragSession';
 	import {
 		MEDIA_IDS_MIME,
@@ -815,7 +815,7 @@
 						<div
 							class={[
 								'album-drop-row group flex items-center gap-0.5 rounded-lg',
-								activeAlbum === tagFilterId(person.id) && 'bg-accent text-accent-foreground',
+								hasTagFilter(activeAlbum, person.id) && 'bg-accent text-accent-foreground',
 								dropHighlight(person.id)
 							]}
 							ondragenter={(e) => onDragOverTarget(e, person.id)}
@@ -899,7 +899,7 @@
 						<div
 							class={[
 								'album-drop-row group flex items-center gap-0.5 rounded-lg',
-								activeAlbum === tagFilterId(tag.id) && 'bg-accent text-accent-foreground',
+								hasTagFilter(activeAlbum, tag.id) && 'bg-accent text-accent-foreground',
 								dropHighlight(tag.id)
 							]}
 							ondragenter={(e) => onDragOverTarget(e, tag.id)}

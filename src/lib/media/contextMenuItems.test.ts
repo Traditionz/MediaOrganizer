@@ -79,7 +79,17 @@ describe('buildContextMenuItems', () => {
 			hasClipboard: false,
 			favoriteItems: []
 		});
-		expect(items.some((item) => item.id === 'remove-tag')).toBe(true);
+		expect(items.find((item) => item.id === 'remove-tag')?.label).toBe('Remove tag');
+		expect(
+			buildContextMenuItems({
+				kind: 'media',
+				mediaIds: ['a'],
+				activeAlbum: 'tag:a,b',
+				trashCount: 0,
+				hasClipboard: false,
+				favoriteItems: []
+			}).find((item) => item.id === 'remove-tag')?.label
+		).toBe('Remove tags');
 		expect(items.find((item) => item.id === 'rename')?.disabled).toBe(true);
 		expect(items.some((item) => item.id === 'optimize-playback')).toBe(false);
 	});

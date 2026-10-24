@@ -21,7 +21,7 @@ import { sortMediaItems } from '$lib/media/sort';
 import {
 	isDuplicateFilter,
 	isLibraryRuleViewId,
-	parseTagFilterId,
+	parseTagFilterIds,
 	RECENT_DAYS
 } from '$lib/media/libraryNav';
 import { filePathForKey, getProfileDb, newId, tmpPathForKey } from './db';
@@ -239,16 +239,18 @@ function buildMediaWhere(profileId: string, query: MediaQuery) {
 				)`
 			);
 		} else {
-			const tagId = parseTagFilterId(query.albumId);
-			if (tagId) {
-				clauses.push(
-					exists(
-						db
-							.select()
-							.from(mediaTags)
-							.where(and(eq(mediaTags.mediaId, media.id), eq(mediaTags.tagId, tagId)))
-					)
-				);
+			const tagIds = parseTagFilterIds(query.albumId);
+			if (tagIds.length) {
+				for (const tagId of tagIds) {
+					clauses.push(
+						exists(
+							db
+								.select()
+								.from(mediaTags)
+								.where(and(eq(mediaTags.mediaId, media.id), eq(mediaTags.tagId, tagId)))
+						)
+					);
+				}
 			} else {
 				clauses.push(
 					exists(

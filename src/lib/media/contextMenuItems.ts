@@ -1,5 +1,5 @@
 import type { LibraryAlbumFilter } from '$lib/types';
-import { isSpecialLibraryFilter, parseTagFilterId } from '$lib/media/libraryNav';
+import { isSpecialLibraryFilter, parseTagFilterId, parseTagFilterIds } from '$lib/media/libraryNav';
 import { favoriteMenuLabel } from '$lib/media/libraryUi';
 
 export type ContextMenuItem = {
@@ -83,7 +83,10 @@ export function buildContextMenuItems(input: ContextMenuBuildInput): ContextMenu
 		items.push({ id: 'remove-from-album', label: 'Remove from album' });
 	}
 	if (parseTagFilterId(input.activeAlbum)) {
-		items.push({ id: 'remove-tag', label: 'Remove tag' });
+		items.push({
+			id: 'remove-tag',
+			label: parseTagFilterIds(input.activeAlbum).length > 1 ? 'Remove tags' : 'Remove tag'
+		});
 	}
 	items.push(
 		{ id: 'copy-name', label: single ? 'Copy name' : 'Copy names' },

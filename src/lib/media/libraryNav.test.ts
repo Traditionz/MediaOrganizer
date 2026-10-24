@@ -6,12 +6,17 @@ import {
 	isLibraryViewId,
 	isSpecialLibraryFilter,
 	mediaMatchesLibraryView,
+	hasTagFilter,
 	parseTagFilterId,
+	parseTagFilterIds,
 	RECENT_DAYS,
 	LIBRARY_VIEW_IDS,
 	LIBRARY_RULE_VIEW_IDS,
 	DUPLICATE_FILTER_ID,
-	tagFilterId
+	nextLibraryFilterFromSidebar,
+	tagFilterId,
+	tagFilterIds,
+	toggleTagFilter
 } from './libraryNav';
 
 describe('library nav', () => {
@@ -44,6 +49,23 @@ describe('library nav', () => {
 		expect(parseTagFilterId('tag:')).toBeNull();
 		expect(parseTagFilterId('all')).toBeNull();
 		expect(parseTagFilterId(null)).toBeNull();
+		expect(parseTagFilterIds('tag:b,a,b')).toEqual(['b', 'a']);
+		expect(parseTagFilterIds('tag:')).toEqual([]);
+		expect(tagFilterIds(['b', 'a', 'b'])).toBe('tag:a,b');
+		expect(tagFilterIds([])).toBe('all');
+		expect(hasTagFilter('tag:a,b', 'b')).toBe(true);
+		expect(hasTagFilter('tag:a', 'b')).toBe(false);
+		expect(toggleTagFilter('all', 'a')).toBe('tag:a');
+		expect(toggleTagFilter('tag:a', 'b')).toBe('tag:a,b');
+		expect(toggleTagFilter('tag:a,b', 'a')).toBe('tag:b');
+		expect(toggleTagFilter('tag:a', 'a')).toBe('all');
+		expect(nextLibraryFilterFromSidebar('all', 'tag:a')).toBe('tag:a');
+		expect(nextLibraryFilterFromSidebar('tag:a', 'tag:b')).toBe('tag:a,b');
+		expect(nextLibraryFilterFromSidebar('tag:a,b', 'tag:a')).toBe('tag:b');
+		expect(nextLibraryFilterFromSidebar('tag:a', 'favorites')).toBe('favorites');
+		expect(nextLibraryFilterFromSidebar('tag:a', 'album-1')).toBe('album-1');
+		expect(nextLibraryFilterFromSidebar('tag:a', 'tag:a,b')).toBe('tag:a,b');
+		expect(isSpecialLibraryFilter('tag:a,b')).toBe(true);
 		expect(isSpecialLibraryFilter(null)).toBe(true);
 		expect(isSpecialLibraryFilter('all')).toBe(true);
 		expect(isSpecialLibraryFilter('trash')).toBe(true);
