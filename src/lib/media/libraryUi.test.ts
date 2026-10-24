@@ -61,6 +61,7 @@ describe('empty library copy', () => {
 		expect(emptyLibraryHeadline('', 'map')).toBe('No geotagged media');
 		expect(emptyLibraryHeadline('', 'duplicates')).toBe('No duplicates');
 		expect(emptyLibraryHeadline('', 'tag:abc')).toBe('No media with this tag');
+		expect(emptyLibraryHeadline('', 'tag:a,b')).toBe('No media with these tags');
 		expect(emptyLibraryHeadline('', 'all')).toBe('No media yet');
 		expect(emptyLibraryHeadline('', 'album-1')).toBe('No media yet');
 	});
@@ -75,6 +76,7 @@ describe('empty library copy', () => {
 		expect(emptyLibraryDetail('', 'map')).toContain('GPS');
 		expect(emptyLibraryDetail('', 'duplicates')).toContain('Identical');
 		expect(emptyLibraryDetail('', 'tag:abc')).toContain('context menu');
+		expect(emptyLibraryDetail('', 'tag:a,b')).toContain('these tags');
 		expect(emptyLibraryDetail('', 'all')).toContain('Upload');
 	});
 });

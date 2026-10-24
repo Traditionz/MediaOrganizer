@@ -45,14 +45,65 @@ export function isLibraryRuleViewId(value: string | null): value is LibraryRuleV
 }
 
 export function tagFilterId(tagId: string): string {
-	return `${TAG_FILTER_PREFIX}${tagId}`;
+	return tagFilterIds([tagId]);
+}
+
+/** Encode one or more tag/person ids. Empty → `all`. */
+export function tagFilterIds(tagIds: readonly string[]): LibraryAlbumFilter {
+	const unique: string[] = [];
+	const seen = new Set<string>();
+	for (const id of tagIds) {
+		const trimmed = id.trim();
+		if (!trimmed || seen.has(trimmed)) continue;
+		seen.add(trimmed);
+		unique.push(trimmed);
+	}
+	unique.sort();
+	if (!unique.length) return 'all';
+	return `${TAG_FILTER_PREFIX}${unique.join(',')}`;
+}
+
+export function parseTagFilterIds(filter: LibraryAlbumFilter): string[] {
+	if (filter == null) return [];
+	if (!filter.startsWith(TAG_FILTER_PREFIX)) return [];
+	const raw = filter.slice(TAG_FILTER_PREFIX.length);
+	if (!raw) return [];
+	const ids: string[] = [];
+	const seen = new Set<string>();
+	for (const part of raw.split(',')) {
+		const id = part.trim();
+		if (!id || seen.has(id)) continue;
+		seen.add(id);
+		ids.push(id);
+	}
+	return ids;
 }
 
 export function parseTagFilterId(filter: LibraryAlbumFilter): string | null {
-	if (filter == null) return null;
-	if (!filter.startsWith(TAG_FILTER_PREFIX)) return null;
-	const id = filter.slice(TAG_FILTER_PREFIX.length);
-	return id.length ? id : null;
+	return parseTagFilterIds(filter)[0] ?? null;
+}
+
+export function hasTagFilter(filter: LibraryAlbumFilter, tagId: string): boolean {
+	return parseTagFilterIds(filter).includes(tagId);
+}
+
+/** Add tag id, or drop it if already selected. Last one off → `all`. */
+export function toggleTagFilter(filter: LibraryAlbumFilter, tagId: string): LibraryAlbumFilter {
+	const ids = parseTagFilterIds(filter);
+	if (ids.includes(tagId)) return tagFilterIds(ids.filter((id) => id !== tagId));
+	return tagFilterIds([...ids, tagId]);
+}
+
+/** Sidebar tag/person click toggles. Other rows replace the filter. */
+export function nextLibraryFilterFromSidebar(
+	current: LibraryAlbumFilter,
+	clicked: LibraryAlbumFilter
+): LibraryAlbumFilter {
+	const clickedTag = parseTagFilterId(clicked);
+	if (clickedTag && clicked === tagFilterId(clickedTag)) {
+		return toggleTagFilter(current, clickedTag);
+	}
+	return clicked;
 }
 
 export function isDuplicateFilter(value: string | null): boolean {
@@ -62,7 +113,7 @@ export function isDuplicateFilter(value: string | null): boolean {
 /** Built-in view or tag filter — not a user album UUID. */
 export function isSpecialLibraryFilter(filter: LibraryAlbumFilter): boolean {
 	if (isLibraryViewFilter(filter)) return true;
-	if (parseTagFilterId(filter)) return true;
+	if (parseTagFilterIds(filter).length) return true;
 	return false;
 }
 

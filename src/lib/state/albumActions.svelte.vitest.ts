@@ -18,8 +18,9 @@ describe('AlbumActions', () => {
 			albums: [testAlbum, created]
 		});
 		const app = createAppState(testLoad());
-		await app.albums.createAlbum('New');
-		expect(app.library.albums.some((album) => album.id === 'a2')).toBe(true);
+		const album = await app.albums.createAlbum('New');
+		expect(album?.id).toBe('a2');
+		expect(app.library.albums.some((entry) => entry.id === 'a2')).toBe(true);
 	});
 
 	test('createAlbum sets error and throws on failure', async () => {

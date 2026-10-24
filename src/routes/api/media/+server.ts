@@ -12,7 +12,7 @@ import {
 	countUnassignedMedia,
 	deleteMedia,
 	duplicateMedia,
-	ensureImageThumbnail,
+	ensurePreviewThumbnail,
 	insertMediaFromStream,
 	getMediaMeta,
 	listMedia,
@@ -88,6 +88,22 @@ function parseDuration(raw: string | number | null | undefined): number | null {
 	if (raw === null || raw === undefined || raw === '') return null;
 	const n = asFiniteNumber(raw);
 	return n != null && n > 0 ? n : null;
+}
+
+/** Client-probed pixel size; anything that is not a positive integer is left for the server probe. */
+function parseDimension(raw: string | null | File): number | null {
+	if (raw == null || raw instanceof File || raw === '') return null;
+	const n = Number(raw);
+	return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+function decodeFilename(raw: string): string {
+	try {
+		return decodeURIComponent(raw);
+	} catch {
+		// Malformed escapes used to surface as a 500.
+		return raw;
+	}
 }
 
 function parseContentLength(raw: string | null): number | null {
@@ -207,7 +223,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		contentType === 'application/octet-stream';
 
 	if (isStreamUpload && request.body) {
-		const originalName = filenameHeader ? decodeURIComponent(filenameHeader) : 'upload.bin';
+		const originalName = filenameHeader ? decodeFilename(filenameHeader) : 'upload.bin';
 		const mediaType = mediaTypeFrom(contentType, originalName);
 		if (!mediaType) {
 			throw error(400, 'Only image and video files are supported');
@@ -227,8 +243,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				mimeType,
 				mediaType,
 				albumId,
-				width: widthRaw ? Number(widthRaw) : null,
-				height: heightRaw ? Number(heightRaw) : null,
+				width: parseDimension(widthRaw),
+				height: parseDimension(heightRaw),
 				duration,
 				contentLength,
 				body: request.body
@@ -380,7 +396,7 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 		if (degrees == null) throw error(400, 'Degrees is required');
 		try {
 			await rotateMediaImage(profile.id, id, degrees);
-			await ensureImageThumbnail(profile.id, id);
+			await ensurePreviewThumbnail(profile.id, id);
 			return json(requireMedia(profile.id, id));
 		} catch (err) {
 			const message = err instanceof Error ? err.message : 'Rotate failed';
@@ -401,7 +417,7 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 		const normalized = own(body ?? {}, 'normalized') === true;
 		try {
 			await cropMediaImage(profile.id, id, { left, top, width, height, normalized });
-			await ensureImageThumbnail(profile.id, id);
+			await ensurePreviewThumbnail(profile.id, id);
 			return json(requireMedia(profile.id, id));
 		} catch (err) {
 			const message = err instanceof Error ? err.message : 'Crop failed';
@@ -448,10 +464,10 @@ export const PATCH: RequestHandler = async ({ request, cookies }) => {
 
 export const DELETE: RequestHandler = async ({ request, cookies }) => {
 	const profile = requireProfile(cookies);
-	const body = await request.json();
-	const ids = Array.isArray(body?.ids) ? body.ids.map(String).filter(Boolean) : [];
+	const body = await readJsonObject(request);
+	const ids = stringList(body ? own(body, 'ids') : undefined);
 	if (!ids.length) throw error(400, 'At least one media id is required');
-	const permanent = body?.permanent === true;
+	const permanent = body ? own(body, 'permanent') === true : false;
 	if (permanent) {
 		deleteMedia(profile.id, ids);
 		return json({ ok: true, ids, permanent: true });

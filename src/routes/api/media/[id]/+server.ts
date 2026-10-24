@@ -41,7 +41,9 @@ export const GET: RequestHandler = async ({ params, url, request, cookies }) => 
 	if (!row) throw error(404, 'Media not found');
 
 	const disposition = asDownload ? 'attachment' : 'inline';
-	const filename = encodeURIComponent(row.originalName);
+	// RFC 6266: ASCII fallback plus the UTF-8 name, so browsers do not save `%E2%80%A6`-style names.
+	const asciiName = row.originalName.replace(/[^\x20-\x7e]|["\\]/g, '_');
+	const contentDisposition = `${disposition}; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(row.originalName)}`;
 	const range = parseRange(request.headers.get('range'), row.size);
 
 	if (range && !asDownload) {
@@ -58,7 +60,7 @@ export const GET: RequestHandler = async ({ params, url, request, cookies }) => 
 				'Content-Range': `bytes ${start}-${end}/${row.size}`,
 				'Accept-Ranges': 'bytes',
 				'Cache-Control': mediaCacheControl(row.mimeType, false),
-				'Content-Disposition': `${disposition}; filename="${filename}"`
+				'Content-Disposition': contentDisposition
 			}
 		});
 	}
@@ -74,7 +76,7 @@ export const GET: RequestHandler = async ({ params, url, request, cookies }) => 
 			'Content-Length': String(row.size),
 			'Accept-Ranges': 'bytes',
 			'Cache-Control': mediaCacheControl(row.mimeType, asDownload),
-			'Content-Disposition': `${disposition}; filename="${filename}"`
+			'Content-Disposition': contentDisposition
 		}
 	});
 };

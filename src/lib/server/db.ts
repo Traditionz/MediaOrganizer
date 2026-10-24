@@ -15,6 +15,7 @@ import {
 } from './dbUtil';
 
 export {
+	chunked,
 	DATA_DIR,
 	PROFILES_DIR,
 	REGISTRY_DB_PATH,
@@ -44,6 +45,8 @@ createRegistrySchema(registrySqlite);
 const registryDb = drizzle(registrySqlite, { schema });
 
 const profileDbCache = new Map<string, { sqlite: Database.Database; db: ProfileDb }>();
+/** Deleted profile ids. Background jobs that outlive a delete must not recreate the folder. */
+const destroyedProfiles = new Set<string>();
 
 function sqliteNames(rows: JsonObject[]): string[] {
 	const names: string[] = [];
@@ -227,14 +230,16 @@ function migrateEncryptedNames(sqlite: Database.Database) {
 	// SAFETY: SELECT id, name, name_key FROM albums yields these columns.
 	const albumRows = sqlite.prepare('SELECT id, name, name_key FROM albums').all() as AlbumRow[];
 	const updateAlbum = sqlite.prepare('UPDATE albums SET name = ?, name_key = ? WHERE id = ?');
-	for (const row of albumRows) {
-		const plain = decryptName(row.name);
-		const cipher = ensureEncryptedName(row.name);
-		const key = nameLookupKey(plain);
-		if (cipher !== row.name || row.name_key !== key) {
-			updateAlbum.run(cipher, key, row.id);
+	sqlite.transaction(() => {
+		for (const row of albumRows) {
+			const plain = decryptName(row.name);
+			const cipher = ensureEncryptedName(row.name);
+			const key = nameLookupKey(plain);
+			if (cipher !== row.name || row.name_key !== key) {
+				updateAlbum.run(cipher, key, row.id);
+			}
 		}
-	}
+	})();
 
 	sqlite.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_albums_name_key ON albums (name_key)');
 
@@ -246,20 +251,24 @@ function migrateEncryptedNames(sqlite: Database.Database) {
 	const updateMedia = sqlite.prepare(
 		'UPDATE media SET original_name = ?, name_key = ? WHERE id = ?'
 	);
-	for (const row of mediaRows) {
-		const plain = decryptName(row.original_name);
-		const cipher = ensureEncryptedName(row.original_name);
-		const key = nameLookupKey(plain);
-		if (cipher !== row.original_name || row.name_key !== key) {
-			updateMedia.run(cipher, key, row.id);
+	// One transaction: a large library otherwise pays one fsync per renamed row.
+	sqlite.transaction(() => {
+		for (const row of mediaRows) {
+			const plain = decryptName(row.original_name);
+			const cipher = ensureEncryptedName(row.original_name);
+			const key = nameLookupKey(plain);
+			if (cipher !== row.original_name || row.name_key !== key) {
+				updateMedia.run(cipher, key, row.id);
+			}
 		}
-	}
+	})();
 }
 
 /** Ensure profile folders + media.db exist; return drizzle handle. */
 export function getProfileDb(profileId: string): ProfileDb {
 	const cached = profileDbCache.get(profileId);
 	if (cached) return cached.db;
+	if (destroyedProfiles.has(profileId)) throw new Error('Profile not found');
 
 	mkdirSync(profileFilesDir(profileId), { recursive: true });
 	mkdirSync(profileTmpDir(profileId), { recursive: true });
@@ -280,13 +289,26 @@ export function closeProfileDb(profileId: string): void {
 	profileDbCache.delete(profileId);
 }
 
-/** Wipe profile DB handle + on-disk folder. */
+/**
+ * rm -r that tolerates Windows file locks (EPERM/EBUSY from AV, indexers, lingering handles).
+ * Returns false when the folder could not be fully removed; orphan cleanup retries later.
+ */
+function tryRemoveDir(dir: string): boolean {
+	try {
+		rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+		return true;
+	} catch (err) {
+		console.warn(`Could not remove ${dir}; will retry on next cleanup.`, err);
+		return false;
+	}
+}
+
+/** Wipe profile DB handle + on-disk folder. Never throws: the profile row is already gone. */
 export function destroyProfileStorage(profileId: string): void {
+	destroyedProfiles.add(profileId);
 	closeProfileDb(profileId);
 	const dir = profileDir(profileId);
-	if (existsSync(dir)) {
-		rmSync(dir, { recursive: true, force: true });
-	}
+	if (existsSync(dir)) tryRemoveDir(dir);
 }
 
 const PROFILE_DIR_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -309,8 +331,7 @@ export function removeOrphanProfileDirs(): string[] {
 		const dir = profileDir(name);
 		if (!statSync(dir).isDirectory()) continue;
 		closeProfileDb(name);
-		rmSync(dir, { recursive: true, force: true });
-		removed.push(name);
+		if (tryRemoveDir(dir)) removed.push(name);
 	}
 	return removed;
 }

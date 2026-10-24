@@ -38,7 +38,7 @@
 	import Volume2 from '@lucide/svelte/icons/volume-2';
 	import VolumeX from '@lucide/svelte/icons/volume-x';
 	import { eventHtml, eventTargetHtml } from '$lib/parse';
-	import { releaseVideoElement } from '$lib/playback/releaseVideo';
+	import { PLAYER_RELEASE_EVENT, releaseVideoElement } from '$lib/playback/releaseVideo';
 	import { untrack } from 'svelte';
 
 	interface Props {
@@ -88,6 +88,8 @@
 	let abortPlayRetryScheduled = false;
 	let ignoreMediaEcho = false;
 	let lastSaveAt = 0;
+	/** Set once the lightbox released this video early; its clock is reset, so never persist it. */
+	let released = false;
 	let watchedSeconds = 0;
 	let lastMediaTime = NaN;
 
@@ -184,7 +186,7 @@
 	}
 
 	function savePosition(force = false, id = mediaId) {
-		if (!id || !videoEl) return;
+		if (!id || !videoEl || released) return;
 		const t = pendingSeek ?? videoEl.currentTime;
 		const d = duration || videoEl.duration || 0;
 		if (!Number.isFinite(t)) return;
@@ -270,6 +272,7 @@
 
 	function attachVideo(node: HTMLVideoElement) {
 		videoEl = node;
+		released = false;
 		resumeApplied = false;
 		wantPlay = true;
 		abortPlayRetryScheduled = false;
@@ -333,8 +336,18 @@
 			e.preventDefault();
 			applyPlayerAction(action);
 		};
+		const onRelease = () => {
+			if (!videoEl || released) return;
+			savePosition(true);
+			released = true;
+			wantPlay = false;
+			stopTick();
+			releaseVideoElement(videoEl);
+		};
+		node.addEventListener(PLAYER_RELEASE_EVENT, onRelease);
 		window.addEventListener('wheel', onVolumeWheel, { passive: false });
 		return () => {
+			node.removeEventListener(PLAYER_RELEASE_EVENT, onRelease);
 			window.removeEventListener('wheel', onVolumeWheel);
 			playerEl = undefined;
 		};
@@ -346,10 +359,11 @@
 		const id = untrack(() => mediaId);
 		if (!id) return;
 		let alive = true;
+		const abort = new AbortController();
 		// Delay so flipping through many videos does not queue a sprite build for each.
 		const timer = setTimeout(async () => {
 			try {
-				const res = await fetch(storyboardUrl(id), { method: 'POST' });
+				const res = await fetch(storyboardUrl(id), { method: 'POST', signal: abort.signal });
 				if (!res.ok) return;
 				const meta = parseStoryboardMeta(await res.json());
 				if (alive && meta) storyboard = { id, meta };
@@ -360,6 +374,7 @@
 		return () => {
 			alive = false;
 			clearTimeout(timer);
+			abort.abort();
 		};
 	}
 

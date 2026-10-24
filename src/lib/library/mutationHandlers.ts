@@ -153,6 +153,38 @@ export function albumsWithoutId(albums: readonly Album[], id: string): Album[] {
 	return albums.filter((entry) => entry.id !== id);
 }
 
+/** Insert or replace tag by id. */
+export function tagsWithUpsert(tags: readonly Tag[], tag: Tag): Tag[] {
+	const index = tags.findIndex((entry) => entry.id === tag.id);
+	if (index < 0) return [...tags, tag];
+	const next = tags.slice();
+	next[index] = tag;
+	return next;
+}
+
+/** Update display name for a tag id on media rows. */
+export function mediaWithRenamedTag(
+	items: readonly MediaItem[],
+	tagId: string,
+	name: string
+): MediaItem[] {
+	let changed = false;
+	const next: MediaItem[] = [];
+	for (const item of items) {
+		const tags = item.tags;
+		if (!tags?.some((tag) => tag.id === tagId)) {
+			next.push(item);
+			continue;
+		}
+		changed = true;
+		next.push({
+			...item,
+			tags: tags.map((tag) => (tag.id === tagId ? { ...tag, name } : tag))
+		});
+	}
+	return changed ? next : [...items];
+}
+
 /** First matching media id per lowercase file name from lookup-names map. */
 export function existingIdsFromNameLookup(
 	found: Readonly<Record<string, MediaItem[]>>,

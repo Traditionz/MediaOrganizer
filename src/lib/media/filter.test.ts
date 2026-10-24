@@ -108,6 +108,14 @@ describe('media filter', () => {
 				id: 'dupe',
 				created_at: '2020-01-01T00:00:00Z',
 				content_hash: 'aaa'
+			}),
+			makeMediaItem({
+				id: 'both',
+				created_at: '2020-01-01T00:00:00Z',
+				tags: [
+					{ id: 't1', name: 'beach', kind: 'tag' },
+					{ id: 't2', name: 'Ada', kind: 'person' }
+				]
 			})
 		];
 		const prefs = {
@@ -123,7 +131,9 @@ describe('media filter', () => {
 			'plain',
 			'dupe'
 		]);
-		expect(filterMediaItems(items, 'tag:t1', prefs, now).map((i) => i.id)).toEqual(['fav']);
+		expect(filterMediaItems(items, 'tag:t1', prefs, now).map((i) => i.id)).toEqual(['fav', 'both']);
+		expect(filterMediaItems(items, 'tag:t1,t2', prefs, now).map((i) => i.id)).toEqual(['both']);
+		expect(filterMediaItems(items, 'tag:t1,missing', prefs, now).map((i) => i.id)).toEqual([]);
 		expect(
 			filterMediaItems(items, 'duplicates', prefs, now)
 				.map((i) => i.id)

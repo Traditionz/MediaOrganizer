@@ -42,7 +42,7 @@ export function extractJpegFrame(
 				);
 				let stderr = '';
 				child.stderr.on('data', (chunk) => {
-					stderr += String(chunk);
+					stderr = (stderr + String(chunk)).slice(-8000);
 				});
 				child.on('error', reject);
 				child.on('close', (code) => {

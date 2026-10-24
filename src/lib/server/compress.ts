@@ -40,7 +40,8 @@ function runFfmpeg(args: string[]): Promise<void> {
 		activeFfmpeg = child;
 		let stderr = '';
 		child.stderr.on('data', (chunk) => {
-			stderr += String(chunk);
+			// Long encodes print progress for hours; only the tail is used for errors.
+			stderr = (stderr + String(chunk)).slice(-8000);
 		});
 		child.on('error', (err) => {
 			if (activeFfmpeg === child) activeFfmpeg = null;
@@ -195,7 +196,7 @@ export async function compressVideoToAv1(
 			};
 		}
 
-		unlinkSync(inputPath);
+		// rename replaces the target in one step; unlinking first could lose the original.
 		renameSync(outPath, inputPath);
 
 		const dims = await probeVideo(inputPath);
@@ -223,7 +224,8 @@ export async function compressImageToAvif(inputPath: string): Promise<CompressRe
 	const originalSize = statSync(inputPath).size;
 	const meta = await sharp(inputPath, { failOn: 'none' }).metadata();
 
-	if (meta.format === 'heif') {
+	// HEIC is also `heif`; only an AV1-coded HEIF is really AVIF.
+	if (meta.format === 'heif' && meta.compression === 'av1') {
 		return {
 			ok: true,
 			skipped: true,
@@ -240,7 +242,7 @@ export async function compressImageToAvif(inputPath: string): Promise<CompressRe
 	const outPath = compressTempPath(inputPath, '.avif.tmp');
 
 	try {
-		await sharp(inputPath, { failOn: 'none' })
+		const info = await sharp(inputPath, { failOn: 'none' })
 			.rotate()
 			.avif({ quality: 48, effort: 4 })
 			.toFile(outPath);
@@ -261,7 +263,7 @@ export async function compressImageToAvif(inputPath: string): Promise<CompressRe
 			};
 		}
 
-		unlinkSync(inputPath);
+		// rename replaces the target in one step; unlinking first could lose the original.
 		renameSync(outPath, inputPath);
 
 		return {
@@ -270,8 +272,9 @@ export async function compressImageToAvif(inputPath: string): Promise<CompressRe
 			newSize,
 			mimeType: 'image/avif',
 			ext: '.avif',
-			width: meta.width ?? null,
-			height: meta.height ?? null
+			// .rotate() applies EXIF orientation, so a portrait photo's axes may have swapped.
+			width: info.width ?? meta.width ?? null,
+			height: info.height ?? meta.height ?? null
 		};
 	} catch (err) {
 		try {

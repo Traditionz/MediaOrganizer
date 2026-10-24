@@ -80,6 +80,32 @@ describe('MediaLightbox', () => {
 		expect(closed).toBe(true);
 	});
 
+	test('organize menu opens tag people and album pickers', async () => {
+		const opened: string[] = [];
+		const item = testMedia();
+		await render(MediaLightbox, {
+			item,
+			items: [item],
+			onclose: () => undefined,
+			onaddTag: (id) => {
+				opened.push(`tag:${id}`);
+			},
+			onaddPeople: (id) => {
+				opened.push(`people:${id}`);
+			},
+			onaddAlbum: (id) => {
+				opened.push(`album:${id}`);
+			}
+		});
+		await page.getByRole('button', { name: 'Organize' }).click();
+		await page.getByRole('menuitem', { name: 'Tags…' }).click();
+		await page.getByRole('button', { name: 'Organize' }).click();
+		await page.getByRole('menuitem', { name: 'People…' }).click();
+		await page.getByRole('button', { name: 'Organize' }).click();
+		await page.getByRole('menuitem', { name: 'Albums…' }).click();
+		expect(opened).toEqual(['tag:m1', 'people:m1', 'album:m1']);
+	});
+
 	test('gallery keys and buttons navigate; Escape closes', async () => {
 		const nav: string[] = [];
 		let closed = false;
@@ -126,6 +152,27 @@ describe('MediaLightbox', () => {
 			new PointerEvent('pointerup', { bubbles: true, clientX: 80, clientY: 80, pointerId: 1 })
 		);
 		expect(document.querySelector('[data-lightbox-frame]')).toBeTruthy();
+	});
+
+	test('skipping to another video releases the outgoing video before its slide finishes leaving', async () => {
+		const a = testVideo({ id: 'va', original_name: 'a.mp4' });
+		const b = testVideo({ id: 'vb', original_name: 'b.mp4' });
+		const items = [a, b];
+		const screen = await render(MediaLightbox, {
+			item: a,
+			items,
+			onclose: () => undefined,
+			onnavigate: (next) => {
+				void screen.rerender({ item: next, items });
+			}
+		});
+		await expect.poll(() => document.querySelector('video[src$="/api/media/va"]')).toBeTruthy();
+		const outgoing = document.querySelector('video');
+		document.querySelector<HTMLButtonElement>('[aria-label="Next media"]')?.click();
+		await expect.poll(() => document.querySelectorAll('.slide-stage').length).toBe(2);
+		await expect.poll(() => outgoing?.hasAttribute('src')).toBe(false);
+		expect(document.querySelector('video[src$="/api/media/vb"]')).toBeTruthy();
+		await expect.poll(() => document.querySelectorAll('.slide-stage').length).toBe(1);
 	});
 
 	test('image dwell records a view', async () => {

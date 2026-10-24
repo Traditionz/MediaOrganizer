@@ -1,13 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import {
-	albumListQueryNorm,
 	albumNameMatchesQuery,
 	albumNameStem,
+	canCreateNamedItem,
 	exactAlbumNameMatch,
 	namedItemsForAddQuery,
 	nextDuplicateAlbumName,
-	normalizeAlbumQuery,
-	visibleNamedItems
+	normalizeAlbumQuery
 } from '$lib/albumNaming';
 
 describe('albumNaming', () => {
@@ -39,10 +38,10 @@ describe('albumNaming', () => {
 		expect(exactAlbumNameMatch(['Vacation'], '  ')).toBeNull();
 	});
 
-	test('albumListQueryNorm uses the active field', () => {
-		expect(albumListQueryNorm('  Trip  ', 'zzz', 'add')).toBe('trip');
-		expect(albumListQueryNorm('Trip', '  Vac  ', 'search')).toBe('vac');
-		expect(albumListQueryNorm('', '', 'search')).toBe('');
+	test('canCreateNamedItem when name is free', () => {
+		expect(canCreateNamedItem(['Trip'], 'Beach')).toBe(true);
+		expect(canCreateNamedItem(['Trip'], 'trip')).toBe(false);
+		expect(canCreateNamedItem(['Trip'], '  ')).toBe(false);
 	});
 
 	test('namedItemsForAddQuery keeps full list when unique', () => {
@@ -52,13 +51,5 @@ describe('albumNaming', () => {
 		expect(namedItemsForAddQuery(items, 'bea')).toEqual([{ name: 'Beach' }]);
 		expect(namedItemsForAddQuery(items, 'zzz')).toEqual(items);
 		expect(namedItemsForAddQuery([], 'zzz')).toEqual([]);
-	});
-
-	test('visibleNamedItems prefers dedicated search', () => {
-		const items = [{ name: 'Trip' }, { name: 'Beach' }];
-		expect(visibleNamedItems(items, 'Beach', 'tri')).toEqual([{ name: 'Trip' }]);
-		expect(visibleNamedItems(items, 'Beach', '')).toEqual([{ name: 'Beach' }]);
-		expect(visibleNamedItems(items, 'zzz', '')).toEqual(items);
-		expect(visibleNamedItems(items, 'Beach', 'zzz')).toEqual([]);
 	});
 });

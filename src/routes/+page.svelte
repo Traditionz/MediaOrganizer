@@ -9,6 +9,8 @@
 	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
 	import PromptModal from '$lib/components/PromptModal.svelte';
 	import AlbumPickerModal from '$lib/components/AlbumPickerModal.svelte';
+	import PeoplePickerModal from '$lib/components/PeoplePickerModal.svelte';
+	import TagPickerModal from '$lib/components/TagPickerModal.svelte';
 	import Toolbar from '$lib/components/Toolbar.svelte';
 	import MediaGrid from '$lib/components/MediaGrid.svelte';
 	import MediaCollage from '$lib/components/MediaCollage.svelte';
@@ -28,11 +30,18 @@
 		parseMediaItem,
 		parseMediaItems,
 		parseOkMediaItems,
-		parseTag
+		parseTag,
+		tagsWithUpsert
 	} from '$lib/library/mutationHandlers';
 	import { invertUndo, type UndoAction } from '$lib/media/undo';
 	import { resolveLibraryHotkey, nextGridSelectionId } from '$lib/media/libraryHotkeys';
-	import { isSpecialLibraryFilter, parseTagFilterId, tagFilterId } from '$lib/media/libraryNav';
+	import {
+		hasTagFilter,
+		isSpecialLibraryFilter,
+		nextLibraryFilterFromSidebar,
+		parseTagFilterIds,
+		toggleTagFilter
+	} from '$lib/media/libraryNav';
 	import {
 		WATCH_POLL_MS,
 		emptyLibraryDetail,
@@ -42,10 +51,7 @@
 	} from '$lib/media/libraryUi';
 	import { parseIdsFromOk } from '$lib/state/library.svelte';
 	import { passcodePatchBody } from '$lib/profile/passcodeEdit';
-	import {
-		profileDeleteMediaCount,
-		profileDeleteNeedsConfirm
-	} from '$lib/profile/deleteConfirm';
+	import { profileDeleteMediaCount, profileDeleteNeedsConfirm } from '$lib/profile/deleteConfirm';
 	import {
 		MEDIA_LAYOUT_GAP,
 		idsIntersectingBox,
@@ -53,6 +59,7 @@
 	} from '$lib/media/virtualLayout';
 	import { MarqueeController, shouldStartMarquee } from '$lib/selection/marqueeController';
 	import { albumMembershipDiff } from '$lib/media/albumMembership';
+	import { sharedTagIds } from '$lib/media/tagSuggestions';
 	import { buildContextMenuItems } from '$lib/media/contextMenuItems';
 	import { playbackJobErrors } from '$lib/media/playbackEncode';
 	import { runPlaybackOptimize } from '$lib/media/playbackJobsClient';
@@ -93,9 +100,7 @@
 		);
 		return idsIntersectingBox(layouts, box, host.offsetLeft, host.offsetTop);
 	});
-	let promptKind: 'rename' | 'import-folder' | 'watch-folder' | 'assign-tag' | 'assign-person' =
-		'rename';
-	let assignTargetIds: string[] = [];
+	let promptKind: 'rename' | 'import-folder' | 'watch-folder' = 'rename';
 	let queryReloadTimer: ReturnType<typeof setTimeout> | null = null;
 	let folderInput = $state<HTMLInputElement | null>(null);
 
@@ -110,8 +115,12 @@
 		if (queryReloadTimer) clearTimeout(queryReloadTimer);
 		queryReloadTimer = setTimeout(() => {
 			queryReloadTimer = null;
-			void library.reloadQuery();
+			library.reloadQuery().catch(reportLoadError);
 		}, 200);
+	}
+
+	function reportLoadError(err: Error) {
+		ui.errorMessage = err.message || 'Failed to load media';
 	}
 
 	$effect(() => {
@@ -127,12 +136,16 @@
 	async function selectAlbumFilter(id: LibraryAlbumFilter) {
 		selection.selectedIds.clear();
 		selection.selectionAnchor = null;
-		if (id === 'trash') {
+		ui.closeTagPicker();
+		ui.closePeoplePicker();
+		ui.closeAlbumPicker();
+		const next = nextLibraryFilterFromSidebar(library.activeAlbum, id);
+		if (next === 'trash') {
 			await library.ensureTrashLoaded();
-			library.setActiveAlbum(id);
+			library.setActiveAlbum(next);
 			return;
 		}
-		library.setActiveAlbum(id);
+		library.setActiveAlbum(next);
 		await library.reloadQuery();
 	}
 
@@ -164,7 +177,7 @@
 		const onScroll = () => {
 			const remaining = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
 			if (remaining < 900 && library.hasMore) {
-				void library.loadMore();
+				library.loadMore().catch(reportLoadError);
 			}
 		};
 		viewport.addEventListener('scroll', onScroll, { passive: true });
@@ -396,7 +409,10 @@
 					const errBody = await res.json().catch(() => ({}));
 					throw new Error(errBody.message || 'Failed to delete profile');
 				}
+				const deletedName = ui.profileModal.profileName;
 				ui.closeProfileModal();
+				ui.errorMessage = '';
+				ui.convertResultMessage = `Profile “${deletedName}” deleted.`;
 				await invalidateAll();
 			}
 		} catch (err) {
@@ -445,6 +461,11 @@
 				}
 				throw new Error(message);
 			}
+			const deletedName = library.profiles.find((p) => p.id === id)?.name;
+			ui.errorMessage = '';
+			ui.convertResultMessage = deletedName
+				? `Profile “${deletedName}” deleted.`
+				: 'Profile deleted.';
 			await invalidateAll();
 		} catch (err) {
 			ui.errorMessage = err instanceof Error ? err.message : 'Failed to delete profile';
@@ -452,7 +473,7 @@
 	}
 
 	async function createAlbum(name: string) {
-		await albums.createAlbum(name);
+		return albums.createAlbum(name);
 	}
 
 	async function deleteAlbum(id: string) {
@@ -720,8 +741,31 @@
 			return;
 		}
 		await library.refreshTags();
-		if (library.activeAlbum === tagFilterId(id)) {
-			await selectAlbumFilter('all');
+		if (hasTagFilter(library.activeAlbum, id)) {
+			library.setActiveAlbum(toggleTagFilter(library.activeAlbum, id));
+			await library.reloadQuery();
+		}
+	}
+
+	async function renameTag(id: string, name: string) {
+		const res = await fetch('/api/tags', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ id, name })
+		});
+		if (!res.ok) {
+			const body = await res.json().catch(() => ({}));
+			ui.errorMessage = body.message || 'Failed to rename tag';
+			throw new Error(ui.errorMessage);
+		}
+		const tag = parseTag(await res.json());
+		if (tag) library.replaceTags(tagsWithUpsert(library.tags, tag));
+		else await library.refreshTags();
+		library.renameTagOnMedia(id, name);
+		const previewId = ui.preview?.id;
+		if (previewId) {
+			const known = library.findKnown(previewId);
+			if (known) ui.syncPreview([known]);
 		}
 	}
 
@@ -733,10 +777,15 @@
 		);
 		const tag = existing ?? (await createTag(trimmed, kind));
 		if (!tag) return;
+		await assignExistingTag(ids, tag.id);
+	}
+
+	async function assignExistingTag(ids: string[], tagId: string) {
+		if (!ids.length) return;
 		const res = await fetch('/api/tags', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ action: 'assign', tagId: tag.id, ids })
+			body: JSON.stringify({ action: 'assign', tagId, ids })
 		});
 		if (!res.ok) {
 			const body = await res.json().catch(() => ({}));
@@ -747,9 +796,8 @@
 		await library.refreshTags();
 	}
 
-	async function unassignCurrentTag(ids: string[]) {
-		const tagId = parseTagFilterId(library.activeAlbum);
-		if (!tagId || !ids.length) return;
+	async function unassignTag(ids: string[], tagId: string) {
+		if (!ids.length || !tagId) return;
 		const res = await fetch('/api/tags', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -757,25 +805,30 @@
 		});
 		if (!res.ok) return;
 		library.upsertMedia(parseOkMediaItems(await res.json()));
-		if (library.activeAlbum === tagFilterId(tagId)) {
+		if (hasTagFilter(library.activeAlbum, tagId)) {
 			library.removeMediaIds(ids);
 		}
 		await library.refreshTags();
 	}
 
-	function openAssignPrompt(ids: string[], kind: 'tag' | 'person') {
-		assignTargetIds = ids;
-		promptKind = kind === 'person' ? 'assign-person' : 'assign-tag';
-		ui.promptModalBusy = false;
-		ui.promptModalError = '';
-		ui.promptModal = {
-			open: true,
-			title: kind === 'person' ? 'Add person' : 'Add tag',
-			label: kind === 'person' ? 'Person name' : 'Tag name',
-			initialValue: '',
-			mediaId: null
-		};
+	async function unassignCurrentTag(ids: string[]) {
+		for (const tagId of parseTagFilterIds(library.activeAlbum)) {
+			await unassignTag(ids, tagId);
+		}
 	}
+
+	async function handleTagPick(tag: { id: string }) {
+		const ids = ui.tagPicker.mediaIds;
+		await assignExistingTag(ids, tag.id);
+	}
+
+	async function handleTagCreate(name: string) {
+		const ids = ui.tagPicker.mediaIds;
+		await assignTagByName(ids, name, 'tag');
+	}
+
+	/** Tags every picked item already has. */
+	const tagPickerAssignedIds = $derived(sharedTagIds(loadedMedia(ui.tagPicker.mediaIds)));
 
 	async function toggleFavoriteSelected() {
 		const ids = [...selection.selectedIds];
@@ -1048,11 +1101,11 @@
 			return;
 		}
 		if (id === 'assign-tag') {
-			openAssignPrompt(ids, 'tag');
+			ui.openTagPicker(ids);
 			return;
 		}
 		if (id === 'assign-person') {
-			openAssignPrompt(ids, 'person');
+			if (ids.length) ui.openPeoplePicker(ids);
 			return;
 		}
 		if (id === 'remove-tag') {
@@ -1081,6 +1134,8 @@
 				),
 				blocked: Boolean(
 					ui.albumPicker.open ||
+					ui.peoplePicker.open ||
+					ui.tagPicker.open ||
 					ui.confirmModal.open ||
 					ui.promptModal.open ||
 					ui.profileModal.open ||
@@ -1157,10 +1212,29 @@
 		}
 	}
 
+	async function handlePeoplePickerConfirm(personIds: string[]) {
+		const ids = ui.peoplePicker.mediaIds;
+		const previous = [...peoplePickerMemberIds];
+		ui.closePeoplePicker();
+		const { add, remove } = albumMembershipDiff(previous, personIds);
+		for (const tagId of remove) {
+			await unassignTag(ids, tagId);
+		}
+		for (const tagId of add) {
+			await assignExistingTag(ids, tagId);
+		}
+	}
+
 	function openAlbumPickerForSelection() {
 		const ids = [...selection.selectedIds];
 		if (!ids.length) return;
 		ui.openAlbumPicker(ids);
+	}
+
+	function openPeoplePickerForSelection() {
+		const ids = [...selection.selectedIds];
+		if (!ids.length) return;
+		ui.openPeoplePicker(ids);
 	}
 
 	/** Albums that every selected picker item already belongs to. */
@@ -1176,6 +1250,11 @@
 		}
 		return shared;
 	});
+
+	/** People every selected picker item already has. */
+	const peoplePickerMemberIds = $derived(
+		sharedTagIds(loadedMedia(ui.peoplePicker.mediaIds), 'person')
+	);
 
 	async function deleteSelected() {
 		if (!selection.selectedIds.size) return;
@@ -1307,16 +1386,6 @@
 		}
 		if (promptKind === 'watch-folder') {
 			await runWatchFolder(value);
-			return;
-		}
-		if (promptKind === 'assign-tag') {
-			await assignTagByName(assignTargetIds, value, 'tag');
-			ui.closePromptModal();
-			return;
-		}
-		if (promptKind === 'assign-person') {
-			await assignTagByName(assignTargetIds, value, 'person');
-			ui.closePromptModal();
 			return;
 		}
 		if (!ui.promptModal.mediaId) return;
@@ -1466,6 +1535,8 @@
 				await createTag(name, kind);
 			}}
 			ondeleteTag={deleteTag}
+			onrenameTag={renameTag}
+			onassignTag={assignExistingTag}
 			onswitchProfile={switchProfileWithPrompt}
 			oncreateProfile={createProfileWithPrompt}
 			ondeleteProfile={deleteProfile}
@@ -1527,6 +1598,7 @@
 				ontoggleSelect={() => selection.toggleSelectMode()}
 				onclearSelection={() => selection.clear()}
 				onopenAlbumPicker={openAlbumPickerForSelection}
+				onopenPeoplePicker={openPeoplePickerForSelection}
 				ondelete={deleteSelected}
 				onrestore={() => restoreSelected()}
 				onemptyTrash={emptyTrash}
@@ -1682,6 +1754,9 @@
 			onrotate={rotatePreview}
 			onfavorite={(id, favorite) => setFavorite([id], favorite)}
 			oncrop={cropPreview}
+			onaddTag={(id) => ui.openTagPicker([id])}
+			onaddPeople={(id) => ui.openPeoplePicker([id])}
+			onaddAlbum={(id) => ui.openAlbumPicker([id])}
 		/>
 	{/if}
 
@@ -1725,6 +1800,25 @@
 		memberAlbumIds={albumPickerMemberIds}
 		oncancel={() => ui.closeAlbumPicker()}
 		onconfirm={handleAlbumPickerConfirm}
+		oncreate={async (name) => createAlbum(name)}
+	/>
+
+	<PeoplePickerModal
+		open={ui.peoplePicker.open}
+		people={library.tags}
+		memberPersonIds={peoplePickerMemberIds}
+		oncancel={() => ui.closePeoplePicker()}
+		onconfirm={handlePeoplePickerConfirm}
+		oncreate={async (name) => createTag(name, 'person')}
+	/>
+
+	<TagPickerModal
+		open={ui.tagPicker.open}
+		tags={library.tags}
+		assignedIds={tagPickerAssignedIds}
+		oncancel={() => ui.closeTagPicker()}
+		onpick={handleTagPick}
+		oncreate={handleTagCreate}
 	/>
 {/if}
 

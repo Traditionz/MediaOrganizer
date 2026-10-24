@@ -6,7 +6,7 @@ import {
 	isLibraryRuleViewId,
 	isSpecialLibraryFilter,
 	mediaMatchesLibraryView,
-	parseTagFilterId
+	parseTagFilterIds
 } from './libraryNav';
 import { mediaMatchesSearch } from './searchMatch';
 
@@ -39,9 +39,9 @@ export function filterMediaItems(
 			const hash = item.content_hash;
 			if (!hash || !dupes?.has(hash)) return false;
 		} else {
-			const tagId = parseTagFilterId(activeAlbum);
-			if (tagId) {
-				if (!item.tags?.some((tag) => tag.id === tagId)) return false;
+			const tagIds = parseTagFilterIds(activeAlbum);
+			if (tagIds.length) {
+				if (!tagIds.every((id) => item.tags?.some((tag) => tag.id === id))) return false;
 			} else if (!item.album_ids.includes(activeAlbum)) {
 				return false;
 			}

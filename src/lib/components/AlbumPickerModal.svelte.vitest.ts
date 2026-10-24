@@ -83,6 +83,31 @@ describe('AlbumPickerModal', () => {
 		await expect.element(page.getByText('No albums yet.')).toBeVisible();
 	});
 
+	test('create when search has no match selects new album', async () => {
+		const created: string[] = [];
+		const picked: string[][] = [];
+		await render(AlbumPickerModal, {
+			open: true,
+			albums: [testAlbum],
+			oncancel: () => undefined,
+			onconfirm: (ids) => {
+				picked.push(ids);
+			},
+			oncreate: async (name) => {
+				created.push(name);
+				return { id: 'a-new' };
+			}
+		});
+		const search = page.getByRole('searchbox', { name: 'Search albums' });
+		await search.fill('Coast');
+		await expect.element(page.getByRole('button', { name: /Create “Coast”/ })).toBeVisible();
+		await page.getByRole('button', { name: /Create “Coast”/ }).click();
+		await expect.poll(() => created).toEqual(['Coast']);
+		await expect.element(page.getByText('1 selected')).toBeVisible();
+		await page.getByRole('button', { name: 'Save', exact: true }).click();
+		await expect.poll(() => picked).toEqual([['a-new']]);
+	});
+
 	test('groups by letter, jumps via index, preselects members and toggles off', async () => {
 		const scroll = vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(() => {});
 		const picked: string[][] = [];

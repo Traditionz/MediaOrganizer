@@ -35,6 +35,7 @@ function toolbarProps(overrides: Partial<ToolbarProps> = {}): ToolbarProps {
 		ontoggleSelect: () => undefined,
 		onclearSelection: () => undefined,
 		onopenAlbumPicker: () => undefined,
+		onopenPeoplePicker: () => undefined,
 		ondelete: () => undefined,
 		onuploadClick: () => undefined,
 		ontheme: () => undefined,
@@ -104,6 +105,7 @@ describe('Toolbar', () => {
 				selectMode: true,
 				selectedCount: 2,
 				onopenAlbumPicker: () => calls.push('album'),
+				onopenPeoplePicker: () => calls.push('people'),
 				ondelete: () => calls.push('delete'),
 				onfavorite: () => calls.push('favorite'),
 				onexport: () => calls.push('export'),
@@ -115,12 +117,13 @@ describe('Toolbar', () => {
 		await expect.element(button('Clear')).toBeVisible();
 		await expect.element(button('Done')).toBeVisible();
 		await button('Albums…').click();
+		await button('People…').click();
 		await button('Move to trash').click();
 		await button('Favorite').click();
 		await button('Export zip').click();
 		await button('Clear').click();
 		await button('Done').click();
-		expect(calls).toEqual(['album', 'delete', 'favorite', 'export', 'clear', 'done']);
+		expect(calls).toEqual(['album', 'people', 'delete', 'favorite', 'export', 'clear', 'done']);
 	});
 
 	test('selection actions disabled with nothing selected', async () => {
@@ -129,6 +132,7 @@ describe('Toolbar', () => {
 		});
 		await expect.element(page.getByText('0 selected')).toBeVisible();
 		await expect.element(button('Albums…')).toBeDisabled();
+		await expect.element(button('People…')).toBeDisabled();
 		await expect.element(button('Move to trash')).toBeDisabled();
 		await expect.element(button('Favorite')).not.toBeInTheDocument();
 		await expect.element(button('Export zip')).not.toBeInTheDocument();

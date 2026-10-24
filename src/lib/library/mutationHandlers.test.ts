@@ -3,12 +3,14 @@ import {
 	albumsWithoutId,
 	albumsWithUpsert,
 	existingIdsFromNameLookup,
+	mediaWithRenamedTag,
 	parseAlbum,
 	parseImportedMedia,
 	parseMediaItem,
 	parseMediaItems,
 	parseOkMediaItems,
-	parseTag
+	parseTag,
+	tagsWithUpsert
 } from './mutationHandlers';
 import { parseJsonText } from '$lib/parse';
 
@@ -173,5 +175,33 @@ describe('parseTag', () => {
 		).toBe('person');
 		expect(parseTag(parseJsonText('{"id":"t"}'))).toBeNull();
 		expect(parseTag(parseJsonText('{"id":"t","name":"N","kind":"x","created_at":"t"}'))).toBeNull();
+	});
+});
+
+describe('tagsWithUpsert', () => {
+	test('inserts and replaces by id', () => {
+		const base = [{ id: 't', name: 'A', kind: 'tag' as const, created_at: 't' }];
+		expect(tagsWithUpsert(base, { ...base[0]!, name: 'B' })[0]?.name).toBe('B');
+		expect(
+			tagsWithUpsert(base, { id: 't2', name: 'C', kind: 'person', created_at: 't' })
+		).toHaveLength(2);
+	});
+});
+
+describe('mediaWithRenamedTag', () => {
+	test('renames matching tag and leaves others', () => {
+		const item = parseMediaItem(
+			parseJsonText(
+				`{"id":"m1","original_name":"a.jpg","mime_type":"image/jpeg","media_type":"image","album_ids":[],"album_names":[],"size":1,"width":1,"height":1,"duration":null,"view_count":0,"created_at":"t","tags":[{"id":"t1","name":"Old","kind":"tag"},{"id":"t2","name":"Keep","kind":"person"}]}`
+			)
+		);
+		expect(item).not.toBeNull();
+		const renamed = mediaWithRenamedTag([item!], 't1', 'New');
+		expect(renamed[0]?.tags).toEqual([
+			{ id: 't1', name: 'New', kind: 'tag' },
+			{ id: 't2', name: 'Keep', kind: 'person' }
+		]);
+		const untouched = mediaWithRenamedTag([item!], 'missing', 'X');
+		expect(untouched[0]).toBe(item);
 	});
 });

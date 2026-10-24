@@ -229,9 +229,7 @@
 								/>
 							</div>
 							<div class="mt-3 grid gap-2">
-								<Label class="text-muted-foreground text-xs"
-									>Type media count ({mediaCount})</Label
-								>
+								<Label class="text-muted-foreground text-xs">Type media count ({mediaCount})</Label>
 								<Input
 									type="text"
 									inputmode="numeric"

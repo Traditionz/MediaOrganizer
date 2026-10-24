@@ -1,7 +1,8 @@
 import { page } from 'vitest/browser';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import { setPlaybackPosition } from '$lib/playbackPosition';
+import { getPlaybackPosition, setPlaybackPosition } from '$lib/playbackPosition';
+import { PLAYER_RELEASE_EVENT } from '$lib/playback/releaseVideo';
 import CustomPlayer from './CustomPlayer.svelte';
 import PlayerHost from '../../test-utils/PlayerHost.svelte';
 
@@ -186,18 +187,50 @@ describe('CustomPlayer', () => {
 		player.element().dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
 	});
 
+	test('release event stops loading at once and keeps the saved position through teardown', async () => {
+		vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+		const screen = await render(CustomPlayer, {
+			src: 'data:video/mp4;base64,',
+			mediaId: 'rel1'
+		});
+		const video = screen.container.querySelector<HTMLVideoElement>('video.custom-video')!;
+		Object.defineProperty(video, 'duration', { configurable: true, get: () => 600 });
+		let time = 321;
+		Object.defineProperty(video, 'currentTime', {
+			configurable: true,
+			get: () => time,
+			set: (value: number) => {
+				time = value;
+			}
+		});
+		video.dispatchEvent(new Event('loadedmetadata'));
+		const pause = vi.spyOn(video, 'pause');
+		const player = screen.container.querySelector<HTMLElement>('.custom-player')!;
+
+		player.dispatchEvent(new Event(PLAYER_RELEASE_EVENT));
+		expect(pause).toHaveBeenCalled();
+		expect(video.hasAttribute('src')).toBe(false);
+		expect(getPlaybackPosition('rel1')).toBe(321);
+
+		// The released element reports 0 from here on; teardown must not persist that.
+		time = 0;
+		player.dispatchEvent(new Event(PLAYER_RELEASE_EVENT));
+		await screen.unmount();
+		expect(getPlaybackPosition('rel1')).toBe(321);
+	});
+
 	test('resumes saved time, retries muted play, and reports watch progress', async () => {
 		setPlaybackPosition('v1', 8, 20);
 		const watched: number[] = [];
 		let playCalls = 0;
-		vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(
-			function (this: HTMLMediaElement) {
-				playCalls += 1;
-				if (playCalls === 1) return Promise.reject(new DOMException('autoplay', 'NotAllowedError'));
-				Object.defineProperty(this, 'paused', { configurable: true, writable: true, value: false });
-				return Promise.resolve();
-			}
-		);
+		vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(function (
+			this: HTMLMediaElement
+		) {
+			playCalls += 1;
+			if (playCalls === 1) return Promise.reject(new DOMException('autoplay', 'NotAllowedError'));
+			Object.defineProperty(this, 'paused', { configurable: true, writable: true, value: false });
+			return Promise.resolve();
+		});
 		const screen = await render(CustomPlayer, {
 			src: 'data:video/mp4;base64,',
 			mediaId: 'v1',

@@ -7,6 +7,13 @@ import { testAlbum, testProfile, testTag } from '../../test-utils/fixtures';
 
 type SidebarProps = ComponentProps<typeof AlbumSidebar>;
 
+/** Album rows share album-drop-row with people/tags; prefer title attr on album hit. */
+function albumDropRow(name: string) {
+	return [...document.querySelectorAll('.album-drop-row.group')].find((el) =>
+		Boolean(el.querySelector(`[title="${name}"]`))
+	);
+}
+
 function sidebarProps(overrides: Partial<SidebarProps> = {}): SidebarProps {
 	return {
 		albums: [testAlbum],
@@ -114,17 +121,18 @@ describe('AlbumSidebar', () => {
 		await page.getByRole('button', { name: 'Delete person Ada' }).click();
 		expect(deletedTags).toEqual(['t1']);
 
-		await page.getByRole('textbox', { name: 'New album name' }).fill('Trip');
-		await expect.element(page.getByText(/already exists/)).toBeVisible();
-		await expect.element(page.getByRole('button', { name: 'Add album' })).toBeDisabled();
-		await page.getByRole('textbox', { name: 'New album name' }).fill('Beach');
-		await page.getByRole('button', { name: 'Add album' }).click();
+		const albumBox = page.getByRole('textbox', { name: 'New album' });
+		await albumBox.fill('Trip');
+		albumBox.element().closest('form')?.requestSubmit();
+		expect(created).toEqual([]);
+		await albumBox.fill('Beach');
+		albumBox.element().closest('form')?.requestSubmit();
 		await expect.poll(() => created).toEqual(['Beach']);
 		document.querySelector<HTMLButtonElement>('[aria-label="Delete album"]')?.click();
 		expect(deleted).toEqual(['a1']);
 	});
 
-	test('album search empty state, keyboard select, and context menu', async () => {
+	test('album filter via add field, keyboard select, and context menu', async () => {
 		const selected: Parameters<SidebarProps['onselect']>[0][] = [];
 		const renamed: Array<{ id: string; name: string }> = [];
 		const duplicated: string[] = [];
@@ -144,19 +152,15 @@ describe('AlbumSidebar', () => {
 				}
 			})
 		});
-		await page.getByRole('searchbox', { name: 'Search albums' }).fill('zzz');
-		await expect.element(page.getByText('No albums match your search.')).toBeVisible();
-		await page.getByRole('searchbox', { name: 'Search albums' }).fill('');
-		await page.getByRole('textbox', { name: 'New album name' }).fill('Beach');
+		const albumBox = page.getByRole('textbox', { name: 'New album' });
+		await albumBox.fill('Beach');
 		await expect.element(page.getByRole('button', { name: /Beach/ })).toBeVisible();
 		expect(document.body.textContent).not.toMatch(/\bTrip\b/);
-		await page.getByRole('textbox', { name: 'New album name' }).fill('zzz');
+		await albumBox.fill('zzz');
 		await expect.element(page.getByRole('button', { name: /Trip/ })).toBeVisible();
 		await expect.element(page.getByRole('button', { name: /Beach/ })).toBeVisible();
-		await page.getByRole('textbox', { name: 'New album name' }).fill('');
-		const trip = [...document.querySelectorAll('.album-drop-row.group')].find((el) =>
-			el.textContent?.includes('Trip')
-		);
+		await albumBox.fill('');
+		const trip = albumDropRow('Trip');
 		expect(trip).toBeTruthy();
 		trip?.querySelector<HTMLElement>('[role="button"]')?.click();
 		expect(selected.at(-1)).toBe('a1');
@@ -169,14 +173,12 @@ describe('AlbumSidebar', () => {
 		await page.getByRole('menuitem', { name: 'Copy name' }).click();
 		trip?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 40, clientY: 80 }));
 		await page.getByRole('menuitem', { name: 'Rename' }).click();
-		const rename = page.getByRole('textbox').last();
+		const rename = page.getByRole('textbox', { name: 'Rename' });
 		await rename.fill('Trip 2');
 		rename.element().closest('form')?.requestSubmit();
 		await expect.poll(() => renamed).toEqual([{ id: 'a1', name: 'Trip 2' }]);
 
-		const tripAfter = [...document.querySelectorAll('.album-drop-row.group')].find((el) =>
-			el.textContent?.includes('Trip')
-		);
+		const tripAfter = albumDropRow('Trip');
 		tripAfter?.dispatchEvent(
 			new MouseEvent('contextmenu', { bubbles: true, clientX: 40, clientY: 80 })
 		);
@@ -248,7 +250,7 @@ describe('AlbumSidebar', () => {
 			})
 		});
 		beginMediaDrag(['m1']);
-		const albumRow = document.querySelector('.album-drop-row.group');
+		const albumRow = albumDropRow('Trip');
 		const favRow = document.querySelectorAll('.album-drop-row')[0];
 		const trashRow = document.querySelectorAll('.album-drop-row')[1];
 		const dt = new DataTransfer();
@@ -273,12 +275,44 @@ describe('AlbumSidebar', () => {
 		expect(trashed).toEqual([['m1']]);
 	});
 
+	test('internal media drop onto person and tag rows', async () => {
+		const { beginMediaDrag, endInternalDrag } = await import('$lib/dragSession');
+		const assigned: Array<{ ids: string[]; tagId: string }> = [];
+		await render(AlbumSidebar, {
+			...sidebarProps({
+				tags: [testTag, { ...testTag, id: 't2', name: 'night', kind: 'tag' }],
+				onassignTag: async (ids, tagId) => {
+					assigned.push({ ids, tagId });
+				}
+			})
+		});
+		const dt = new DataTransfer();
+		dt.setData('application/x-media-ids', JSON.stringify(['m1']));
+		const personRow = page.getByRole('button', { name: 'Ada 0' }).element().closest('div.group');
+		beginMediaDrag(['m1']);
+		personRow?.dispatchEvent(
+			new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt })
+		);
+		const tagRow = page.getByRole('button', { name: 'night 0' }).element().closest('div.group');
+		beginMediaDrag(['m1']);
+		tagRow?.dispatchEvent(
+			new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt })
+		);
+		endInternalDrag();
+		await expect
+			.poll(() => assigned)
+			.toEqual([
+				{ ids: ['m1'], tagId: 't1' },
+				{ ids: ['m1'], tagId: 't2' }
+			]);
+	});
+
 	test('empty albums and no-match add filter', async () => {
 		await render(AlbumSidebar, sidebarProps({ albums: [] }));
 		await expect.element(page.getByText('No albums yet.')).toBeVisible();
 	});
 
-	test('create clears the name before the album lands so the dupe warning stays off', async () => {
+	test('create clears the name before the album lands', async () => {
 		const pending: { finish?: () => void } = {};
 		const created: string[] = [];
 		await render(AlbumSidebar, {
@@ -291,11 +325,10 @@ describe('AlbumSidebar', () => {
 				}
 			})
 		});
-		const input = page.getByRole('textbox', { name: 'New album name' });
+		const input = page.getByRole('textbox', { name: 'New album' });
 		await input.fill('Beach');
-		await page.getByRole('button', { name: 'Add album' }).click();
+		input.element().closest('form')?.requestSubmit();
 		await expect.element(input).toHaveValue('');
-		expect(document.body.textContent).not.toContain('already exists');
 		expect(pending.finish).toBeTruthy();
 		pending.finish?.();
 		await expect.poll(() => created).toEqual(['Beach']);
@@ -322,40 +355,40 @@ describe('AlbumSidebar', () => {
 				}
 			})
 		});
-		const row = document.querySelector('.album-drop-row.group');
+		const row = albumDropRow('Trip');
 		row?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 40, clientY: 80 }));
 		await page.getByRole('menuitem', { name: 'Rename' }).click();
-		const rename = page.getByRole('textbox').last();
+		const rename = page.getByRole('textbox', { name: 'Rename' });
 		await rename.fill('Trip');
 		rename.element().closest('form')?.requestSubmit();
 		expect(renamed).toEqual([]);
 		row?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 40, clientY: 80 }));
 		await page.getByRole('menuitem', { name: 'Rename' }).click();
-		const rename2 = page.getByRole('textbox').last();
+		const rename2 = page.getByRole('textbox', { name: 'Rename' });
 		await rename2.fill('boom');
 		rename2.element().closest('form')?.requestSubmit();
-		await expect.poll(() => document.querySelector('input')).toBeTruthy();
+		await expect.poll(() => renamed.length).toBe(0);
+		await expect.element(rename2).toBeVisible();
 		rename2.element().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 
 		row?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 40, clientY: 80 }));
 		await page.getByRole('menuitem', { name: 'Rename' }).click();
-		const rename3 = page.getByRole('textbox').last();
+		const rename3 = page.getByRole('textbox', { name: 'Rename' });
 		await rename3.fill('Trip 3');
 		rename3.element().dispatchEvent(new FocusEvent('blur', { bubbles: true }));
 		await expect.poll(() => renamed.at(-1)).toEqual({ id: 'a1', name: 'Trip 3' });
 
-		await page.getByRole('textbox', { name: 'New album name' }).fill('fail');
-		await page.getByRole('button', { name: 'Add album' }).click();
-		await expect.element(page.getByRole('textbox', { name: 'New album name' })).toHaveValue('fail');
+		const albumBox = page.getByRole('textbox', { name: 'New album' });
+		await albumBox.fill('fail');
+		albumBox.element().closest('form')?.requestSubmit();
+		await expect.element(albumBox).toHaveValue('fail');
 		expect(created).toEqual([]);
-		await page.getByRole('textbox', { name: 'New album name' }).fill('zzz');
+		await albumBox.fill('zzz');
 		await expect.element(page.getByRole('button', { name: /Trip/ })).toBeVisible();
-		expect(document.body.textContent).not.toContain('No albums match this name.');
-		page
-			.getByRole('textbox', { name: 'New album name' })
+		albumBox
 			.element()
 			.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-		await expect.element(page.getByRole('textbox', { name: 'New album name' })).toHaveValue('');
+		await expect.element(albumBox).toHaveValue('');
 
 		const person = page.getByRole('textbox', { name: 'New person' });
 		await person.fill('Ada');
@@ -408,7 +441,7 @@ describe('AlbumSidebar', () => {
 
 		const files = new DataTransfer();
 		files.items.add(new File(['x'], 'a.jpg', { type: 'image/jpeg' }));
-		const albumRow = document.querySelector('.album-drop-row.group');
+		const albumRow = albumDropRow('Trip');
 		const favRow = document.querySelectorAll('.album-drop-row')[0];
 		const trashRow = document.querySelectorAll('.album-drop-row')[1];
 		albumRow?.dispatchEvent(
@@ -516,6 +549,75 @@ describe('AlbumSidebar', () => {
 			.forEach((el) => el.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 		expect(switched).toEqual(['p2']);
 		release();
+	});
+
+	test('tag and person rename via context menu', async () => {
+		const renamed: Array<{ id: string; name: string }> = [];
+		const deleted: string[] = [];
+		await render(AlbumSidebar, {
+			...sidebarProps({
+				tags: [testTag, { ...testTag, id: 't2', name: 'night', kind: 'tag' }],
+				onrenameTag: async (id, name) => {
+					if (name === 'boom') throw new Error('nope');
+					renamed.push({ id, name });
+				},
+				ondeleteTag: async (id) => {
+					deleted.push(id);
+				}
+			})
+		});
+
+		const personRow = page.getByRole('button', { name: 'Ada 0' }).element().closest('div.group');
+		personRow?.dispatchEvent(
+			new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 40 })
+		);
+		await page.getByRole('menuitem', { name: 'Rename' }).click();
+		const rename = page.getByRole('textbox', { name: 'Rename' });
+		await rename.fill('Ada');
+		rename.element().closest('form')?.requestSubmit();
+		expect(renamed).toEqual([]);
+
+		personRow?.dispatchEvent(
+			new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 40 })
+		);
+		await page.getByRole('menuitem', { name: 'Rename' }).click();
+		const rename2 = page.getByRole('textbox', { name: 'Rename' });
+		await rename2.fill('boom');
+		rename2.element().closest('form')?.requestSubmit();
+		await expect.poll(() => renamed.length).toBe(0);
+		await expect.element(rename2).toBeVisible();
+		rename2.element().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+		await expect.element(page.getByRole('button', { name: 'Ada 0' })).toBeVisible();
+		page
+			.getByRole('button', { name: 'Ada 0' })
+			.element()
+			.closest('div.group')
+			?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 40 }));
+		await page.getByRole('menuitem', { name: 'Rename' }).click();
+		const rename3 = page.getByRole('textbox', { name: 'Rename' });
+		await rename3.fill('Sam');
+		rename3.element().dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+		await expect.poll(() => renamed.at(-1)).toEqual({ id: 't1', name: 'Sam' });
+
+		const tagRow = page.getByRole('button', { name: 'night 0' }).element().closest('div.group');
+		tagRow?.dispatchEvent(
+			new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 60 })
+		);
+		await page.getByRole('menuitem', { name: 'Rename' }).click();
+		const rename4 = page.getByRole('textbox', { name: 'Rename' });
+		await rename4.fill('dusk');
+		rename4.element().closest('form')?.requestSubmit();
+		await expect.poll(() => renamed.at(-1)).toEqual({ id: 't2', name: 'dusk' });
+
+		// Props still show "night" until parent refreshes; delete via context menu.
+		page
+			.getByRole('button', { name: 'night 0' })
+			.element()
+			.closest('div.group')
+			?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 60 }));
+		await page.getByRole('menuitem', { name: 'Delete' }).click();
+		await expect.poll(() => deleted).toEqual(['t2']);
 	});
 
 	test('create-tag no-op without handler; empty profile name; escape new profile', async () => {

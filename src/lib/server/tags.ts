@@ -1,6 +1,6 @@
 import { and, count, eq, inArray, isNull } from 'drizzle-orm';
 import type { MediaTag, Tag, TagKind } from '$lib/types';
-import { getProfileDb, isUniqueConstraintError, newId } from './db';
+import { chunked, getProfileDb, isUniqueConstraintError, newId } from './db';
 import { decryptName, decryptStoredName, encryptName, nameLookupKey } from './nameCrypto';
 import { media, mediaTags, tags } from './schema';
 
@@ -101,17 +101,19 @@ export function loadTagsForMedia(profileId: string, mediaIds: string[]): Map<str
 	for (const id of mediaIds) map.set(id, []);
 	if (!mediaIds.length) return map;
 	const db = getProfileDb(profileId);
-	const rows = db
-		.select({
-			mediaId: mediaTags.mediaId,
-			tagId: mediaTags.tagId,
-			name: tags.name,
-			kind: tags.kind
-		})
-		.from(mediaTags)
-		.innerJoin(tags, eq(tags.id, mediaTags.tagId))
-		.where(inArray(mediaTags.mediaId, mediaIds))
-		.all();
+	const rows = chunked(mediaIds).flatMap((part) =>
+		db
+			.select({
+				mediaId: mediaTags.mediaId,
+				tagId: mediaTags.tagId,
+				name: tags.name,
+				kind: tags.kind
+			})
+			.from(mediaTags)
+			.innerJoin(tags, eq(tags.id, mediaTags.tagId))
+			.where(inArray(mediaTags.mediaId, part))
+			.all()
+	);
 	for (const row of rows) {
 		const list = map.get(row.mediaId);
 		if (!list) continue;
@@ -150,7 +152,11 @@ export function unassignTags(profileId: string, mediaIds: string[], tagId: strin
 	if (!mediaIds.length) return;
 	assertTag(profileId, tagId);
 	const db = getProfileDb(profileId);
-	db.delete(mediaTags)
-		.where(and(eq(mediaTags.tagId, tagId), inArray(mediaTags.mediaId, mediaIds)))
-		.run();
+	db.transaction((tx) => {
+		for (const part of chunked(mediaIds)) {
+			tx.delete(mediaTags)
+				.where(and(eq(mediaTags.tagId, tagId), inArray(mediaTags.mediaId, part)))
+				.run();
+		}
+	});
 }

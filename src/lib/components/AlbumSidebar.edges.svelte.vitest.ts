@@ -61,7 +61,9 @@ function rows() {
 	return {
 		fav: all[0],
 		trash: all[1],
-		album: document.querySelector('.album-drop-row.group')
+		album: [...document.querySelectorAll('.album-drop-row.group')].find((el) =>
+			Boolean(el.querySelector('[title="Trip"]'))
+		)
 	};
 }
 
@@ -190,18 +192,18 @@ describe('AlbumSidebar edges', () => {
 		key(hits[2], 'a');
 		expect(selected).toEqual(['favorites']);
 
-		const newAlbum = page.getByRole('textbox', { name: 'New album name' });
+		const newAlbum = page.getByRole('textbox', { name: 'New album' });
 		key(newAlbum.element(), 'a');
 		newAlbum.element().closest('form')?.requestSubmit();
 		await newAlbum.fill('Trip');
 		newAlbum.element().closest('form')?.requestSubmit();
 		expect(created).toEqual([]);
 
-		document
-			.querySelector('.album-drop-row.group')
-			?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 40, clientY: 80 }));
+		rows().album?.dispatchEvent(
+			new MouseEvent('contextmenu', { bubbles: true, clientX: 40, clientY: 80 })
+		);
 		await page.getByRole('menuitem', { name: 'Rename' }).click();
-		const rename = page.getByRole('textbox').last();
+		const rename = page.getByRole('textbox', { name: 'Rename' });
 		key(rename.element(), 'a');
 		rename.element().dispatchEvent(new MouseEvent('click', { bubbles: true }));
 		expect(selected).toEqual(['favorites']);
@@ -243,6 +245,13 @@ describe('AlbumSidebar edges', () => {
 			await screen.rerender({ activeAlbum: view });
 			expect(el()?.className).toContain('bg-accent');
 		}
+		await screen.rerender({ activeAlbum: 'tag:t1,t2' });
+		expect(page.getByRole('button', { name: /Ada/ }).element().parentElement?.className).toContain(
+			'bg-accent'
+		);
+		expect(
+			page.getByRole('button', { name: /night/ }).element().parentElement?.className
+		).toContain('bg-accent');
 	});
 
 	test('context menu empties when its album disappears', async () => {

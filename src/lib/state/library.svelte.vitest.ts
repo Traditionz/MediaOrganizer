@@ -71,6 +71,25 @@ describe('LibraryState', () => {
 		expect(library.findKnown('m3')).toBeUndefined();
 		library.replaceAlbums([{ ...testAlbum, name: 'X' }]);
 		expect(library.albums[0]?.name).toBe('X');
+		library.replaceTags([{ ...testTag, name: 'Renamed' }]);
+		expect(library.tags[0]?.name).toBe('Renamed');
+		library.upsertMedia([
+			testMedia({
+				id: 'm-tag',
+				tags: [
+					{ id: 't1', name: 'Old', kind: 'tag' },
+					{ id: 't2', name: 'Keep', kind: 'person' }
+				]
+			})
+		]);
+		library.renameTagOnMedia('t1', 'New');
+		expect(library.media.find((item) => item.id === 'm-tag')?.tags).toEqual([
+			{ id: 't1', name: 'New', kind: 'tag' },
+			{ id: 't2', name: 'Keep', kind: 'person' }
+		]);
+		expect(library.findKnown('m-tag')?.tags?.[0]?.name).toBe('New');
+		library.renameTagOnMedia('missing', 'Nope');
+		expect(library.media.find((item) => item.id === 'm-tag')?.tags?.[1]?.name).toBe('Keep');
 
 		app.prefs.setShowImages(false);
 		app.prefs.setSearchQuery('lake');
@@ -202,6 +221,12 @@ describe('LibraryState', () => {
 	test('loadedMedia skips unknown ids', () => {
 		const { library } = createAppState(testLoad());
 		expect(library.loadedMedia(['m1', 'nope']).map((item) => item.id)).toEqual(['m1']);
+	});
+
+	test('loadedMedia sees tags after upsert', () => {
+		const { library } = createAppState(testLoad());
+		library.upsertMedia([testMedia({ tags: [{ id: 't1', name: 'beach', kind: 'tag' }] })]);
+		expect(library.loadedMedia(['m1'])[0]?.tags?.map((tag) => tag.id)).toEqual(['t1']);
 	});
 
 	test('applyMembership edge cases', () => {

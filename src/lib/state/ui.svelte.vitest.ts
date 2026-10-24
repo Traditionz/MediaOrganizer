@@ -201,6 +201,16 @@ describe('UiState', () => {
 		ui.closeAlbumPicker();
 		expect(ui.albumPicker.open).toBe(false);
 
+		ui.openTagPicker(['m1', 'm2']);
+		expect(ui.tagPicker).toEqual({ open: true, mediaIds: ['m1', 'm2'] });
+		ui.closeTagPicker();
+		expect(ui.tagPicker).toEqual({ open: false, mediaIds: [] });
+
+		ui.openPeoplePicker(['m1']);
+		expect(ui.peoplePicker).toEqual({ open: true, mediaIds: ['m1'] });
+		ui.closePeoplePicker();
+		expect(ui.peoplePicker).toEqual({ open: false, mediaIds: [] });
+
 		ui.profileModal.open = true;
 		ui.profileModalError = 'x';
 		ui.closeProfileModal();

@@ -8,9 +8,11 @@ import {
 	asPlainObject,
 	own,
 	ownNumber,
+	ownString,
 	stringList,
 	type JsonValue
 } from '$lib/parse';
+import { mediaWithRenamedTag } from '$lib/library/mutationHandlers';
 import { albumCountDelta, mergeMembershipIntoList } from '$lib/media/viewMembership';
 import { KNOWN_CACHE_CAP, forgetIds, pruneKnown, pruneThumbReady } from '$lib/media/knownCache';
 import type { PreferencesState } from './preferences.svelte';
@@ -57,6 +59,16 @@ async function readJsonValue(res: Response): Promise<JsonValue | undefined> {
 	if (payload === undefined) return undefined;
 	// SAFETY: Response.json() yields JSON values at the network I/O boundary.
 	return payload as JsonValue;
+}
+
+/** List pages: an error body must not be read as an empty page (that used to blank the grid). */
+async function readListPage(res: Response, fallbackLimit: number): Promise<MediaListPage> {
+	if (!res.ok) {
+		const bag = asPlainObject(await readJsonValue(res).catch(() => undefined));
+		const message = bag ? ownString(bag, 'message') : null;
+		throw new Error(message ?? `Failed to load media (${res.status})`);
+	}
+	return parseMediaListPage(await readJsonValue(res), fallbackLimit);
 }
 
 /** Profile library data + album/filter view (client cache over paginated API). */
@@ -143,9 +155,13 @@ export class LibraryState {
 	}
 
 	loadedMedia(ids: readonly string[]): MediaItem[] {
+		// One map pass instead of a linear scan per id (large selections were quadratic).
+		const byId = new Map<string, MediaItem>();
+		for (const row of this.trash) byId.set(row.id, row);
+		for (const row of this.media) byId.set(row.id, row);
 		const items: MediaItem[] = [];
 		for (const id of ids) {
-			const item = this.findKnown(id);
+			const item = byId.get(id) ?? this.findKnown(id);
 			if (item) items.push(item);
 		}
 		return items;
@@ -301,6 +317,23 @@ export class LibraryState {
 		this.albums = albums;
 	}
 
+	replaceTags(tags: Tag[]) {
+		this.tags = tags;
+	}
+
+	/** Keep cached media tag labels in sync after a rename. */
+	renameTagOnMedia(tagId: string, name: string) {
+		this.media = mediaWithRenamedTag(this.media, tagId, name);
+		this.trash = mediaWithRenamedTag(this.trash, tagId, name);
+		for (const [id, item] of this.known) {
+			if (!item.tags?.some((tag) => tag.id === tagId)) continue;
+			this.known.set(id, {
+				...item,
+				tags: item.tags.map((tag) => (tag.id === tagId ? { ...tag, name } : tag))
+			});
+		}
+	}
+
 	markHasThumbnail(id: string) {
 		this.thumbReady.add(id);
 		this.media = this.media.map((item) =>
@@ -375,7 +408,7 @@ export class LibraryState {
 				return;
 			}
 			const res = await fetch(this.buildListUrl({ offset: 0, trash: false }));
-			const page = parseMediaListPage(await readJsonValue(res), this.pageSize);
+			const page = await readListPage(res, this.pageSize);
 			if (epoch !== this.queryEpoch) return;
 			this.media = page.items.map((item) =>
 				this.thumbReady.has(item.id) ? { ...item, has_thumbnail: true } : item
@@ -394,9 +427,12 @@ export class LibraryState {
 		if (this.activeAlbum === 'trash') return;
 		if (!this.hasMore) return;
 		this.loadingMore = true;
+		const epoch = this.queryEpoch;
 		try {
 			const res = await fetch(this.buildListUrl({ offset: this.media.length, trash: false }));
-			const page = parseMediaListPage(await readJsonValue(res), this.pageSize);
+			const page = await readListPage(res, this.pageSize);
+			// The filter changed mid-request: this page belongs to the old query.
+			if (epoch !== this.queryEpoch) return;
 			const existing = new Set(this.media.map((item) => item.id));
 			const appended = page.items
 				.filter((item) => !existing.has(item.id))
@@ -412,19 +448,23 @@ export class LibraryState {
 
 	async ensureTrashLoaded(force = false) {
 		if (this.trashLoaded && !force) return;
-		const res = await fetch(
-			this.buildListUrl({
-				trash: true,
-				offset: 0,
-				limit: Math.max(this.pageSize, 500),
-				album: 'trash'
-			})
-		);
-		const page = parseMediaListPage(await readJsonValue(res), this.pageSize);
-		this.trash = page.items.map((item) =>
+		// Page through all of it: Empty trash deletes exactly the loaded ids, so a capped
+		// first page silently left everything past 500 items behind.
+		const rows: MediaItem[] = [];
+		let total = 0;
+		for (;;) {
+			const res = await fetch(
+				this.buildListUrl({ trash: true, offset: rows.length, limit: 500, album: 'trash' })
+			);
+			const page = await readListPage(res, 500);
+			rows.push(...page.items);
+			total = page.total;
+			if (!page.hasMore || !page.items.length) break;
+		}
+		this.trash = rows.map((item) =>
 			this.thumbReady.has(item.id) ? { ...item, has_thumbnail: true } : item
 		);
-		this.trashCount = page.total;
+		this.trashCount = total;
 		this.trashLoaded = true;
 		this.remember(this.trash);
 	}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Plus from '@lucide/svelte/icons/plus';
 	import Search from '@lucide/svelte/icons/search';
 	import GroupHeading from '$lib/components/GroupHeading.svelte';
 	import { Badge } from '$lib/components/ui/badge/index.js';
@@ -8,7 +9,9 @@
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
 	import { Spinner } from '$lib/components/ui/spinner/index.js';
+	import { canCreateNamedItem } from '$lib/albumNaming';
 	import type { Album } from '$lib/types';
+	import { SvelteSet } from 'svelte/reactivity';
 
 	interface Props {
 		open: boolean;
@@ -18,6 +21,7 @@
 		title?: string;
 		oncancel: () => void;
 		onconfirm: (albumIds: string[]) => void | Promise<void>;
+		oncreate?: (name: string) => Promise<{ id: string } | null | void>;
 	}
 
 	const LETTERS = [
@@ -56,14 +60,24 @@
 		memberAlbumIds = new Set<string>(),
 		title = 'Albums',
 		oncancel,
-		onconfirm
+		onconfirm,
+		oncreate
 	}: Props = $props();
 
 	let query = $state('');
 	let listEl = $state<HTMLElement | null>(null);
 	let activeLetter = $state<string | null>(null);
-	let selectedIds = $state<Set<string>>(new Set());
+	let selectedIds = new SvelteSet<string>();
 	let busy = $state(false);
+
+	const createName = $derived(
+		canCreateNamedItem(
+			albums.map((a) => a.name),
+			query
+		)
+			? query.trim()
+			: null
+	);
 
 	function albumLetter(name: string): string {
 		const ch = name.trim().charAt(0).toLocaleUpperCase();
@@ -76,21 +90,14 @@
 			.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
 	);
 
-	const groupedAlbums = $derived.by(() => {
-		const groups = new Map<string, Album[]>();
-		for (const album of filteredAlbums) {
-			const letter = albumLetter(album.name);
-			const list = groups.get(letter);
-			if (list) list.push(album);
-			else groups.set(letter, [album]);
-		}
-		return LETTERS.filter((letter) => groups.has(letter)).map((letter) => ({
-			letter,
-			albums: groups.get(letter)!
-		}));
-	});
+	const groupedAlbums = $derived.by(() =>
+		LETTERS.flatMap((letter) => {
+			const list = filteredAlbums.filter((a) => albumLetter(a.name) === letter);
+			return list.length > 0 ? [{ letter, albums: list }] : [];
+		})
+	);
 
-	const availableLetters = $derived(new Set<string>(groupedAlbums.map((g) => g.letter)));
+	const availableLetters = $derived(groupedAlbums.map((g) => g.letter));
 	const selectedCount = $derived(selectedIds.size);
 
 	function sameAlbumIds(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
@@ -104,7 +111,8 @@
 	function resetOnOpen(_node: HTMLElement) {
 		query = '';
 		activeLetter = null;
-		selectedIds = new Set(memberAlbumIds);
+		selectedIds.clear();
+		for (const id of memberAlbumIds) selectedIds.add(id);
 		busy = false;
 		queueMicrotask(() => {
 			const input = _node.querySelector<HTMLInputElement>('input[type="search"]');
@@ -114,17 +122,15 @@
 	}
 
 	function jumpToLetter(letter: string) {
-		if (!availableLetters.has(letter) || !listEl) return;
+		if (!availableLetters.includes(letter) || !listEl) return;
 		const section = listEl.querySelector<HTMLElement>(`[data-letter="${letter}"]`);
 		section?.scrollIntoView({ block: 'start', behavior: 'smooth' });
 		activeLetter = letter;
 	}
 
 	function toggleAlbum(albumId: string) {
-		const next = new Set(selectedIds);
-		if (next.has(albumId)) next.delete(albumId);
-		else next.add(albumId);
-		selectedIds = next;
+		if (selectedIds.has(albumId)) selectedIds.delete(albumId);
+		else selectedIds.add(albumId);
 	}
 
 	async function submit() {
@@ -135,6 +141,26 @@
 		} finally {
 			busy = false;
 		}
+	}
+
+	async function createFromQuery() {
+		if (!oncreate || !createName || busy) return;
+		busy = true;
+		try {
+			const created = await oncreate(createName);
+			if (created?.id) {
+				selectedIds.add(created.id);
+				query = '';
+			}
+		} finally {
+			busy = false;
+		}
+	}
+
+	function onSearchKeydown(e: KeyboardEvent) {
+		if (e.key !== 'Enter') return;
+		e.preventDefault();
+		if (createName) void createFromQuery();
 	}
 </script>
 
@@ -162,8 +188,10 @@
 					<Input
 						type="search"
 						class="pl-8"
-						placeholder="Search albums…"
+						placeholder="Search or create an album…"
 						bind:value={query}
+						onkeydown={onSearchKeydown}
+						disabled={busy}
 						aria-label="Search albums"
 					/>
 				</div>
@@ -172,10 +200,23 @@
 			<div class="flex min-h-0 flex-1">
 				<ScrollArea class="min-h-0 flex-1" bind:viewportRef={listEl}>
 					<div class="px-2 py-2">
+						{#if createName && oncreate}
+							<button
+								type="button"
+								class="hover:bg-muted flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left disabled:opacity-60"
+								disabled={busy}
+								onclick={() => void createFromQuery()}
+							>
+								<Plus class="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
+								<span class="min-w-0 flex-1 truncate">Create “{createName}”</span>
+							</button>
+						{/if}
 						{#if groupedAlbums.length === 0}
-							<p class="text-muted-foreground px-3 py-8 text-center text-sm">
-								{albums.length === 0 ? 'No albums yet.' : 'No albums match your search.'}
-							</p>
+							{#if !(createName && oncreate)}
+								<p class="text-muted-foreground px-3 py-8 text-center text-sm">
+									{albums.length === 0 ? 'No albums yet.' : 'No albums match your search.'}
+								</p>
+							{/if}
 						{:else}
 							{#each groupedAlbums as group (group.letter)}
 								<section class="mb-2" data-letter={group.letter}>
@@ -215,12 +256,12 @@
 							type="button"
 							class={[
 								'flex h-[1.15rem] w-full items-center justify-center border-0 bg-transparent p-0 text-[10px] leading-none font-semibold',
-								availableLetters.has(letter)
+								availableLetters.includes(letter)
 									? 'text-primary hover:bg-primary/10 cursor-pointer'
 									: 'text-muted-foreground/25 pointer-events-none',
-								activeLetter === letter && availableLetters.has(letter) && 'bg-primary/15'
+								activeLetter === letter && availableLetters.includes(letter) && 'bg-primary/15'
 							]}
-							disabled={!availableLetters.has(letter)}
+							disabled={!availableLetters.includes(letter)}
 							aria-label={`Jump to ${letter}`}
 							onclick={() => jumpToLetter(letter)}
 						>

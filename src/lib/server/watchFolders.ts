@@ -1,69 +1,27 @@
-import { createReadStream, existsSync, readdirSync, statSync } from 'node:fs';
-import { basename, extname, join, relative, resolve } from 'node:path';
+import { createReadStream, existsSync, statSync } from 'node:fs';
+import { basename, relative } from 'node:path';
+import { eq } from 'drizzle-orm';
 import { watchedFileDecision } from '$lib/media/contentHash';
-import type { MediaItem } from '$lib/types';
-import type { WatchedFolder } from '$lib/types';
-import { DATA_DIR } from './dbUtil';
+import type { MediaItem, WatchedFolder } from '$lib/types';
 import { getProfileDb, isUniqueConstraintError, newId } from './db';
 import { DuplicateContentError, insertMediaFromStream, listSourcePathsAndHashes } from './media';
+import {
+	assertMediaFolder,
+	guessMimeFromPath,
+	listMediaFiles,
+	mediaTypeFromPath
+} from './mediaFiles';
 import { watchedFolders } from './schema';
-import { eq } from 'drizzle-orm';
 import { sha256File } from './sha256';
 
-const VIDEO_EXT = new Set(['.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi']);
-const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.avif', '.bmp', '.heic']);
-
-function mediaTypeFromPath(filePath: string) {
-	const ext = extname(filePath).toLowerCase();
-	if (IMAGE_EXT.has(ext)) return 'image' as const;
-	if (VIDEO_EXT.has(ext)) return 'video' as const;
-	return null;
-}
-
-function guessMime(filePath: string, mediaType: 'image' | 'video'): string {
-	const ext = extname(filePath).toLowerCase();
-	if (mediaType === 'video') {
-		if (ext === '.webm') return 'video/webm';
-		if (ext === '.mov') return 'video/quicktime';
-		return 'video/mp4';
-	}
-	if (ext === '.png') return 'image/png';
-	if (ext === '.webp') return 'image/webp';
-	if (ext === '.gif') return 'image/gif';
-	if (ext === '.avif') return 'image/avif';
-	return 'image/jpeg';
-}
-
-function assertWatchPath(rawPath: string): string {
-	const resolved = resolve(rawPath);
-	if (!existsSync(resolved)) throw new Error('Folder not found');
-	const st = statSync(resolved);
-	if (!st.isDirectory()) throw new Error('Path must be a folder');
-	const dataRoot = resolve(DATA_DIR);
-	if (
-		resolved === dataRoot ||
-		resolved.startsWith(dataRoot + '\\') ||
-		resolved.startsWith(dataRoot + '/')
-	) {
-		throw new Error('Cannot watch the app data directory');
-	}
-	return resolved;
-}
-
-function listMediaFiles(dir: string, recursive: boolean): string[] {
-	const out: string[] = [];
-	const entries = readdirSync(dir, { withFileTypes: true });
-	for (const entry of entries) {
-		const full = join(dir, entry.name);
-		if (entry.isDirectory()) {
-			if (recursive) out.push(...listMediaFiles(full, true));
-			continue;
-		}
-		if (!entry.isFile()) continue;
-		if (!mediaTypeFromPath(full)) continue;
-		out.push(full);
-	}
-	return out;
+/**
+ * Source key for a watched file. Folder-qualified so two watched folders holding the same
+ * relative path (`2024/a.jpg`) do not shadow each other. Older rows stored the bare relative
+ * path; those files still match by content hash.
+ */
+function watchedSourceKey(folderPath: string, filePath: string): string {
+	const rel = relative(folderPath, filePath).replaceAll('\\', '/');
+	return `${folderPath.replaceAll('\\', '/')}/${rel}`;
 }
 
 function mapFolder(row: {
@@ -88,7 +46,7 @@ export function listWatchedFolders(profileId: string): WatchedFolder[] {
 }
 
 export function addWatchedFolder(profileId: string, path: string, recursive = true): WatchedFolder {
-	const resolved = assertWatchPath(path);
+	const resolved = assertMediaFolder(path, 'Cannot watch the app data directory');
 	const db = getProfileDb(profileId);
 	const id = newId();
 	try {
@@ -139,7 +97,12 @@ export async function scanWatchedFolders(profileId: string): Promise<WatchScanRe
 				skipped.push(filePath);
 				continue;
 			}
-			const rel = relative(folder.path, filePath).replaceAll('\\', '/');
+			const rel = watchedSourceKey(folder.path, filePath);
+			// Already imported from this exact path: skip without re-reading the whole file.
+			if (knownPaths.has(rel)) {
+				skipped.push(filePath);
+				continue;
+			}
 			let hash = '';
 			try {
 				hash = await sha256File(filePath);
@@ -158,7 +121,7 @@ export async function scanWatchedFolders(profileId: string): Promise<WatchScanRe
 			try {
 				const item = await insertMediaFromStream(profileId, {
 					originalName: basename(filePath),
-					mimeType: guessMime(filePath, mediaType),
+					mimeType: guessMimeFromPath(filePath, mediaType),
 					mediaType,
 					albumId: null,
 					width: null,

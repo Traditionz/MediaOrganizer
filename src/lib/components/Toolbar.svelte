@@ -49,6 +49,7 @@
 		ontoggleSelect: () => void;
 		onclearSelection: () => void;
 		onopenAlbumPicker: () => void;
+		onopenPeoplePicker?: () => void;
 		ondelete: () => void;
 		onrestore?: () => void;
 		onemptyTrash?: () => void;
@@ -90,6 +91,7 @@
 		ontoggleSelect,
 		onclearSelection,
 		onopenAlbumPicker,
+		onopenPeoplePicker,
 		ondelete,
 		onrestore,
 		onemptyTrash,
@@ -130,6 +132,9 @@
 				</Button>
 			{:else}
 				<Button size="sm" disabled={!selectedCount} onclick={onopenAlbumPicker}>Albums…</Button>
+				{#if onopenPeoplePicker}
+					<Button size="sm" disabled={!selectedCount} onclick={onopenPeoplePicker}>People…</Button>
+				{/if}
 				<Button size="sm" variant="destructive" disabled={!selectedCount} onclick={ondelete}>
 					Move to trash
 				</Button>

@@ -20,6 +20,16 @@ const defaultRunner: PlaybackRunner = async (profileId, id, onProgress) => {
 /** In-memory: a server restart forgets queued work, which the client reports as an error. */
 const jobs = new Map<string, PlaybackJobStatus>();
 
+/** Finished jobs linger long enough for the client poll to read them, then are dropped. */
+const FINISHED_JOB_TTL_MS = 10 * 60 * 1000;
+
+function forgetLater(key: string, job: PlaybackJobStatus): void {
+	const timer = setTimeout(() => {
+		if (jobs.get(key) === job) jobs.delete(key);
+	}, FINISHED_JOB_TTL_MS);
+	timer.unref?.();
+}
+
 function jobKey(profileId: string, id: string): string {
 	return `${profileId}:${id}`;
 }
@@ -51,10 +61,12 @@ export function queuePlaybackJobs(
 				() => {
 					job.state = 'done';
 					job.progress = 100;
+					forgetLater(key, job);
 				},
 				(err: unknown) => {
 					job.state = 'error';
 					job.error = errorText(err);
+					forgetLater(key, job);
 				}
 			);
 	}

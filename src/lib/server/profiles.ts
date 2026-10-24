@@ -41,6 +41,10 @@ function getProfileRow(id: string): ProfileRow | null {
 	return registryDb.select().from(profiles).where(eq(profiles.id, id)).get() ?? null;
 }
 
+export function getProfilePasscodeHash(id: string): string | null {
+	return getProfileRow(id)?.passcodeHash ?? null;
+}
+
 export function createProfile(name: string, passcode?: string | null): Profile {
 	const trimmed = name.trim();
 	if (!trimmed) throw new Error('Profile name is required');

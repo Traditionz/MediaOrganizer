@@ -64,6 +64,7 @@ describe('buildContextMenuItems', () => {
 			favoriteItems: [{ favorite: true }]
 		});
 		expect(items.find((item) => item.id === 'add-to-album')?.label).toBe('Albums…');
+		expect(items.find((item) => item.id === 'assign-person')?.label).toBe('People…');
 		expect(items.some((item) => item.id === 'remove-from-album')).toBe(true);
 		expect(items.find((item) => item.id === 'favorite')?.label).toBe('Unfavorite');
 		expect(items.find((item) => item.id === 'rename')?.disabled).toBe(false);
@@ -78,7 +79,17 @@ describe('buildContextMenuItems', () => {
 			hasClipboard: false,
 			favoriteItems: []
 		});
-		expect(items.some((item) => item.id === 'remove-tag')).toBe(true);
+		expect(items.find((item) => item.id === 'remove-tag')?.label).toBe('Remove tag');
+		expect(
+			buildContextMenuItems({
+				kind: 'media',
+				mediaIds: ['a'],
+				activeAlbum: 'tag:a,b',
+				trashCount: 0,
+				hasClipboard: false,
+				favoriteItems: []
+			}).find((item) => item.id === 'remove-tag')?.label
+		).toBe('Remove tags');
 		expect(items.find((item) => item.id === 'rename')?.disabled).toBe(true);
 		expect(items.some((item) => item.id === 'optimize-playback')).toBe(false);
 	});

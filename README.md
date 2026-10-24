@@ -359,18 +359,19 @@ Uploads are stored as-is. There is **no** background or on-upload recompress.
 
 ## Project scripts
 
-| Command               | Description                                     |
-| --------------------- | ----------------------------------------------- |
-| `bun run dev`         | Dev server with HMR                             |
-| `bun run build`       | Production build (adapter-node)                 |
-| `bun run start`       | Run production server (`node build`)            |
-| `bun run preview`     | Vite preview of the production build            |
-| `bun run check`       | Typecheck / Svelte check                        |
-| `bun run format`      | Format with Oxfmt                               |
-| `bun run lint`        | Oxlint (anti-slop + defaults)                   |
-| `bun run reinstall`   | Reinstall deps + sync types                     |
-| `bun run tauri:dev`   | Optional desktop shell around Vite (needs Rust) |
-| `bun run tauri:build` | Package desktop app (needs Rust + Node)         |
+| Command                | Description                                     |
+| ---------------------- | ----------------------------------------------- |
+| `bun run dev`          | Dev server with HMR                             |
+| `bun run build`        | Production build (adapter-node)                 |
+| `bun run start`        | Run production server (`node build`)            |
+| `bun run preview`      | Vite preview of the production build            |
+| `bun run check`        | Typecheck / Svelte check                        |
+| `bun run format`       | Format with `bun fmt` (reads `.oxfmtrc.json`)   |
+| `bun run format:check` | Report unformatted files without writing        |
+| `bun run lint`         | Oxlint (anti-slop + defaults)                   |
+| `bun run reinstall`    | Reinstall deps + sync types                     |
+| `bun run tauri:dev`    | Optional desktop shell around Vite (needs Rust) |
+| `bun run tauri:build`  | Package desktop app (needs Rust + Node)         |
 
 ---
 
@@ -380,8 +381,8 @@ Uploads are stored as-is. There is **no** background or on-upload recompress.
 - **Tailwind CSS** + **shadcn-svelte**
 - **Drizzle ORM** + **SQLite** (`better-sqlite3`) for metadata
 - **@lucide/svelte** for icons
-- **Oxfmt** for formatting
-- **Bun 1.4+** for runtime and packages
+- **`bun fmt`** for formatting, **Oxlint** for linting
+- **Bun 1.4.4+** for runtime, packages and formatting
 - **@sveltejs/adapter-node** for local production
 - **Tauri 2** (optional) desktop shell around the local server
 - **Local filesystem** under `data/profiles/{id}/files/` for media bytes

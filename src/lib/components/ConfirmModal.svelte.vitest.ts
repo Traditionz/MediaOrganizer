@@ -123,15 +123,15 @@ describe('ConfirmModal', () => {
 		const countInput = page.getByLabelText('Type 3 to confirm');
 		await expect.element(countInput).toBeVisible();
 		submitForm();
-		await expect.poll(() => document.querySelector('[role="alert"]')?.textContent ?? '').toContain(
-			'Type 3 to confirm'
-		);
+		await expect
+			.poll(() => document.querySelector('[role="alert"]')?.textContent ?? '')
+			.toContain('Type 3 to confirm');
 		expect(confirmed).toBe(0);
 		await countInput.fill('2');
 		await page.getByRole('button', { name: 'Confirm' }).click();
-		await expect.poll(() => document.querySelector('[role="alert"]')?.textContent ?? '').toContain(
-			'Type 3 to confirm'
-		);
+		await expect
+			.poll(() => document.querySelector('[role="alert"]')?.textContent ?? '')
+			.toContain('Type 3 to confirm');
 		expect(confirmed).toBe(0);
 		await expect.element(page.getByText('Delete items?')).toBeVisible();
 	});

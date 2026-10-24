@@ -19,7 +19,10 @@ describe('e2eDataCleanup', () => {
 	});
 
 	function scratch(): string {
-		const root = join(tmpdir(), `mo-e2e-clean-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		const root = join(
+			tmpdir(),
+			`mo-e2e-clean-${Date.now()}-${Math.random().toString(36).slice(2)}`
+		);
 		mkdirSync(root, { recursive: true });
 		roots.push(root);
 		return root;
