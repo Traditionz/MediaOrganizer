@@ -199,8 +199,9 @@ describe('AlbumSidebar edges', () => {
 		newAlbum.element().closest('form')?.requestSubmit();
 		expect(created).toEqual([]);
 
-		rows()
-			.album?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 40, clientY: 80 }));
+		rows().album?.dispatchEvent(
+			new MouseEvent('contextmenu', { bubbles: true, clientX: 40, clientY: 80 })
+		);
 		await page.getByRole('menuitem', { name: 'Rename' }).click();
 		const rename = page.getByRole('textbox', { name: 'Rename' });
 		key(rename.element(), 'a');
@@ -248,9 +249,9 @@ describe('AlbumSidebar edges', () => {
 		expect(page.getByRole('button', { name: /Ada/ }).element().parentElement?.className).toContain(
 			'bg-accent'
 		);
-		expect(page.getByRole('button', { name: /night/ }).element().parentElement?.className).toContain(
-			'bg-accent'
-		);
+		expect(
+			page.getByRole('button', { name: /night/ }).element().parentElement?.className
+		).toContain('bg-accent');
 	});
 
 	test('context menu empties when its album disappears', async () => {

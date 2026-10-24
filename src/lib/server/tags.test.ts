@@ -55,9 +55,9 @@ describe('tags', () => {
 		assignTags(profileId, [media.id], tag.id);
 		assignTags(profileId, [media.id], person.id);
 		expect(listTags(profileId).find((t) => t.id === tag.id)?.media_count).toBe(1);
-		expect(listMedia(profileId, { albumId: tagFilterIds([tag.id]) }).items.map((m) => m.id)).toEqual(
-			[media.id]
-		);
+		expect(
+			listMedia(profileId, { albumId: tagFilterIds([tag.id]) }).items.map((m) => m.id)
+		).toEqual([media.id]);
 		expect(listMedia(profileId, { albumId: tagFilterIds([tag.id, person.id]) }).total).toBe(1);
 		expect(listMedia(profileId, { albumId: `tag:${tag.id},missing` }).total).toBe(0);
 		unassignTags(profileId, [media.id], tag.id);

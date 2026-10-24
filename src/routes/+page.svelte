@@ -115,8 +115,12 @@
 		if (queryReloadTimer) clearTimeout(queryReloadTimer);
 		queryReloadTimer = setTimeout(() => {
 			queryReloadTimer = null;
-			void library.reloadQuery();
+			library.reloadQuery().catch(reportLoadError);
 		}, 200);
+	}
+
+	function reportLoadError(err: Error) {
+		ui.errorMessage = err.message || 'Failed to load media';
 	}
 
 	$effect(() => {
@@ -173,7 +177,7 @@
 		const onScroll = () => {
 			const remaining = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
 			if (remaining < 900 && library.hasMore) {
-				void library.loadMore();
+				library.loadMore().catch(reportLoadError);
 			}
 		};
 		viewport.addEventListener('scroll', onScroll, { passive: true });
@@ -405,7 +409,10 @@
 					const errBody = await res.json().catch(() => ({}));
 					throw new Error(errBody.message || 'Failed to delete profile');
 				}
+				const deletedName = ui.profileModal.profileName;
 				ui.closeProfileModal();
+				ui.errorMessage = '';
+				ui.convertResultMessage = `Profile “${deletedName}” deleted.`;
 				await invalidateAll();
 			}
 		} catch (err) {
@@ -454,6 +461,11 @@
 				}
 				throw new Error(message);
 			}
+			const deletedName = library.profiles.find((p) => p.id === id)?.name;
+			ui.errorMessage = '';
+			ui.convertResultMessage = deletedName
+				? `Profile “${deletedName}” deleted.`
+				: 'Profile deleted.';
 			await invalidateAll();
 		} catch (err) {
 			ui.errorMessage = err instanceof Error ? err.message : 'Failed to delete profile';

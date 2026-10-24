@@ -152,11 +152,16 @@ async function buildStoryboard(profileId: string, id: string): Promise<Storyboar
 		const dest = filePathForKey(profileId, key);
 		removeFile(dest);
 		renameSync(tmp, dest);
-		getProfileDb(profileId)
+		const saved = getProfileDb(profileId)
 			.update(media)
 			.set({ storyboard: serializeStoredStoryboard({ key, ...meta }) })
 			.where(eq(media.id, id))
 			.run();
+		// Deleted while ffmpeg ran: nothing references the sprite any more.
+		if (saved.changes === 0) {
+			removeFile(dest);
+			return null;
+		}
 		return meta;
 	} catch (err) {
 		removeFile(tmp);
@@ -204,7 +209,15 @@ export async function optimizeVideoPlayback(
 		const dest = filePathForKey(profileId, key);
 		removeFile(dest);
 		renameSync(tmp, dest);
-		getProfileDb(profileId).update(media).set({ playbackKey: key }).where(eq(media.id, id)).run();
+		const saved = getProfileDb(profileId)
+			.update(media)
+			.set({ playbackKey: key })
+			.where(eq(media.id, id))
+			.run();
+		if (saved.changes === 0) {
+			removeFile(dest);
+			throw new Error('Media not found');
+		}
 	} catch (err) {
 		removeFile(tmp);
 		throw err;

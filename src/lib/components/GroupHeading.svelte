@@ -15,7 +15,11 @@
 
 <svelte:element
 	this={level === 2 ? 'h2' : 'h3'}
-	class={['sticky top-0 z-10 flex w-fit items-center', level === 2 ? 'h-12' : 'min-h-10 py-1', className]}
+	class={[
+		'sticky top-0 z-10 flex w-fit items-center',
+		level === 2 ? 'h-12' : 'min-h-10 py-1',
+		className
+	]}
 >
 	<Badge
 		variant="secondary"

@@ -1,5 +1,10 @@
 import type { LibraryAlbumFilter, MediaItem } from '$lib/types';
-import { isDuplicateFilter, isLibraryViewFilter, parseTagFilterId, parseTagFilterIds } from './libraryNav';
+import {
+	isDuplicateFilter,
+	isLibraryViewFilter,
+	parseTagFilterId,
+	parseTagFilterIds
+} from './libraryNav';
 
 export const WATCH_POLL_MS = 30_000;
 

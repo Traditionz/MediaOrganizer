@@ -13,9 +13,7 @@ export function sharedTagIds(
 ): Set<string> {
 	if (!items.length) return new Set();
 	const idsOn = (item: Pick<MediaItem, 'tags'>) =>
-		(item.tags ?? [])
-			.filter((tag) => kind == null || tag.kind === kind)
-			.map((tag) => tag.id);
+		(item.tags ?? []).filter((tag) => kind == null || tag.kind === kind).map((tag) => tag.id);
 	let shared = new Set(idsOn(items[0]));
 	for (let i = 1; i < items.length; i++) {
 		const next = new Set(idsOn(items[i]));

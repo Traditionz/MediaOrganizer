@@ -105,9 +105,9 @@ describe('media thumbnail helpers', () => {
 
 	test('nextThumbEpoch keeps a painted thumb and busts one that has not drawn', () => {
 		expect(nextThumbEpoch('/api/media/a/thumbnail?v=0', '/api/media/a/thumbnail?v=0', 0)).toBe(0);
-		expect(nextThumbEpoch('http://x/api/media/a/thumbnail?v=0', '/api/media/a/thumbnail?v=0', 0)).toBe(
-			0
-		);
+		expect(
+			nextThumbEpoch('http://x/api/media/a/thumbnail?v=0', '/api/media/a/thumbnail?v=0', 0)
+		).toBe(0);
 		expect(nextThumbEpoch(null, '/api/media/a/thumbnail?v=0', 0)).toBe(1);
 		expect(nextThumbEpoch('/api/media/a/thumbnail?v=0', '/api/media/a/thumbnail?v=1', 1)).toBe(2);
 		expect(nextThumbEpoch(null, '/t', Number.NaN)).toBe(1);

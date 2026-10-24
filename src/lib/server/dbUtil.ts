@@ -44,6 +44,15 @@ export function tmpPathForKey(profileId: string, name: string): string {
 	return join(profileTmpDir(profileId), name);
 }
 
+/** Keep `IN (...)` lists well under SQLite's bound-parameter limit. */
+export const SQL_IN_CHUNK = 500;
+
+export function chunked<T>(items: readonly T[], size = SQL_IN_CHUNK): T[][] {
+	const out: T[][] = [];
+	for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+	return out;
+}
+
 export function isUniqueConstraintError(err: Error): boolean {
 	return err.message.includes('UNIQUE');
 }

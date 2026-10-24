@@ -74,6 +74,10 @@ export const DELETE: RequestHandler = async ({ request, cookies }) => {
 
 	const existing = getProfile(id);
 	if (!existing) throw error(404, 'Profile not found');
+	// A passcode profile can only be deleted from a session that unlocked it.
+	if (existing.has_passcode && resolveProfileFromCookies(cookies)?.id !== id) {
+		throw error(403, 'Unlock this profile before deleting it');
+	}
 
 	const confirmation =
 		confirmName.trim() && confirmMediaCount != null && Number.isInteger(confirmMediaCount)

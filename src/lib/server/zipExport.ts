@@ -1,4 +1,6 @@
 import { createReadStream, createWriteStream, existsSync, statSync, unlinkSync } from 'node:fs';
+import type { WriteStream } from 'node:fs';
+import { once } from 'node:events';
 import { finished } from 'node:stream/promises';
 import {
 	crc32,
@@ -27,57 +29,86 @@ export class ZipEmptyError extends Error {
 	}
 }
 
-async function readAll(path: string): Promise<Uint8Array> {
-	const chunks: Buffer[] = [];
-	const stream = createReadStream(path);
+/** Classic (non-ZIP64) archives cap offsets at 32 bits and entry counts at 16 bits. */
+const ZIP_MAX_ENTRIES = 0xffff;
+
+async function crc32File(path: string): Promise<number> {
+	let crc = 0;
+	const stream = createReadStream(path, { highWaterMark: 1024 * 1024 });
 	stream.on('data', (chunk) => {
-		chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+		crc = crc32(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk), crc);
 	});
 	await finished(stream);
-	return new Uint8Array(Buffer.concat(chunks));
+	return crc;
 }
 
-/** Write a ZIP STORE archive. Rejects files ≥ 4 GiB. */
+async function write(out: WriteStream, bytes: Uint8Array): Promise<void> {
+	if (!out.write(bytes)) await once(out, 'drain');
+}
+
+async function pipeFile(out: WriteStream, path: string): Promise<void> {
+	for await (const chunk of createReadStream(path, { highWaterMark: 1024 * 1024 })) {
+		// SAFETY: fs read streams without an encoding yield Buffers.
+		await write(out, chunk as Buffer);
+	}
+}
+
+/**
+ * Write a ZIP STORE archive, streaming each file so memory stays flat no matter how large the
+ * export is. Rejects files ≥ 4 GiB and archives whose total size needs ZIP64.
+ */
 export async function writeStoreZip(
 	sources: readonly ZipSource[],
 	outPath: string
 ): Promise<number> {
 	if (!sources.length) throw new ZipEmptyError();
-	const used = new Set<string>();
-	const locals: Uint8Array[] = [];
-	const centrals: Uint8Array[] = [];
-	let offset = 0;
-
-	for (const source of sources) {
-		if (!existsSync(source.path)) continue;
-		const size = statSync(source.path).size;
-		if (zipFileTooLarge(size)) throw new ZipTooLargeError(source.name);
-		const bytes = await readAll(source.path);
-		const name = zipNameBytes(zipUniqueName(source.name, used));
-		const crc = crc32(bytes);
-		const local = zipLocalHeader(name, crc, bytes.length);
-		centrals.push(zipCentralHeader(name, crc, bytes.length, offset));
-		const part = new Uint8Array(local.length + bytes.length);
-		part.set(local, 0);
-		part.set(bytes, local.length);
-		locals.push(part);
-		offset += part.length;
-	}
-
-	if (!locals.length) throw new ZipEmptyError();
-
-	let centralSize = 0;
-	for (const c of centrals) centralSize += c.length;
-	const eocd = zipEocd(centrals.length, centralSize, offset);
+	const present = sources.filter((source) => existsSync(source.path));
+	if (!present.length) throw new ZipEmptyError();
+	if (present.length > ZIP_MAX_ENTRIES) throw new ZipTooLargeError(`${present.length} files`);
 
 	if (existsSync(outPath)) unlinkSync(outPath);
 	const out = createWriteStream(outPath);
-	for (const part of locals) out.write(part);
-	for (const part of centrals) out.write(part);
-	out.write(eocd);
-	await new Promise<void>((resolve, reject) => {
-		out.end(() => resolve());
-		out.on('error', reject);
-	});
+	const failed = new Promise<never>((_, reject) => out.once('error', reject));
+	failed.catch(() => undefined);
+
+	const used = new Set<string>();
+	const centrals: Uint8Array[] = [];
+	let offset = 0;
+
+	const run = async () => {
+		for (const source of present) {
+			const size = statSync(source.path).size;
+			if (zipFileTooLarge(size)) throw new ZipTooLargeError(source.name);
+			const name = zipNameBytes(zipUniqueName(source.name, used));
+			const crc = await crc32File(source.path);
+			const local = zipLocalHeader(name, crc, size);
+			if (zipFileTooLarge(offset + local.length + size)) throw new ZipTooLargeError('export');
+			centrals.push(zipCentralHeader(name, crc, size, offset));
+			await write(out, local);
+			await pipeFile(out, source.path);
+			offset += local.length + size;
+		}
+
+		let centralSize = 0;
+		for (const c of centrals) {
+			await write(out, c);
+			centralSize += c.length;
+		}
+		await write(out, zipEocd(centrals.length, centralSize, offset));
+		out.end();
+		await finished(out);
+	};
+
+	try {
+		await Promise.race([run(), failed]);
+	} catch (err) {
+		out.destroy();
+		try {
+			if (existsSync(outPath)) unlinkSync(outPath);
+		} catch {
+			/* ignore */
+		}
+		throw err;
+	}
 	return statSync(outPath).size;
 }

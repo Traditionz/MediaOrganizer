@@ -19,6 +19,8 @@
 		oncreate: (name: string, passcode?: string | null) => Promise<void>;
 		onpasscode: (profile: Profile) => void;
 		ontheme?: (theme: ThemeMode) => void;
+		notice?: string;
+		ondismissNotice?: () => void;
 	}
 
 	let {
@@ -27,7 +29,9 @@
 		onselect,
 		oncreate,
 		onpasscode,
-		ontheme = () => undefined
+		ontheme = () => undefined,
+		notice = '',
+		ondismissNotice = () => undefined
 	}: Props = $props();
 
 	let newName = $state('');
@@ -123,6 +127,15 @@
 				Choose a profile to continue, or create a new one. Passcodes are optional.
 			</p>
 		</div>
+
+		{#if notice && !errorMessage}
+			<Alert.Root class="mb-4">
+				<Alert.Description>{notice}</Alert.Description>
+				<Alert.Action>
+					<Button type="button" variant="ghost" size="xs" onclick={ondismissNotice}>Dismiss</Button>
+				</Alert.Action>
+			</Alert.Root>
+		{/if}
 
 		{#if errorMessage}
 			<Alert.Root variant="destructive" class="mb-4">

@@ -24,7 +24,7 @@ import {
 	parseTagFilterIds,
 	RECENT_DAYS
 } from '$lib/media/libraryNav';
-import { filePathForKey, getProfileDb, newId, tmpPathForKey } from './db';
+import { chunked, filePathForKey, getProfileDb, newId, tmpPathForKey } from './db';
 import { albumMedia, albums, media, mediaTags } from './schema';
 import type { MediaRow } from './schema';
 import { probeMediaFile } from './mediaProbe';
@@ -101,16 +101,18 @@ function loadAlbumMembership(
 	for (const id of mediaIds) map.set(id, { ids: [], names: [] });
 	if (!mediaIds.length) return map;
 
-	const rows = db
-		.select({
-			mediaId: albumMedia.mediaId,
-			albumId: albumMedia.albumId,
-			albumName: albums.name
-		})
-		.from(albumMedia)
-		.innerJoin(albums, eq(albums.id, albumMedia.albumId))
-		.where(inArray(albumMedia.mediaId, mediaIds))
-		.all();
+	const rows = chunked(mediaIds).flatMap((part) =>
+		db
+			.select({
+				mediaId: albumMedia.mediaId,
+				albumId: albumMedia.albumId,
+				albumName: albums.name
+			})
+			.from(albumMedia)
+			.innerJoin(albums, eq(albums.id, albumMedia.albumId))
+			.where(inArray(albumMedia.mediaId, part))
+			.all()
+	);
 
 	for (const row of rows) {
 		const entry = map.get(row.mediaId);
@@ -356,9 +358,14 @@ export function listMedia(profileId: string, query: MediaQuery = {}): MediaListP
 	return mediaListPageFromItems(attachAlbums(profileId, rows), total, offset, limit);
 }
 
-/** All matching rows (no pagination) — for tests / internal callers that need the full set. */
+/** All matching rows (no pagination) — for export / internal callers that need the full set. */
 export function listAllMedia(profileId: string, query: MediaQuery = {}): MediaItem[] {
-	return listMedia(profileId, { ...query, limit: 500, offset: 0 }).items;
+	const out: MediaItem[] = [];
+	for (;;) {
+		const page = listMedia(profileId, { ...query, limit: 500, offset: out.length });
+		out.push(...page.items);
+		if (!page.hasMore || !page.items.length) return out;
+	}
 }
 
 export function getMediaMeta(profileId: string, id: string): MediaItem | undefined {
@@ -370,7 +377,9 @@ export function getMediaMeta(profileId: string, id: string): MediaItem | undefin
 export function getMediaByIds(profileId: string, ids: string[]): MediaItem[] {
 	if (!ids.length) return [];
 	const db = getProfileDb(profileId);
-	const rows = db.select().from(media).where(inArray(media.id, ids)).all();
+	const rows = chunked(ids).flatMap((part) =>
+		db.select().from(media).where(inArray(media.id, part)).all()
+	);
 	const byId = new Map(attachAlbums(profileId, rows).map((item) => [item.id, item]));
 	return ids.map((id) => byId.get(id)).filter((item): item is MediaItem => Boolean(item));
 }
@@ -448,7 +457,7 @@ async function fillImageDimensions(profileId: string, id: string, path: string):
 
 async function fillImagePreview(profileId: string, id: string, path: string): Promise<void> {
 	await fillImageDimensions(profileId, id, path);
-	await ensureImageThumbnail(profileId, id);
+	await ensurePreviewThumbnail(profileId, id);
 }
 
 /** Throttled per-file lines for the Vite / Node terminal. */
@@ -638,7 +647,8 @@ export async function insertMediaFromStream(
 		if (input.width == null || input.height == null) {
 			await fillImagePreview(profileId, id, dest);
 		} else {
-			await ensureImageThumbnail(profileId, id);
+			// Deduped with gallery thumbnail GETs, which share the same tmp file name.
+			await ensurePreviewThumbnail(profileId, id);
 		}
 	}
 	const meta = getMediaMeta(profileId, id);
@@ -979,69 +989,78 @@ export function duplicateMedia(
 		const dest = filePathForKey(profileId, destKey);
 		if (!existsSync(src)) continue;
 
-		copyFileSync(src, dest);
-		if (row.mediaType === 'video') {
-			try {
-				assertPlayableVideo(dest, row.width, row.height);
-			} catch (err) {
+		let thumbKey: string | null = null;
+		const removeCopies = () => {
+			for (const key of [destKey, thumbKey]) {
+				if (!key) continue;
 				try {
-					if (existsSync(dest)) unlinkSync(dest);
+					const path = filePathForKey(profileId, key);
+					if (existsSync(path)) unlinkSync(path);
 				} catch {
 					/* ignore */
 				}
-				throw err;
 			}
-		}
+		};
 
-		let thumbKey: string | null = null;
-		if (row.thumbnailKey) {
-			const thumbSrc = filePathForKey(profileId, row.thumbnailKey);
-			if (existsSync(thumbSrc)) {
-				thumbKey = `${newMediaId}-thumb`;
-				copyFileSync(thumbSrc, filePathForKey(profileId, thumbKey));
-			}
-		}
+		try {
+			copyFileSync(src, dest);
+			if (row.mediaType === 'video') assertPlayableVideo(dest, row.width, row.height);
 
-		db.transaction((tx) => {
-			tx.insert(media)
-				.values({
-					id: newMediaId,
-					originalName: encryptName(copyName),
-					nameKey: nameLookupKey(copyName),
-					mimeType: row.mimeType,
-					mediaType: row.mediaType,
-					size: row.size,
-					width: row.width,
-					height: row.height,
-					storageKey: destKey,
-					thumbnailKey: thumbKey,
-					duration: normalizeDuration(row.duration),
-					capturedAt: row.capturedAt,
-					contentHash: row.contentHash,
-					cameraMake: row.cameraMake,
-					cameraModel: row.cameraModel,
-					gpsLat: row.gpsLat,
-					gpsLng: row.gpsLng,
-					favorite: 0,
-					sourcePath: null
-				})
-				.run();
-			if (albumId) {
-				tx.insert(albumMedia).values({ albumId, mediaId: newMediaId }).onConflictDoNothing().run();
-			} else {
-				const memberships = tx
-					.select({ albumId: albumMedia.albumId })
-					.from(albumMedia)
-					.where(eq(albumMedia.mediaId, id))
-					.all();
-				for (const m of memberships) {
-					tx.insert(albumMedia)
-						.values({ albumId: m.albumId, mediaId: newMediaId })
-						.onConflictDoNothing()
-						.run();
+			if (row.thumbnailKey) {
+				const thumbSrc = filePathForKey(profileId, row.thumbnailKey);
+				if (existsSync(thumbSrc)) {
+					thumbKey = `${newMediaId}-thumb`;
+					copyFileSync(thumbSrc, filePathForKey(profileId, thumbKey));
 				}
 			}
-		});
+
+			db.transaction((tx) => {
+				tx.insert(media)
+					.values({
+						id: newMediaId,
+						originalName: encryptName(copyName),
+						nameKey: nameLookupKey(copyName),
+						mimeType: row.mimeType,
+						mediaType: row.mediaType,
+						size: row.size,
+						width: row.width,
+						height: row.height,
+						storageKey: destKey,
+						thumbnailKey: thumbKey,
+						duration: normalizeDuration(row.duration),
+						capturedAt: row.capturedAt,
+						contentHash: row.contentHash,
+						cameraMake: row.cameraMake,
+						cameraModel: row.cameraModel,
+						gpsLat: row.gpsLat,
+						gpsLng: row.gpsLng,
+						favorite: 0,
+						sourcePath: null
+					})
+					.run();
+				if (albumId) {
+					tx.insert(albumMedia)
+						.values({ albumId, mediaId: newMediaId })
+						.onConflictDoNothing()
+						.run();
+				} else {
+					const memberships = tx
+						.select({ albumId: albumMedia.albumId })
+						.from(albumMedia)
+						.where(eq(albumMedia.mediaId, id))
+						.all();
+					for (const m of memberships) {
+						tx.insert(albumMedia)
+							.values({ albumId: m.albumId, mediaId: newMediaId })
+							.onConflictDoNothing()
+							.run();
+					}
+				}
+			});
+		} catch (err) {
+			removeCopies();
+			throw err;
+		}
 
 		const meta = getMediaMeta(profileId, newMediaId);
 		if (meta) created.push(meta);
@@ -1052,6 +1071,7 @@ export function duplicateMedia(
 
 export function deleteMedia(profileId: string, ids: string[]): void {
 	const db = getProfileDb(profileId);
+	const doomed: string[] = [];
 	db.transaction((tx) => {
 		for (const id of ids) {
 			const row = tx
@@ -1068,27 +1088,33 @@ export function deleteMedia(profileId: string, ids: string[]): void {
 			if (row) {
 				const storyboardKey = parseStoredStoryboard(row.storyboard)?.key;
 				for (const key of [row.storageKey, row.thumbnailKey, storyboardKey, row.playbackKey]) {
-					if (!key) continue;
-					const path = filePathForKey(profileId, key);
-					try {
-						if (existsSync(path)) unlinkSync(path);
-					} catch {
-						/* ignore */
-					}
+					if (key) doomed.push(filePathForKey(profileId, key));
 				}
 			}
 		}
 	});
+	// Files go only after the rows commit, so a rolled-back delete never loses media.
+	for (const path of doomed) {
+		try {
+			if (existsSync(path)) unlinkSync(path);
+		} catch {
+			/* ignore */
+		}
+	}
 }
 
 /** Move media to trash (soft delete). Keeps files and album membership. */
 export function softDeleteMedia(profileId: string, ids: string[]): MediaItem[] {
 	const db = getProfileDb(profileId);
 	if (!ids.length) return [];
-	db.update(media)
-		.set({ deletedAt: sql`(datetime('now'))` })
-		.where(and(inArray(media.id, ids), isNull(media.deletedAt)))
-		.run();
+	db.transaction((tx) => {
+		for (const part of chunked(ids)) {
+			tx.update(media)
+				.set({ deletedAt: sql`(datetime('now'))` })
+				.where(and(inArray(media.id, part), isNull(media.deletedAt)))
+				.run();
+		}
+	});
 	return getMediaByIds(profileId, ids);
 }
 
@@ -1096,10 +1122,14 @@ export function softDeleteMedia(profileId: string, ids: string[]): MediaItem[] {
 export function restoreMedia(profileId: string, ids: string[]): MediaItem[] {
 	const db = getProfileDb(profileId);
 	if (!ids.length) return [];
-	db.update(media)
-		.set({ deletedAt: null })
-		.where(and(inArray(media.id, ids), isNotNull(media.deletedAt)))
-		.run();
+	db.transaction((tx) => {
+		for (const part of chunked(ids)) {
+			tx.update(media)
+				.set({ deletedAt: null })
+				.where(and(inArray(media.id, part), isNotNull(media.deletedAt)))
+				.run();
+		}
+	});
 	return getMediaByIds(profileId, ids);
 }
 
@@ -1412,10 +1442,14 @@ export function listSourcePathsAndHashes(profileId: string): SourcePathHashIndex
 export function setMediaFavorite(profileId: string, ids: string[], favorite: boolean): MediaItem[] {
 	if (!ids.length) return [];
 	const db = getProfileDb(profileId);
-	db.update(media)
-		.set({ favorite: favorite ? 1 : 0 })
-		.where(inArray(media.id, ids))
-		.run();
+	db.transaction((tx) => {
+		for (const part of chunked(ids)) {
+			tx.update(media)
+				.set({ favorite: favorite ? 1 : 0 })
+				.where(inArray(media.id, part))
+				.run();
+		}
+	});
 	return getMediaByIds(profileId, ids);
 }
 

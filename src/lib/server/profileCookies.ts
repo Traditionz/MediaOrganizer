@@ -4,6 +4,11 @@ import type { Profile } from '$lib/types';
 
 export type ProfileLookup = (id: string) => Profile | null;
 
+/** Value the unlock cookie must hold for a passcode profile. Defaults to the bare id (tests). */
+export type UnlockToken = (id: string) => string | null;
+
+const bareIdToken: UnlockToken = (id) => id;
+
 /** Session cookie options — no maxAge so nothing persists after the browser exits. */
 export const PROFILE_SESSION_COOKIE_OPTS = {
 	path: '/',
@@ -19,6 +24,7 @@ export type ResolveProfileOptions = {
 	 * Data requests (invalidateAll) keep allowPasscodeUnlock true.
 	 */
 	allowPasscodeUnlock?: boolean;
+	unlockToken?: UnlockToken;
 };
 
 export function resolveProfileFromCookies(
@@ -37,7 +43,8 @@ export function resolveProfileFromCookies(
 			cookies.delete(PROFILE_UNLOCK_COOKIE, { path: '/' });
 			return null;
 		}
-		if (cookies.get(PROFILE_UNLOCK_COOKIE) !== id) {
+		const expected = (options.unlockToken ?? bareIdToken)(id);
+		if (!expected || cookies.get(PROFILE_UNLOCK_COOKIE) !== expected) {
 			return null;
 		}
 	}
@@ -47,11 +54,13 @@ export function resolveProfileFromCookies(
 /** Activate profile for this browser session. Passcode profiles also get an unlock marker. */
 export function setProfileCookie(
 	cookies: Cookies,
-	profile: Pick<Profile, 'id' | 'has_passcode'>
+	profile: Pick<Profile, 'id' | 'has_passcode'>,
+	unlockToken: UnlockToken = bareIdToken
 ): void {
 	cookies.set(PROFILE_COOKIE, profile.id, PROFILE_SESSION_COOKIE_OPTS);
-	if (profile.has_passcode) {
-		cookies.set(PROFILE_UNLOCK_COOKIE, profile.id, PROFILE_SESSION_COOKIE_OPTS);
+	const token = profile.has_passcode ? unlockToken(profile.id) : null;
+	if (token) {
+		cookies.set(PROFILE_UNLOCK_COOKIE, token, PROFILE_SESSION_COOKIE_OPTS);
 	} else {
 		cookies.delete(PROFILE_UNLOCK_COOKIE, { path: '/' });
 	}

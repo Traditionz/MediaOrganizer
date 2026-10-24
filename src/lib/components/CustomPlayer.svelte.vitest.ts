@@ -223,14 +223,14 @@ describe('CustomPlayer', () => {
 		setPlaybackPosition('v1', 8, 20);
 		const watched: number[] = [];
 		let playCalls = 0;
-		vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(
-			function (this: HTMLMediaElement) {
-				playCalls += 1;
-				if (playCalls === 1) return Promise.reject(new DOMException('autoplay', 'NotAllowedError'));
-				Object.defineProperty(this, 'paused', { configurable: true, writable: true, value: false });
-				return Promise.resolve();
-			}
-		);
+		vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(function (
+			this: HTMLMediaElement
+		) {
+			playCalls += 1;
+			if (playCalls === 1) return Promise.reject(new DOMException('autoplay', 'NotAllowedError'));
+			Object.defineProperty(this, 'paused', { configurable: true, writable: true, value: false });
+			return Promise.resolve();
+		});
 		const screen = await render(CustomPlayer, {
 			src: 'data:video/mp4;base64,',
 			mediaId: 'v1',

@@ -225,9 +225,7 @@ describe('LibraryState', () => {
 
 	test('loadedMedia sees tags after upsert', () => {
 		const { library } = createAppState(testLoad());
-		library.upsertMedia([
-			testMedia({ tags: [{ id: 't1', name: 'beach', kind: 'tag' }] })
-		]);
+		library.upsertMedia([testMedia({ tags: [{ id: 't1', name: 'beach', kind: 'tag' }] })]);
 		expect(library.loadedMedia(['m1'])[0]?.tags?.map((tag) => tag.id)).toEqual(['t1']);
 	});
 

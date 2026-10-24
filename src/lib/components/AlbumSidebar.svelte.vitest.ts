@@ -299,10 +299,12 @@ describe('AlbumSidebar', () => {
 			new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt })
 		);
 		endInternalDrag();
-		await expect.poll(() => assigned).toEqual([
-			{ ids: ['m1'], tagId: 't1' },
-			{ ids: ['m1'], tagId: 't2' }
-		]);
+		await expect
+			.poll(() => assigned)
+			.toEqual([
+				{ ids: ['m1'], tagId: 't1' },
+				{ ids: ['m1'], tagId: 't2' }
+			]);
 	});
 
 	test('empty albums and no-match add filter', async () => {
